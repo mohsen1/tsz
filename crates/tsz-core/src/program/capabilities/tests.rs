@@ -1923,28 +1923,31 @@ fn javascript_property_navigation_records_one_exact_tuple_per_scope_and_target()
             vec![SourceInput::new("navigation.js", Arc::<str>::from(source))],
             &CompilerOptions {
                 allow_js: true,
+                check_js: Some(true),
                 no_emit: true,
                 ..CompilerOptions::default()
             },
         );
-        let mut scopes = output
-            .program
-            .javascript_assignments
-            .property_uses()
-            .map(|(file, owner)| CapabilityScope::node(file, owner))
-            .collect::<BTreeSet<_>>();
-        scopes.extend(
-            output
-                .program
-                .javascript_assignments
-                .property_declarations()
-                .filter_map(|id| {
-                    output.program.files[id.file.0 as usize]
-                        .bindings
-                        .declaration(id)
-                        .map(|declaration| CapabilityScope::node(id.file, declaration.owner))
-                }),
-        );
+        let mut scopes = BTreeSet::new();
+        for file in &output.program.files {
+            scopes.extend(
+                file.bindings
+                    .javascript_property_uses
+                    .iter()
+                    .map(|&owner| CapabilityScope::node(file.source.id, owner)),
+            );
+            scopes.extend(
+                file.bindings
+                    .javascript_property_assignments
+                    .iter()
+                    .filter_map(|assignment| assignment.declaration)
+                    .filter_map(|id| {
+                        file.bindings
+                            .declaration(id)
+                            .map(|declaration| CapabilityScope::node(id.file, declaration.owner))
+                    }),
+            );
+        }
         let records = output.capabilities.nonclaims.iter().filter(|record| {
             record.reason == NonclaimReason::Semantic(SemanticGap::JavaScriptPropertyNavigation)
         });

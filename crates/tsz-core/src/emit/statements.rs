@@ -1,9 +1,9 @@
 use crate::syntax::{
     AccessorKind, ClassDeclaration, ClassMember, ClassMemberKind, ExportDeclaration,
-    ImportDeclaration, Statement, StatementKind, SwitchClauseKind,
+    ImportDeclaration, Statement, StatementKind, SwitchClauseKind, TokenKind,
 };
 
-use super::{ModuleFormat, PREC_LOWEST, Printer};
+use super::{End, Gap, Kind, ModuleFormat, PREC_LOWEST, Printer};
 
 impl Printer<'_> {
     pub(super) fn write_javascript_statement(&mut self, statement: &Statement, top_level: bool) {
@@ -16,19 +16,19 @@ impl Printer<'_> {
 
         match &statement.kind {
             StatementKind::Import(declaration) => {
-                self.write_javascript_import(statement, declaration);
+                self.write_javascript_import(statement, declaration)
             }
             StatementKind::Export(declaration) => {
-                self.write_javascript_export(statement, declaration);
+                self.write_javascript_export(statement, declaration)
             }
             StatementKind::Variable(declaration) => {
-                self.write_javascript_variable(declaration, top_level);
+                self.write_javascript_variable(declaration, top_level)
             }
             StatementKind::Function(declaration) => {
-                self.write_javascript_function(statement, declaration, top_level);
+                self.write_javascript_function(statement, declaration, top_level)
             }
             StatementKind::Class(declaration) => {
-                self.write_javascript_class(declaration, top_level);
+                self.write_javascript_class(declaration, top_level)
             }
             StatementKind::Return(expression) => {
                 self.write_indent();
@@ -67,11 +67,9 @@ impl Printer<'_> {
                 self.write_indent();
                 self.output.push_str("}\n");
             }
-            StatementKind::Break(jump) => {
-                self.write_jump_statement("break", jump.label.as_deref());
-            }
+            StatementKind::Break(jump) => self.write_jump_statement("break", jump.label.as_deref()),
             StatementKind::Continue(jump) => {
-                self.write_jump_statement("continue", jump.label.as_deref());
+                self.write_jump_statement("continue", jump.label.as_deref())
             }
             StatementKind::Block(statements) => {
                 self.write_indent();
@@ -79,7 +77,7 @@ impl Printer<'_> {
                 self.output.push('\n');
             }
             StatementKind::Expression(expression) => {
-                self.write_commented_expression_statement(statement, expression);
+                self.write_commented_expression_statement(statement, expression)
             }
             StatementKind::Empty => {
                 self.write_indent();
@@ -150,24 +148,46 @@ impl Printer<'_> {
 
     fn write_javascript_if(&mut self, control_flow: &crate::syntax::IfStatement) {
         self.write_indent();
-        self.output.push_str("if (");
+        self.output.push_str("if");
+        self.indent += 1;
+        let condition_start = control_flow.condition.span.start;
+        self.write_gap(Kind(TokenKind::If, condition_start), true, Gap::Space);
+        self.output.push('(');
+        self.write_gap(
+            Kind(TokenKind::LeftParen, condition_start),
+            true,
+            Gap::Indent,
+        );
         self.write_expression(&control_flow.condition, PREC_LOWEST);
+        self.write_gap(End(control_flow.condition.span.end), true, Gap::Indent);
         self.output.push(')');
+        self.write_body_gap(TokenKind::RightParen, &control_flow.then_statement);
+        self.indent = self.indent.saturating_sub(1);
         self.write_control_flow_body(&control_flow.then_statement);
         if let Some(else_statement) = &control_flow.else_statement {
+            let then_end = control_flow.then_statement.span.end;
+            self.write_gap(End(then_end), true, Gap::Newline);
             self.write_indent();
             self.output.push_str("else");
+            self.write_body_gap(TokenKind::Else, else_statement);
             self.write_control_flow_body(else_statement);
         }
+        self.write_newline();
+    }
+
+    fn write_body_gap(&mut self, kind: TokenKind, statement: &Statement) {
+        let separator = if matches!(&statement.kind, StatementKind::Block(_)) {
+            Gap::Space
+        } else {
+            Gap::Newline
+        };
+        self.write_gap(Kind(kind, statement.span.start), true, separator);
     }
 
     fn write_control_flow_body(&mut self, statement: &Statement) {
         if let StatementKind::Block(statements) = &statement.kind {
-            self.output.push(' ');
             self.write_braced_statements(Some(statement.span), statements);
-            self.output.push('\n');
         } else {
-            self.output.push('\n');
             self.indent += 1;
             self.write_javascript_statement(statement, false);
             self.indent = self.indent.saturating_sub(1);
@@ -178,8 +198,7 @@ impl Printer<'_> {
         self.write_indent();
         self.output.push_str(keyword);
         if let Some(label) = label {
-            self.output.push(' ');
-            self.output.push_str(label);
+            self.write_parts(&[" ", label]);
         }
         self.output.push_str(";\n");
     }
@@ -192,8 +211,7 @@ impl Printer<'_> {
                 self.output.push_str("default ");
             }
         }
-        self.output.push_str("class ");
-        self.output.push_str(&declaration.name);
+        self.write_parts(&["class ", &declaration.name]);
         if let Some(base) = &declaration.extends {
             self.output.push_str(" extends ");
             self.write_heritage_type(base);
@@ -211,10 +229,8 @@ impl Printer<'_> {
             self.write_comments_after_node(member.span, true);
         }
         if let Some(body_span) = declaration.body_span {
-            let ended_on_line = self.write_comments_before_close(body_span.end);
-            if !ended_on_line && !self.output.ends_with('\n') {
-                self.output.push('\n');
-            }
+            self.write_comments_before_close(body_span.end);
+            self.write_newline();
         }
         self.indent = self.indent.saturating_sub(1);
         self.write_indent();
@@ -326,10 +342,8 @@ impl Printer<'_> {
             self.write_javascript_statement(statement, false);
         }
         if let Some(body_span) = body_span {
-            let ended_on_line = self.write_comments_before_close(body_span.end);
-            if !ended_on_line && !self.output.ends_with('\n') {
-                self.output.push('\n');
-            }
+            self.write_comments_before_close(body_span.end);
+            self.write_newline();
         }
         self.indent = self.indent.saturating_sub(1);
         self.write_indent();

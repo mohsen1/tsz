@@ -95,9 +95,6 @@ pub struct StandardLibraryEnvironment {
     value_names: BTreeMap<String, DeclId>,
     value_members: BTreeMap<DeclId, BTreeMap<String, StandardLibraryValueMember>>,
     string_record_types: BTreeSet<DeclId>,
-    array_type: Option<DeclId>,
-    readonly_array_type: Option<DeclId>,
-    undefined_value: Option<DeclId>,
 }
 
 impl StandardLibraryEnvironment {
@@ -152,7 +149,7 @@ impl StandardLibraryEnvironment {
 
     #[must_use]
     pub(crate) fn is_array_type(&self, id: DeclId) -> bool {
-        self.array_type == Some(id)
+        self.resolve("Array", Meaning::Type) == Some(id)
     }
 
     #[must_use]
@@ -193,12 +190,12 @@ impl StandardLibraryEnvironment {
 
     #[must_use]
     pub(crate) fn is_rest_array_type(&self, id: DeclId) -> bool {
-        self.array_type == Some(id) || self.readonly_array_type == Some(id)
+        self.is_array_type(id) || self.resolve("ReadonlyArray", Meaning::Type) == Some(id)
     }
 
     #[must_use]
     pub(crate) fn is_undefined_value(&self, id: DeclId) -> bool {
-        self.undefined_value == Some(id)
+        self.resolve("undefined", Meaning::Value) == Some(id)
     }
 
     #[must_use]
@@ -241,9 +238,6 @@ impl StandardLibraryEnvironment {
         let mut type_names = BTreeMap::new();
         let mut value_names = BTreeMap::new();
         let mut string_record_types = BTreeSet::new();
-        let mut array_type = None;
-        let mut readonly_array_type = None;
-        let mut undefined_value = None;
         for (name, meaning) in names {
             let meaning = if meaning == 0 {
                 Meaning::Type
@@ -255,19 +249,8 @@ impl StandardLibraryEnvironment {
                 local: declarations.len() as u32,
             };
             match meaning {
-                Meaning::Value => {
-                    if name == "undefined" {
-                        undefined_value = Some(id);
-                    }
-                    value_names.insert(name.clone(), id)
-                }
+                Meaning::Value => value_names.insert(name.clone(), id),
                 Meaning::Type => {
-                    if name == "Array" {
-                        array_type = Some(id);
-                    }
-                    if name == "ReadonlyArray" {
-                        readonly_array_type = Some(id);
-                    }
                     if string_record_type_names.contains(&name) {
                         string_record_types.insert(id);
                     }
@@ -280,7 +263,7 @@ impl StandardLibraryEnvironment {
         // even though the pinned declaration libraries do not spell it as a
         // top-level `var`. Give it program-owned identity so ordinary lexical
         // shadowing wins before the checker recognizes the intrinsic.
-        if undefined_value.is_none() {
+        if !value_names.contains_key("undefined") {
             let name = "undefined".to_string();
             let id = DeclId {
                 file: STANDARD_LIBRARY_FILE,
@@ -292,7 +275,6 @@ impl StandardLibraryEnvironment {
                 name,
                 meaning: Meaning::Value,
             });
-            undefined_value = Some(id);
         }
 
         let mut value_members = BTreeMap::new();
@@ -326,9 +308,6 @@ impl StandardLibraryEnvironment {
             value_names,
             value_members,
             string_record_types,
-            array_type,
-            readonly_array_type,
-            undefined_value,
         }
     }
 }

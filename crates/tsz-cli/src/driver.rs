@@ -318,16 +318,13 @@ fn prepare_invocation(invocation: &Invocation) -> Result<PreparedInvocation> {
     } else {
         ProjectSelection::Search(current_directory.clone())
     };
-    let mut request = ProjectRequest::new(selection);
-    if let Some(allow_js) = invocation.options.allow_js {
-        request = request.with_allow_js(allow_js);
-    }
-    if let Some(out_dir) = &invocation.options.out_dir {
-        request = request.with_out_dir(out_dir.clone());
-    }
-    if let Some(declaration_dir) = &invocation.options.declaration_dir {
-        request = request.with_declaration_dir(declaration_dir.clone());
-    }
+    let request = ProjectRequest {
+        selection,
+        allow_js: invocation.options.allow_js,
+        check_js: invocation.options.check_js,
+        out_dir: invocation.options.out_dir.clone(),
+        declaration_dir: invocation.options.declaration_dir.clone(),
+    };
     let mut resolved = resolve_project(&host, &request);
     if invocation.project.is_none()
         && invocation.files.is_empty()

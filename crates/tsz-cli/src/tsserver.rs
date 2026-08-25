@@ -204,6 +204,14 @@ impl<R: Read, W: Write> Server<R, W> {
                 let rename = self.service.rename(&path, absolute);
                 Ok(Some(self.rename_body(&path, rename)))
             }
+            // Harness state probe for adapter consistency; exposes text, never semantics.
+            "tsz/text" => {
+                let path = file_argument(arguments)?;
+                self.service
+                    .text(path)
+                    .map(|text| Some(Value::String(text.to_string())))
+                    .ok_or_else(|| format!("File is not open: {path}"))
+            }
             "tsz/reset" => {
                 self.service.reset();
                 Ok(Some(json!({"reset": true})))
@@ -625,6 +633,9 @@ fn number_argument(arguments: &Value, name: &str) -> Result<u64, String> {
 
 fn compiler_options(value: &Value) -> CompilerOptions {
     let defaults = CompilerOptions::default();
+    let boolean = |name| value.get(name).and_then(Value::as_bool);
+    let check_js = boolean("checkJs");
+    let allow_js = boolean("allowJs").unwrap_or(check_js == Some(true));
     let target = value
         .get("target")
         .and_then(Value::as_str)
@@ -637,24 +648,15 @@ fn compiler_options(value: &Value) -> CompilerOptions {
             .collect()
     });
     CompilerOptions {
-        strict: value
-            .get("strict")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        strict_null_checks: value.get("strictNullChecks").and_then(Value::as_bool),
-        strict_property_initialization: value
-            .get("strictPropertyInitialization")
-            .and_then(Value::as_bool),
-        no_implicit_any: value.get("noImplicitAny").and_then(Value::as_bool),
-        no_unused_locals: value
-            .get("noUnusedLocals")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        no_unused_parameters: value
-            .get("noUnusedParameters")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        no_lib: value.get("noLib").and_then(Value::as_bool).unwrap_or(false),
+        strict: boolean("strict").unwrap_or(false),
+        strict_null_checks: boolean("strictNullChecks"),
+        strict_property_initialization: boolean("strictPropertyInitialization"),
+        no_implicit_any: boolean("noImplicitAny"),
+        no_unused_locals: boolean("noUnusedLocals").unwrap_or(false),
+        no_unused_parameters: boolean("noUnusedParameters").unwrap_or(false),
+        no_lib: boolean("noLib").unwrap_or(false),
+        allow_js,
+        check_js,
         lib,
         target,
         no_emit: true,

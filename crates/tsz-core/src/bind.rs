@@ -8,8 +8,8 @@ use rustc_hash::FxHashMap;
 use crate::source::{DeclId, FileId, NodeId, SourceKind, Span};
 use crate::syntax::{
     ArrowBody, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, FunctionDeclaration,
-    FunctionLikeSyntax, ParameterNameKind, SourceUnit, Statement, StatementKind, SwitchClauseKind,
-    TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
+    FunctionLikeSyntax, Literal, ParameterNameKind, SourceUnit, Statement, StatementKind,
+    SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
     UnmodeledDeclarationHostFact, UnmodeledDeclarationHostKind,
 };
 
@@ -120,6 +120,14 @@ pub(crate) struct BoundJavaScriptPropertyAssignment {
     pub(crate) declaration: Option<DeclId>,
     pub(crate) root: Option<String>,
     pub(crate) properties: Vec<String>,
+    pub(crate) target: JavaScriptPropertyAssignmentTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JavaScriptPropertyAssignmentTarget {
+    NamedMember,
+    CanonicalElementProperty,
+    OrdinaryIndex,
 }
 
 impl BoundFile {
@@ -1074,14 +1082,20 @@ impl Binder {
         right: &Expression,
         scope: ScopeId,
     ) {
-        if self.source_kind.supports_expression_type_arguments()
-            || !matches!(
-                left.peel_parentheses().kind,
-                ExpressionKind::Member { .. } | ExpressionKind::ElementAccess { .. }
-            )
-        {
+        if self.source_kind.supports_expression_type_arguments() {
             return;
         }
+        use JavaScriptPropertyAssignmentTarget as Target;
+        let target = match &left.peel_parentheses().kind {
+            ExpressionKind::Member { .. } => Target::NamedMember,
+            ExpressionKind::ElementAccess { index, .. } => match &index.kind {
+                ExpressionKind::Literal(Literal::String(_) | Literal::Number(_)) => {
+                    Target::CanonicalElementProperty
+                }
+                _ => Target::OrdinaryIndex,
+            },
+            _ => return,
+        };
         let root = flow_assignment_root(left).and_then(|root| match &root.kind {
             ExpressionKind::Identifier { name, .. } => Some(name.clone()),
             _ => None,
@@ -1111,6 +1125,7 @@ impl Binder {
                 declaration,
                 root,
                 properties,
+                target,
             });
     }
 

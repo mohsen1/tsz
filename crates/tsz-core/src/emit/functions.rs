@@ -12,8 +12,7 @@ impl Printer<'_> {
                 self.write_arrow(&function.parameters, body, function.body_span);
             }
             FunctionLikeSyntax::Function { name, body } => {
-                self.output.push_str("function");
-                self.output.push(' ');
+                self.output.push_str("function ");
                 if let Some(name) = name {
                     self.output.push_str(&name.name);
                 }
@@ -88,12 +87,7 @@ impl Printer<'_> {
             self.output.push('(');
             self.write_expression(callee, PREC_LOWEST);
             self.output.push_str(")(");
-            for (index, argument) in arguments.iter().enumerate() {
-                if index != 0 {
-                    self.output.push_str(", ");
-                }
-                self.write_expression(argument, PREC_LOWEST);
-            }
+            self.write_expression_list(arguments);
             self.output.push(')');
             return;
         }

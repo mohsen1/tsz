@@ -113,7 +113,7 @@ pub(crate) enum SemanticGap {
     JavaScriptPropertyNavigation,
     FunctionLikeTypeParameters,
     FunctionExpressionBindingName,
-    FunctionExpressionDeclaration,
+    DeclarationFunctionSummary,
     FunctionExpressionQuickInfo,
     ExplicitThisParameter,
 }
@@ -175,6 +175,7 @@ pub(crate) struct CapabilityContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileSemanticMode {
     Checked,
+    UncheckedJavaScript,
     UncheckedBySourceDirective,
 }
 
@@ -216,13 +217,16 @@ impl CapabilityAnalysis {
         let mut function_like_owners = Vec::new();
         let mut file_semantic_modes = vec![FileSemanticMode::Checked; files.len()];
         for file in files {
-            let mode = match file
-                .syntax
-                .source_check_directive()
-                .map(|directive| directive.kind)
-            {
+            let mode = match file.syntax.source_check_directive().map(|item| item.kind) {
                 Some(SourceCheckDirectiveKind::NoCheck) => {
                     FileSemanticMode::UncheckedBySourceDirective
+                }
+                None if matches!(
+                    file.source.kind(),
+                    SourceKind::JavaScript | SourceKind::JavaScriptJsx
+                ) && options.check_js != Some(true) =>
+                {
+                    FileSemanticMode::UncheckedJavaScript
                 }
                 Some(SourceCheckDirectiveKind::Check) | None => FileSemanticMode::Checked,
             };
@@ -300,12 +304,8 @@ impl CapabilityAnalysis {
         }
 
         close_declaration_groups(&mut nonclaims, files, &function_like_owners);
-        if let Some(javascript_assignments) = javascript_assignments {
-            add_javascript_property_navigation_nonclaims(
-                &mut nonclaims,
-                files,
-                javascript_assignments,
-            );
+        if javascript_assignments.is_some() {
+            add_javascript_property_navigation_nonclaims(&mut nonclaims, files);
         }
 
         nonclaims.sort_unstable();
@@ -386,10 +386,7 @@ impl CapabilityAnalysis {
     }
 
     pub(crate) fn semantic_check_file_is_enabled(&self, file: FileId) -> bool {
-        !matches!(
-            self.file_semantic_modes.get(file.0 as usize),
-            Some(FileSemanticMode::UncheckedBySourceDirective)
-        )
+        self.file_semantic_modes.get(file.0 as usize) == Some(&FileSemanticMode::Checked)
     }
 
     pub(crate) fn has_claimed_function_like(&self, file: FileId) -> bool {
@@ -609,57 +606,50 @@ impl CapabilityAnalysis {
         files: &[ProgramFile],
         options: &CompilerOptions,
     ) -> bool {
-        if options.no_emit {
-            return true;
-        }
-        files
-            .iter()
-            .filter(|file| !is_declaration_source(&file.source.path))
-            .all(|file| {
-                self.claim(
-                    CapabilityTarget::JavaScript,
-                    CapabilityScope::File(file.source.id),
-                )
-                .is_claimed()
-                    && (!options.declaration
-                        || self
-                            .claim(
-                                CapabilityTarget::Declaration,
-                                CapabilityScope::File(file.source.id),
-                            )
-                            .is_claimed())
-            })
+        options.no_emit
+            || files
+                .iter()
+                .filter(|file| !is_declaration_source(&file.source.path))
+                .all(|file| {
+                    let scope = CapabilityScope::File(file.source.id);
+                    std::iter::once(CapabilityTarget::JavaScript)
+                        .chain(options.declaration.then_some(CapabilityTarget::Declaration))
+                        .all(|target| self.claim(target, scope).is_claimed())
+                })
     }
 }
 
 fn add_javascript_property_navigation_nonclaims(
     nonclaims: &mut Vec<CapabilityNonclaim>,
     files: &[ProgramFile],
-    javascript_assignments: &JavaScriptAssignments,
 ) {
-    let gap = SemanticGap::JavaScriptPropertyNavigation;
-    for (file, member) in javascript_assignments.property_uses() {
-        add_semantic(
-            nonclaims,
-            &ALL_TARGETS[7..],
-            CapabilityScope::node(file, member),
-            gap,
-        );
-    }
-    for declaration in javascript_assignments.property_declarations() {
-        let Some(owner) = files
-            .get(declaration.file.0 as usize)
-            .and_then(|file| file.bindings.declaration(declaration))
-            .map(|declaration| declaration.owner)
-        else {
-            continue;
-        };
-        add_semantic(
-            nonclaims,
-            &ALL_TARGETS[7..],
-            CapabilityScope::node(declaration.file, owner),
-            gap,
-        );
+    for file in files {
+        for &member in &file.bindings.javascript_property_uses {
+            add_semantic(
+                nonclaims,
+                &ALL_TARGETS[7..],
+                CapabilityScope::node(file.source.id, member),
+                SemanticGap::JavaScriptPropertyNavigation,
+            );
+        }
+        for declaration in file
+            .bindings
+            .javascript_property_assignments
+            .iter()
+            .filter_map(|assignment| assignment.declaration)
+        {
+            let owner = file
+                .bindings
+                .declaration(declaration)
+                .expect("same-file JavaScript property declaration")
+                .owner;
+            add_semantic(
+                nonclaims,
+                &ALL_TARGETS[7..],
+                CapabilityScope::node(declaration.file, owner),
+                SemanticGap::JavaScriptPropertyNavigation,
+            );
+        }
     }
 }
 
@@ -1073,12 +1063,26 @@ fn derive_file_nonclaims(
             SyntaxGap::FunctionLikeBindingPattern,
         );
     }
+    for statement in &file.syntax.statements {
+        if let StatementKind::Function(function) = &statement.kind
+            && function.has_body
+            && function.return_type.is_none()
+            && !function.body.is_empty()
+        {
+            add_semantic(
+                nonclaims,
+                &[CapabilityTarget::Declaration],
+                CapabilityScope::node(id, statement.id),
+                SemanticGap::DeclarationFunctionSummary,
+            );
+        }
+    }
     for function in nodes.function_expressions {
         let owner = function.owner;
         for (target, gap) in [
             (
                 CapabilityTarget::Declaration,
-                SemanticGap::FunctionExpressionDeclaration,
+                SemanticGap::DeclarationFunctionSummary,
             ),
             (
                 CapabilityTarget::QuickInfo,
@@ -1903,12 +1907,8 @@ fn add_nonclaims(
 }
 
 pub(crate) fn is_declaration_source(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
+    let path = path.to_string_lossy().to_ascii_lowercase();
+    path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
 }
 
 pub(crate) fn is_effective_commonjs(path: &Path, module: &str) -> bool {

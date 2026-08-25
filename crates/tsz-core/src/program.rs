@@ -89,6 +89,7 @@ pub struct CompilerOptions {
     pub no_lib: bool,
     pub lib: Option<Vec<String>>,
     pub allow_js: bool,
+    pub check_js: Option<bool>,
     pub no_check: bool,
     pub no_emit: bool,
     pub no_emit_on_error: bool,
@@ -116,6 +117,7 @@ impl Default for CompilerOptions {
             no_lib: false,
             lib: None,
             allow_js: false,
+            check_js: None,
             no_check: false,
             no_emit: false,
             no_emit_on_error: false,
@@ -846,6 +848,10 @@ fn compiler_option_diagnostics(
         })
         .into_iter()
         .collect::<Vec<_>>();
+    let option_dependency = |key, message| match provenance.option_origin(key) {
+        Some(origin) => origin.diagnostic_at_key(message, 5052),
+        None => Diagnostic::global(message, 5052),
+    };
     if options.strict_property_initialization == Some(true)
         && !options.effective_strict_null_checks()
     {
@@ -854,15 +860,15 @@ fn compiler_option_diagnostics(
             "option 'strictNullChecks'."
         )
         .to_string();
-        diagnostics.push(
-            if let Some(origin) =
-                provenance.option_origin(CompilerOptionKey::StrictPropertyInitialization)
-            {
-                origin.diagnostic_at_key(message, 5052)
-            } else {
-                Diagnostic::global(message, 5052)
-            },
-        );
+        diagnostics.push(option_dependency(
+            CompilerOptionKey::StrictPropertyInitialization,
+            message,
+        ));
+    }
+    if options.check_js == Some(true) && !options.allow_js {
+        let message =
+            "Option 'checkJs' cannot be specified without specifying option 'allowJs'.".to_string();
+        diagnostics.push(option_dependency(CompilerOptionKey::CheckJs, message));
     }
     diagnostics
 }

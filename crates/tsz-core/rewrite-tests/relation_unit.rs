@@ -29,10 +29,12 @@ fn relate<C: RelationContext>(
 struct TestContext {
     kinds: Vec<TypeKind>,
     completions: HashMap<TypeId, Completion<TypeId>>,
+    evaluator_depth: usize,
 }
 
 impl RelationContext for TestContext {
-    fn force_type(&mut self, ty: TypeId, _depth: usize) -> Completion<TypeId> {
+    fn force_type(&mut self, ty: TypeId, depth: usize) -> Completion<TypeId> {
+        assert_eq!(depth, self.evaluator_depth);
         self.completions
             .get(&ty)
             .cloned()
@@ -105,6 +107,7 @@ fn recursive_deferred_shapes_stop_at_the_active_pair() {
             (TypeId(0), Completion::Complete(TypeId(2))),
             (TypeId(1), Completion::Complete(TypeId(3))),
         ]),
+        evaluator_depth: 0,
     };
 
     assert_eq!(
@@ -125,6 +128,7 @@ fn nested_array_failures_keep_each_structural_pair() {
             TypeKind::LiteralString("seed".to_string(), LiteralProvenance::Regular),
         ],
         completions: HashMap::new(),
+        evaluator_depth: 0,
     };
 
     let failure = relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
@@ -146,6 +150,44 @@ fn nested_array_failures_keep_each_structural_pair() {
 }
 
 #[test]
+fn nested_relation_structure_preserves_the_active_evaluator_seed() {
+    let mut context = TestContext {
+        kinds: vec![
+            TypeKind::Array(TypeId(2)),
+            TypeKind::Array(TypeId(3)),
+            TypeKind::Array(TypeId(4)),
+            TypeKind::Array(TypeId(5)),
+            TypeKind::Deferred(DeferredType::Value(DeclId {
+                file: FileId(0),
+                local: 4,
+            })),
+            TypeKind::Deferred(DeferredType::Value(DeclId {
+                file: FileId(0),
+                local: 5,
+            })),
+            TypeKind::Number,
+        ],
+        completions: HashMap::from([
+            (TypeId(4), Completion::Complete(TypeId(6))),
+            (TypeId(5), Completion::Complete(TypeId(6))),
+        ]),
+        evaluator_depth: 7,
+    };
+
+    assert_eq!(
+        relate_with_property_order_at_evaluation_depth(
+            &mut context,
+            TypeId(0),
+            TypeId(1),
+            RelationMode::Assignment,
+            RelationPropertyOrder::default(),
+            EvaluationDepth::from_active_depth(7),
+        ),
+        Ok(())
+    );
+}
+
+#[test]
 fn target_union_failures_keep_the_outer_pair_and_first_member_cause() {
     let mut context = TestContext {
         kinds: vec![
@@ -158,6 +200,7 @@ fn target_union_failures_keep_the_outer_pair_and_first_member_cause() {
             TypeKind::Union(vec![TypeId(3), TypeId(5)]),
         ],
         completions: HashMap::new(),
+        evaluator_depth: 0,
     };
 
     let failure = relate(&mut context, TypeId(1), TypeId(6), RelationMode::Assignment).unwrap_err();
@@ -187,6 +230,7 @@ fn object_property_failures_keep_object_property_and_leaf_pairs() {
             TypeKind::LiteralString("a".to_string(), LiteralProvenance::Regular),
         ],
         completions: HashMap::new(),
+        evaluator_depth: 0,
     };
 
     let failure = relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
@@ -221,6 +265,7 @@ fn tuple_array_failures_keep_combined_element_and_length_causes() {
             TypeKind::LiteralString("seed".to_string(), LiteralProvenance::Regular),
         ],
         completions: HashMap::new(),
+        evaluator_depth: 0,
     };
     let element_failure =
         relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
@@ -239,6 +284,7 @@ fn tuple_array_failures_keep_combined_element_and_length_causes() {
             TypeKind::LiteralString("seed".to_string(), LiteralProvenance::Regular),
         ],
         completions: HashMap::new(),
+        evaluator_depth: 0,
     };
     let length_failure = relate(
         &mut reverse_context,
@@ -271,6 +317,7 @@ fn incomplete_nested_relations_are_not_rewritten_as_property_failures() {
                 })),
             ],
             completions: HashMap::from([(TypeId(3), completion)]),
+            evaluator_depth: 0,
         };
 
         let failure =
@@ -302,6 +349,7 @@ fn alternative_failures_use_semantic_completion_dominance() {
             (TypeId(4), Completion::Cycle),
             (TypeId(5), Completion::Limit),
         ]),
+        evaluator_depth: 0,
     };
 
     let failure = relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
@@ -319,6 +367,7 @@ fn invalid_projection_is_a_relation_failure_not_a_success_type() {
             TypeKind::Number,
         ],
         completions: HashMap::new(),
+        evaluator_depth: 0,
     };
 
     let failure = relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();

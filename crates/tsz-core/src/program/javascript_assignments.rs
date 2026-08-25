@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::bind::Meaning;
+use crate::bind::{JavaScriptPropertyAssignmentTarget, Meaning};
 use crate::source::{DeclId, FileId, NodeId};
 
 use super::ProgramFile;
@@ -15,8 +15,6 @@ pub(crate) enum JavaScriptAssignmentDisposition {
 pub(crate) struct JavaScriptAssignments {
     assignments: BTreeMap<(FileId, NodeId), JavaScriptAssignmentDisposition>,
     rhs_declarations: BTreeMap<(FileId, NodeId), DeclId>,
-    property_uses: Vec<(FileId, NodeId)>,
-    property_declarations: Vec<DeclId>,
     roots: BTreeMap<DeclId, bool>,
     declaration_groups: BTreeMap<DeclId, Vec<DeclId>>,
     children: BTreeMap<DeclId, Vec<DeclId>>,
@@ -32,34 +30,30 @@ impl JavaScriptAssignments {
         let mut root_groups = BTreeMap::<DeclId, Vec<DeclId>>::new();
 
         for file in files {
-            result.property_uses.extend(
-                file.bindings
-                    .javascript_property_uses
-                    .iter()
-                    .map(|&member| (file.source.id, member)),
-            );
             for assignment in &file.bindings.javascript_property_assignments {
-                result.property_declarations.extend(assignment.declaration);
+                if assignment.target == JavaScriptPropertyAssignmentTarget::OrdinaryIndex {
+                    continue;
+                }
                 let key = (file.source.id, assignment.left);
-                let roots = assignment.root.as_deref().and_then(|root| {
+                let Some(roots) = assignment.root.as_deref().and_then(|root| {
                     resolve_root_group(file, assignment.scope, root, global_values)
-                });
-                match (assignment.declaration, roots) {
-                    (Some(declaration), Some(roots)) => {
-                        let root = roots[0];
-                        root_groups.entry(root).or_insert(roots);
-                        groups
-                            .entry((root, assignment.properties.clone()))
-                            .or_default()
-                            .push((assignment.left, assignment.right, declaration));
-                    }
-                    (_, roots) => {
-                        if let Some(roots) = roots {
-                            result.defer_roots(&roots);
-                        }
+                }) else {
+                    if assignment.root.is_none() {
                         result.defer(key);
                     }
-                }
+                    continue;
+                };
+                let Some(declaration) = assignment.declaration else {
+                    result.defer_roots(&roots);
+                    result.defer(key);
+                    continue;
+                };
+                let root = roots[0];
+                root_groups.entry(root).or_insert(roots);
+                groups
+                    .entry((root, assignment.properties.clone()))
+                    .or_default()
+                    .push((assignment.left, assignment.right, declaration));
             }
         }
 
@@ -159,14 +153,6 @@ impl JavaScriptAssignments {
 
     pub(crate) fn children(&self, declaration: DeclId) -> &[DeclId] {
         self.children.get(&declaration).map_or(&[], Vec::as_slice)
-    }
-
-    pub(crate) fn property_uses(&self) -> impl Iterator<Item = (FileId, NodeId)> + '_ {
-        self.property_uses.iter().copied()
-    }
-
-    pub(crate) fn property_declarations(&self) -> impl Iterator<Item = DeclId> + '_ {
-        self.property_declarations.iter().copied()
     }
 }
 

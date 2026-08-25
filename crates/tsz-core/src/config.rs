@@ -32,6 +32,7 @@ pub struct ProjectRequest {
     /// Discovery-affecting command-line override. Other explicit overrides are
     /// applied by the adapter after resolution.
     pub allow_js: Option<bool>,
+    pub check_js: Option<bool>,
     pub out_dir: Option<PathBuf>,
     pub declaration_dir: Option<PathBuf>,
 }
@@ -42,6 +43,7 @@ impl ProjectRequest {
         Self {
             selection,
             allow_js: None,
+            check_js: None,
             out_dir: None,
             declaration_dir: None,
         }
@@ -239,6 +241,7 @@ compiler_option_schema! {
     NoLib => no_lib, "noLib", bool;
     Lib => lib, "lib", string_array;
     AllowJs => allow_js, "allowJs", bool;
+    CheckJs => check_js, "checkJs", optional_bool;
     NoCheck => no_check, "noCheck", bool;
     NoEmit => no_emit, "noEmit", bool;
     NoEmitOnError => no_emit_on_error, "noEmitOnError", bool;
@@ -390,13 +393,8 @@ impl ResolvedProject {
 /// selection. Literal `files` roots are never filtered by `exclude`.
 #[must_use]
 pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> ResolvedProject {
-    let mut resolver = Resolver::new(
-        host,
-        request.allow_js,
-        request.out_dir.as_deref(),
-        request.declaration_dir.as_deref(),
-    );
-    let (mut options, roots) = match &request.selection {
+    let mut resolver = Resolver::new(host, request);
+    let (options, roots) = match &request.selection {
         ProjectSelection::Files(files) => {
             let roots = files
                 .iter()
@@ -411,15 +409,13 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
                     absolute
                 })
                 .collect();
-            (CompilerOptions::default(), roots)
+            let mut options = CompilerOptions::default();
+            resolver.apply_overrides(&CompilerOptionPatch::default(), &mut options);
+            (options, roots)
         }
         ProjectSelection::Project(path) => resolver.resolve_explicit_project(path),
         ProjectSelection::Search(start) => resolver.resolve_searched_project(start),
     };
-    if let Some(allow_js) = request.allow_js {
-        options.allow_js = allow_js;
-    }
-
     let root_files = deduplicate_paths(roots, host.use_case_sensitive_file_names());
     let mut inputs = Vec::with_capacity(root_files.len());
     for path in &root_files {
@@ -517,9 +513,7 @@ pub fn find_config_file(host: &dyn ProgramHost, start: &Path) -> Option<PathBuf>
 
 struct Resolver<'a> {
     host: &'a dyn ProgramHost,
-    allow_js_override: Option<bool>,
-    out_dir_override: Option<PathBuf>,
-    declaration_dir_override: Option<PathBuf>,
+    overrides: CompilerOptionPatch,
     diagnostics: Vec<Diagnostic>,
     graph: ProjectGraph,
     config_ids: BTreeMap<String, ProjectConfigId>,
@@ -530,19 +524,17 @@ struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    fn new(
-        host: &'a dyn ProgramHost,
-        allow_js_override: Option<bool>,
-        out_dir_override: Option<&Path>,
-        declaration_dir_override: Option<&Path>,
-    ) -> Self {
+    fn new(host: &'a dyn ProgramHost, request: &ProjectRequest) -> Self {
+        let absolute = |path: &Path| absolute_path(host.current_directory(), path);
         Self {
             host,
-            allow_js_override,
-            out_dir_override: out_dir_override
-                .map(|path| absolute_path(host.current_directory(), path)),
-            declaration_dir_override: declaration_dir_override
-                .map(|path| absolute_path(host.current_directory(), path)),
+            overrides: CompilerOptionPatch {
+                allow_js: request.allow_js,
+                check_js: request.check_js,
+                out_dir: request.out_dir.as_deref().map(absolute),
+                declaration_dir: request.declaration_dir.as_deref().map(absolute),
+                ..CompilerOptionPatch::default()
+            },
             diagnostics: Vec::new(),
             graph: ProjectGraph::default(),
             config_ids: BTreeMap::new(),
@@ -550,6 +542,20 @@ impl<'a> Resolver<'a> {
             incomplete_configs: BTreeSet::new(),
             roots: BTreeMap::new(),
             option_origins: BTreeMap::new(),
+        }
+    }
+
+    fn apply_overrides(&mut self, configured: &CompilerOptionPatch, options: &mut CompilerOptions) {
+        let explicit_allow_js = configured.allow_js.is_some() || self.overrides.allow_js.is_some();
+        for key in CompilerOptionKey::ALL
+            .iter()
+            .filter(|key| self.overrides.contains(**key))
+        {
+            self.option_origins.remove(key);
+        }
+        self.overrides.apply_to(options);
+        if !explicit_allow_js && options.check_js == Some(true) {
+            options.allow_js = true;
         }
     }
 
@@ -642,19 +648,7 @@ impl<'a> Resolver<'a> {
         let mut options = CompilerOptions::default();
         loaded.merged.options.apply_to(&mut options);
         self.option_origins = loaded.merged.option_origins.clone();
-        if let Some(allow_js) = self.allow_js_override {
-            options.allow_js = allow_js;
-            self.option_origins.remove(&CompilerOptionKey::AllowJs);
-        }
-        if let Some(out_dir) = &self.out_dir_override {
-            options.out_dir = Some(out_dir.clone());
-            self.option_origins.remove(&CompilerOptionKey::OutDir);
-        }
-        if let Some(declaration_dir) = &self.declaration_dir_override {
-            options.declaration_dir = Some(declaration_dir.clone());
-            self.option_origins
-                .remove(&CompilerOptionKey::DeclarationDir);
-        }
+        self.apply_overrides(&loaded.merged.options, &mut options);
         let roots = self.resolve_root_files(&loaded, &options);
         (options, roots)
     }

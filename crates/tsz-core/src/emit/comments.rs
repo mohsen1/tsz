@@ -51,12 +51,19 @@ impl CommentIndex {
     fn take_before(&mut self, offset: u32) -> Vec<CommentTrivia> {
         self.take_prefix(|comment| comment.span.start < offset)
     }
+}
 
-    fn take_through_token(&mut self, end: u32) -> Vec<CommentTrivia> {
-        self.take_prefix(
-            |comment| matches!(comment.preceding_token_end, Some(start) if start <= end),
-        )
-    }
+pub(super) enum GapSeparator {
+    None,
+    Space,
+    Indent,
+    Newline,
+    Hanging,
+}
+
+pub(super) enum GapOwner {
+    End(u32),
+    Kind(TokenKind, u32),
 }
 
 impl Printer<'_> {
@@ -78,28 +85,21 @@ impl Printer<'_> {
     }
 
     pub(super) fn write_comments_before_node(&mut self, span: Span, emitted: bool) {
-        let comments = self.comment_index.take_before(span.start);
-        if emitted {
-            self.write_comment_sequence(&comments, true, true);
-        } else {
-            let preserved = comments
-                .into_iter()
-                .filter(|comment| {
-                    comment.class == CommentClass::DetachedPinned
-                        || comment.source_position == CommentSourcePosition::SourceLeading
-                            && comment.class == CommentClass::TripleSlashReference
-                })
-                .collect::<Vec<_>>();
-            self.write_comment_sequence(&preserved, true, true);
+        let mut comments = self.comment_index.take_before(span.start);
+        if !emitted {
+            comments.retain(|comment| {
+                comment.class == CommentClass::DetachedPinned
+                    || comment.source_position == CommentSourcePosition::SourceLeading
+                        && comment.class == CommentClass::TripleSlashReference
+            });
         }
+        self.write_comment_sequence(&comments, true, true);
     }
 
     /// Defensively reject emitted nodes with a comment slot not claimed earlier.
     pub(super) fn write_comments_after_node(&mut self, span: Span, emitted: bool) {
         let unresolved = self.comment_index.take_before(span.end);
-        if emitted && !unresolved.is_empty() {
-            self.javascript_supported = false;
-        }
+        self.javascript_supported &= !emitted || unresolved.is_empty();
         let trailing = self.comment_index.take_prefix(|comment| {
             comment.placement == CommentPlacement::Trailing
                 && comment.preceding_token_end == Some(span.end)
@@ -114,9 +114,36 @@ impl Printer<'_> {
         self.write_comment_sequence(&comments, true, true)
     }
 
-    pub(super) fn write_comments_through_token(&mut self, end: u32) -> bool {
-        let comments = self.comment_index.take_through_token(end);
-        self.write_comment_sequence(&comments, true, true)
+    pub(super) fn write_gap(
+        &mut self,
+        owner: GapOwner,
+        followed_by_token: bool,
+        separator: GapSeparator,
+    ) -> (bool, bool) {
+        let comments = self.comment_index.take_prefix(|comment| match owner {
+            GapOwner::End(end) => comment.preceding_token_end == Some(end),
+            GapOwner::Kind(kind, before) => {
+                comment.preceding_token_kind == Some(kind) && comment.span.end <= before
+            }
+        });
+        let broke_line = comments.iter().any(|comment| {
+            comment.placement == CommentPlacement::Leading
+                || comment.kind == CommentKind::Line
+                || comment.has_trailing_line_break
+        });
+        let ended_line = self.write_comment_sequence(&comments, followed_by_token, true);
+        match separator {
+            GapSeparator::Space | GapSeparator::Hanging if !ended_line => self.output.push(' '),
+            GapSeparator::Space | GapSeparator::Indent if ended_line => self.write_indent(),
+            GapSeparator::Newline if !ended_line => self.output.push('\n'),
+            GapSeparator::Hanging if ended_line => {
+                self.indent += 1;
+                self.write_indent();
+                self.indent = self.indent.saturating_sub(1);
+            }
+            _ => {}
+        }
+        (ended_line, broke_line)
     }
 
     pub(super) fn write_comments_before_close(&mut self, end: u32) -> bool {
@@ -124,24 +151,10 @@ impl Printer<'_> {
         self.write_comment_sequence(&comments, false, true)
     }
 
-    pub(super) fn write_comments_before_parameter(&mut self, offset: u32) {
-        self.write_comments_before(offset);
-        if self.output.ends_with('\n') {
-            self.write_indent();
-        }
-    }
-
-    pub(super) fn write_comments_after_parameter_open(&mut self) {
-        let comments = self.comment_index.take_prefix(|comment| {
-            comment.preceding_token_kind == Some(crate::syntax::TokenKind::LeftParen)
-        });
-        if self.write_comment_sequence(&comments, true, true) {
-            self.write_indent();
-        }
-    }
-
     pub(super) fn consume_comments_through_token(&mut self, end: u32) {
-        let _ = self.comment_index.take_through_token(end);
+        let _ = self.comment_index.take_prefix(
+            |comment| matches!(comment.preceding_token_end, Some(start) if start <= end),
+        );
     }
 
     pub(super) fn consume_comments_before(&mut self, offset: u32) {
@@ -161,10 +174,12 @@ impl Printer<'_> {
     ) {
         self.write_indent();
         self.write_expression_statement_expression(expression);
-        if statement.span.end > expression.span.end
-            && self.write_comments_through_token(expression.span.end)
-        {
-            self.write_indent();
+        if statement.span.end > expression.span.end {
+            self.write_gap(
+                GapOwner::End(expression.span.end),
+                true,
+                GapSeparator::Indent,
+            );
         }
         self.output.push_str(";\n");
     }

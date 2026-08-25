@@ -305,14 +305,6 @@ pub(crate) fn expression_contains_no_substitution_template(expression: &Expressi
     )
 }
 
-pub(crate) fn statements_contain_no_substitution_template(statements: &[Statement]) -> bool {
-    contains_matching_expression(
-        ExpressionRoot::Statements(statements),
-        ExpressionTraversal::All,
-        is_template_literal,
-    )
-}
-
 pub(crate) fn statements_form_no_substitution_template_safe_file(
     source: &SourceText,
     statements: &[Statement],

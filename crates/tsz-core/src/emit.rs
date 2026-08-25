@@ -15,7 +15,8 @@ mod statements;
 #[path = "emit/test_support.rs"]
 mod tests;
 mod type_members;
-use self::comments::CommentIndex;
+use self::comments::GapOwner::{End, Kind};
+use self::comments::{CommentIndex, GapSeparator as Gap};
 use crate::emit_paths::EmitFilePlan;
 use crate::program::{
     CompilerOptions, EmittedFile, ProgramFile, is_declaration_source, is_effective_commonjs,
@@ -165,26 +166,22 @@ impl<'a> Printer<'a> {
         let has_export = unit.statements.iter().any(statement_is_exported);
         for statement in &unit.statements {
             match &statement.kind {
-                StatementKind::Import(declaration) => {
-                    self.write_declaration_import(statement, declaration);
-                }
+                StatementKind::Import(_) => self.write_raw_statement(statement),
                 StatementKind::Export(declaration) => {
-                    self.write_declaration_export(statement, declaration);
+                    self.write_declaration_export(statement, declaration)
                 }
                 StatementKind::Variable(declaration) => {
-                    self.write_declaration_variable(declaration);
+                    self.write_declaration_variable(declaration)
                 }
                 StatementKind::Function(declaration) => {
-                    self.write_declaration_function(declaration);
+                    self.write_declaration_function(declaration)
                 }
-                StatementKind::Class(declaration) => {
-                    self.write_declaration_class(declaration);
-                }
+                StatementKind::Class(declaration) => self.write_declaration_class(declaration),
                 StatementKind::TypeAlias(declaration) => {
-                    self.write_declaration_type_alias(declaration);
+                    self.write_declaration_type_alias(declaration)
                 }
                 StatementKind::Interface(declaration) => {
-                    self.write_declaration_interface(declaration);
+                    self.write_declaration_interface(declaration)
                 }
                 StatementKind::Return(_)
                 | StatementKind::If(_)
@@ -218,10 +215,23 @@ impl<'a> Printer<'a> {
     fn write_runtime_variable(&mut self, declaration: &VariableDeclaration) {
         self.output
             .push_str(self.runtime_variable_kind(declaration.declaration_kind));
-        self.output.push(' ');
+        let keyword = match declaration.declaration_kind {
+            VariableKind::Let => crate::syntax::TokenKind::Let,
+            VariableKind::Const => crate::syntax::TokenKind::Const,
+            VariableKind::Var => crate::syntax::TokenKind::Var,
+        };
+        self.write_gap(Kind(keyword, declaration.name_span.start), true, Gap::Space);
         self.output.push_str(&declaration.name);
+        let separator = if declaration.initializer.is_some() {
+            Gap::Space
+        } else {
+            Gap::None
+        };
+        self.write_gap(End(declaration.name_span.end), true, separator);
         if let Some(initializer) = &declaration.initializer {
-            self.output.push_str(" = ");
+            self.output.push('=');
+            let equals = Kind(crate::syntax::TokenKind::Equals, initializer.span.start);
+            self.write_gap(equals, false, Gap::Space);
             self.write_expression(initializer, PREC_ASSIGNMENT);
         }
         self.output.push(';');
@@ -243,8 +253,7 @@ impl<'a> Printer<'a> {
         if declaration.is_async {
             self.output.push_str("async ");
         }
-        self.output.push_str("function ");
-        self.output.push_str(&declaration.name);
+        self.write_parts(&["function ", &declaration.name]);
         self.write_runtime_parameters(&declaration.parameters);
         self.output.push(' ');
         self.write_braced_statements(declaration.body_span, &declaration.body);
@@ -270,9 +279,7 @@ impl<'a> Printer<'a> {
         let module = quote_string(&declaration.module_specifier);
         if declaration.side_effect_only {
             self.write_indent();
-            self.output.push_str("require(");
-            self.output.push_str(&module);
-            self.output.push_str(");\n");
+            self.write_parts(&["require(", &module, ");\n"]);
             return;
         }
         for binding in declaration
@@ -283,15 +290,9 @@ impl<'a> Printer<'a> {
             self.write_indent();
             self.output
                 .push_str(self.runtime_variable_kind(VariableKind::Const));
-            self.output.push(' ');
-            self.output.push_str(&binding.local);
-            self.output.push_str(" = require(");
-            self.output.push_str(&module);
-            self.output.push(')');
+            self.write_parts(&[" ", &binding.local, " = require(", &module, ")"]);
             if !binding.namespace {
-                self.output.push('.');
-                self.output
-                    .push_str(binding.imported.as_deref().unwrap_or("default"));
+                self.write_parts(&[".", binding.imported.as_deref().unwrap_or("default")]);
             }
             self.output.push_str(";\n");
         }
@@ -338,8 +339,7 @@ impl<'a> Printer<'a> {
             if wrote_clause {
                 self.output.push_str(", ");
             }
-            self.output.push_str("* as ");
-            self.output.push_str(&binding.local);
+            self.write_parts(&["* as ", &binding.local]);
         } else if !named_bindings.is_empty() {
             if wrote_clause {
                 self.output.push_str(", ");
@@ -352,8 +352,7 @@ impl<'a> Printer<'a> {
                 let imported = binding.imported.as_deref().unwrap_or(&binding.local);
                 self.output.push_str(imported);
                 if imported != binding.local {
-                    self.output.push_str(" as ");
-                    self.output.push_str(&binding.local);
+                    self.write_parts(&[" as ", &binding.local]);
                 }
             }
             self.output.push_str(" }");
@@ -392,9 +391,11 @@ impl<'a> Printer<'a> {
         if declaration.export_all {
             if let Some(module) = &declaration.module_specifier {
                 self.write_indent();
-                self.output.push_str("Object.assign(exports, require(");
-                self.output.push_str(&quote_string(module));
-                self.output.push_str("));\n");
+                self.write_parts(&[
+                    "Object.assign(exports, require(",
+                    &quote_string(module),
+                    "));\n",
+                ]);
             }
             return;
         }
@@ -404,16 +405,11 @@ impl<'a> Printer<'a> {
             .filter(|specifier| !specifier.type_only)
         {
             self.write_indent();
-            self.output.push_str("exports.");
-            self.output.push_str(&specifier.exported);
-            self.output.push_str(" = ");
+            self.write_parts(&["exports.", &specifier.exported, " = "]);
             if let Some(module) = &declaration.module_specifier {
-                self.output.push_str("require(");
-                self.output.push_str(&quote_string(module));
-                self.output.push_str(").");
+                self.write_parts(&["require(", &quote_string(module), ")."]);
             }
-            self.output.push_str(&specifier.local);
-            self.output.push_str(";\n");
+            self.write_parts(&[&specifier.local, ";\n"]);
         }
     }
 
@@ -437,8 +433,7 @@ impl<'a> Printer<'a> {
                 .iter()
                 .find(|specifier| !specifier.type_only)
             {
-                self.output.push_str(" as ");
-                self.output.push_str(&specifier.exported);
+                self.write_parts(&[" as ", &specifier.exported]);
             }
         } else {
             self.output.push_str("export { ");
@@ -454,8 +449,7 @@ impl<'a> Printer<'a> {
                 first = false;
                 self.output.push_str(&specifier.local);
                 if specifier.local != specifier.exported {
-                    self.output.push_str(" as ");
-                    self.output.push_str(&specifier.exported);
+                    self.write_parts(&[" as ", &specifier.exported]);
                 }
             }
             self.output.push_str(" }");
@@ -501,7 +495,8 @@ impl<'a> Printer<'a> {
     fn write_runtime_parameters(&mut self, parameters: &[Parameter]) {
         self.output.push('(');
         if parameters.is_empty() {
-            self.write_comments_after_parameter_open();
+            let open = Kind(crate::syntax::TokenKind::LeftParen, u32::MAX);
+            self.write_gap(open, true, Gap::Indent);
         }
         let mut wrote_parameter = false;
         for parameter in parameters {
@@ -511,27 +506,24 @@ impl<'a> Printer<'a> {
             }
             self.output
                 .push_str(if wrote_parameter { ", " } else { "" });
-            self.write_comments_before_parameter(parameter.span.start);
+            self.write_comments_before(parameter.span.start);
+            if self.output.ends_with('\n') {
+                self.write_indent();
+            }
             if parameter.rest {
                 self.output.push_str("...");
-                if let Some(rest_span) = parameter.rest_span
-                    && self.write_comments_through_token(rest_span.end)
-                {
-                    self.write_indent();
+                if let Some(rest_span) = parameter.rest_span {
+                    self.write_gap(End(rest_span.end), true, Gap::Indent);
                 }
             }
             self.output.push_str(&parameter.name);
-            if self.write_comments_through_token(parameter.name_span.end) {
-                self.write_indent();
-            }
+            self.write_gap(End(parameter.name_span.end), true, Gap::Indent);
             if let Some(initializer) = &parameter.initializer {
                 self.consume_comments_before(initializer.span.start);
                 self.output.push_str(" = ");
                 self.write_expression(initializer, PREC_LOWEST);
             }
-            if self.write_comments_through_token(parameter.span.end) {
-                self.write_indent();
-            }
+            self.write_gap(End(parameter.span.end), true, Gap::Indent);
             wrote_parameter = true;
         }
         self.consume_parameter_close_comments();
@@ -540,11 +532,7 @@ impl<'a> Printer<'a> {
 
     fn write_commonjs_export(&mut self, name: &str) {
         self.write_indent();
-        self.output.push_str("exports.");
-        self.output.push_str(name);
-        self.output.push_str(" = ");
-        self.output.push_str(name);
-        self.output.push_str(";\n");
+        self.write_parts(&["exports.", name, " = ", name, ";\n"]);
     }
 
     fn write_expression(&mut self, expression: &Expression, parent_precedence: u8) {
@@ -568,22 +556,16 @@ impl<'a> Printer<'a> {
         match &expression.kind {
             ExpressionKind::Identifier { name, .. } => self.output.push_str(name),
             ExpressionKind::This => self.output.push_str("this"),
-            ExpressionKind::Literal(literal) => {
-                let text = self.literal_text(literal, expression.span);
-                self.output.push_str(&text);
-            }
+            ExpressionKind::Literal(literal) => self
+                .output
+                .push_str(&self.literal_text(literal, expression.span)),
             ExpressionKind::RegularExpression(literal) => self.write_regular_expression(literal),
             ExpressionKind::Object(properties) => {
-                self.write_object_literal(expression.span, properties);
+                self.write_object_literal(expression.span, properties)
             }
             ExpressionKind::Array(elements) => {
                 self.output.push('[');
-                for (index, element) in elements.iter().enumerate() {
-                    if index != 0 {
-                        self.output.push_str(", ");
-                    }
-                    self.write_expression(element, PREC_LOWEST);
-                }
+                self.write_expression_list(elements);
                 if self.write_comments_before_close(expression.span.end) {
                     self.write_indent();
                 }
@@ -593,13 +575,11 @@ impl<'a> Printer<'a> {
                 callee, arguments, ..
             } => {
                 self.write_expression(callee, PREC_POSTFIX);
+                self.indent += 1;
+                self.write_gap(End(callee.span.end), false, Gap::Indent);
+                self.indent = self.indent.saturating_sub(1);
                 self.output.push('(');
-                for (index, argument) in arguments.iter().enumerate() {
-                    if index != 0 {
-                        self.output.push_str(", ");
-                    }
-                    self.write_expression(argument, PREC_LOWEST);
-                }
+                self.write_expression_list(arguments);
                 if self.write_comments_before_close(expression.span.end) {
                     self.write_indent();
                 }
@@ -614,35 +594,34 @@ impl<'a> Printer<'a> {
                 self.write_expression(callee, PREC_POSTFIX);
                 self.write_type_arguments(type_arguments);
                 self.output.push('(');
-                for (index, argument) in arguments.iter().enumerate() {
-                    if index != 0 {
-                        self.output.push_str(", ");
-                    }
-                    self.write_expression(argument, PREC_LOWEST);
-                }
+                self.write_expression_list(arguments);
                 if self.write_comments_before_close(expression.span.end) {
                     self.write_indent();
                 }
                 self.output.push(')');
             }
-            ExpressionKind::Member { object, name, .. } => self.write_member_access(object, name),
+            ExpressionKind::Member {
+                object,
+                name,
+                name_span,
+            } => self.write_member_access(object, name, *name_span),
             ExpressionKind::ElementAccess { object, index } => {
-                self.write_element_access(object, index);
+                self.write_element_access(object, index)
             }
-            ExpressionKind::FunctionLike(function) => {
-                self.write_function_like(function);
-            }
+            ExpressionKind::FunctionLike(function) => self.write_function_like(function),
             ExpressionKind::Binary {
                 left,
                 operator,
+                operator_span,
                 right,
-                ..
             } => {
                 self.write_expression(left, precedence);
-                self.output.push(' ');
+                self.indent += 1;
+                self.write_gap(End(left.span.end), false, Gap::Space);
                 self.output.push_str(binary_operator_text(*operator));
-                self.output.push(' ');
+                self.write_gap(End(operator_span.end), false, Gap::Hanging);
                 self.write_expression(right, precedence.saturating_add(1));
+                self.indent = self.indent.saturating_sub(1);
             }
             ExpressionKind::Unary { operator, operand } => {
                 self.output.push_str(unary_operator_text(*operator));
@@ -698,10 +677,10 @@ impl<'a> Printer<'a> {
             self.output.push('}');
             return;
         }
-        if multiline && !properties.is_empty() {
+        if multiline {
             self.output.push('\n');
             self.indent += 1;
-        } else if !properties.is_empty() {
+        } else {
             self.output.push(' ');
         }
         for (index, property) in properties.iter().enumerate() {
@@ -726,7 +705,7 @@ impl<'a> Printer<'a> {
                 self.output.push_str(": ");
                 self.write_expression(&property.value, PREC_LOWEST);
             }
-            let comment_ended_line = self.write_comments_through_token(property.span.end);
+            let (comment_ended_line, _) = self.write_gap(End(property.span.end), true, Gap::None);
             if multiline {
                 if index + 1 < properties.len() || trailing_comma {
                     self.output.push(',');
@@ -741,9 +720,7 @@ impl<'a> Printer<'a> {
         let ended_on_line = self.write_comments_before_close(span.end);
         if multiline {
             self.indent = self.indent.saturating_sub(1);
-            if !self.output.ends_with('\n') {
-                self.output.push('\n');
-            }
+            self.write_newline();
             self.write_indent();
         } else if ended_on_line {
             self.write_indent();
@@ -797,13 +774,22 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn write_expression_list(&mut self, expressions: &[Expression]) {
+        for (index, expression) in expressions.iter().enumerate() {
+            if index != 0 {
+                self.output.push_str(", ");
+            }
+            self.write_expression(expression, PREC_LOWEST);
+        }
+    }
+
     fn write_declaration_type_alias(&mut self, declaration: &TypeAliasDeclaration) {
         self.write_indent();
-        if declaration.exported {
-            self.output.push_str("export ");
-        }
-        self.output.push_str("type ");
-        self.output.push_str(&declaration.name);
+        self.write_parts(&[
+            if declaration.exported { "export " } else { "" },
+            "type ",
+            &declaration.name,
+        ]);
         self.write_type_parameters(&declaration.type_parameters);
         self.output.push_str(" = ");
         self.write_type(&declaration.ty, TYPE_PREC_LOWEST);
@@ -812,27 +798,22 @@ impl<'a> Printer<'a> {
 
     fn write_declaration_interface(&mut self, declaration: &InterfaceDeclaration) {
         self.write_indent();
-        if declaration.exported {
-            self.output.push_str("export ");
-        }
-        self.output.push_str("interface ");
-        self.output.push_str(&declaration.name);
+        self.write_parts(&[
+            if declaration.exported { "export " } else { "" },
+            "interface ",
+            &declaration.name,
+        ]);
         self.write_type_parameters(&declaration.type_parameters);
         if !declaration.extends.is_empty() {
             self.output.push_str(" extends ");
-            for (index, base) in declaration.extends.iter().enumerate() {
-                if index != 0 {
-                    self.output.push_str(", ");
-                }
-                self.write_type(base, TYPE_PREC_LOWEST);
-            }
+            self.write_type_list(&declaration.extends, ", ", TYPE_PREC_LOWEST);
         }
         self.output.push_str(" {\n");
         self.indent += 1;
         for member in declaration
             .members
             .iter()
-            .filter(|member| Self::type_member_is_emittable(member))
+            .filter(|member| !member.recovered)
         {
             self.write_indent();
             self.write_type_member(member);
@@ -841,14 +822,6 @@ impl<'a> Printer<'a> {
         self.indent = self.indent.saturating_sub(1);
         self.write_indent();
         self.output.push_str("}\n");
-    }
-
-    fn write_declaration_import(
-        &mut self,
-        statement: &Statement,
-        _declaration: &ImportDeclaration,
-    ) {
-        self.write_raw_statement(statement);
     }
 
     fn write_declaration_export(&mut self, statement: &Statement, declaration: &ExportDeclaration) {
@@ -871,8 +844,7 @@ impl<'a> Printer<'a> {
                 self.output.push_str("default ");
             }
         }
-        self.output.push_str("declare class ");
-        self.output.push_str(&declaration.name);
+        self.write_parts(&["declare class ", &declaration.name]);
         self.write_type_parameters(&declaration.type_parameters);
         if let Some(base) = &declaration.extends {
             self.output.push_str(" extends ");
@@ -880,12 +852,7 @@ impl<'a> Printer<'a> {
         }
         if !declaration.implements.is_empty() {
             self.output.push_str(" implements ");
-            for (index, implemented) in declaration.implements.iter().enumerate() {
-                if index != 0 {
-                    self.output.push_str(", ");
-                }
-                self.write_type(implemented, TYPE_PREC_LOWEST);
-            }
+            self.write_type_list(&declaration.implements, ", ", TYPE_PREC_LOWEST);
         }
         self.output.push_str(" {\n");
         self.indent += 1;
@@ -899,19 +866,27 @@ impl<'a> Printer<'a> {
                 self.write_parameter_property_declarations(parameters);
             }
             self.write_indent();
-            if member.modifiers.private {
-                self.output.push_str("private ");
-            } else if member.modifiers.protected {
-                self.output.push_str("protected ");
-            } else if member.modifiers.public {
-                self.output.push_str("public ");
-            }
-            if member.modifiers.static_member {
-                self.output.push_str("static ");
-            }
-            if member.modifiers.readonly {
-                self.output.push_str("readonly ");
-            }
+            self.write_parts(&[
+                if member.modifiers.private {
+                    "private "
+                } else if member.modifiers.protected {
+                    "protected "
+                } else if member.modifiers.public {
+                    "public "
+                } else {
+                    ""
+                },
+                if member.modifiers.static_member {
+                    "static "
+                } else {
+                    ""
+                },
+                if member.modifiers.readonly {
+                    "readonly "
+                } else {
+                    ""
+                },
+            ]);
             match &member.kind {
                 ClassMemberKind::Constructor { parameters, .. } => {
                     self.output.push_str("constructor");
@@ -989,10 +964,7 @@ impl<'a> Printer<'a> {
             if index != 0 {
                 self.output.push_str(", ");
             }
-            if parameter.rest {
-                self.output.push_str("...");
-            }
-            self.output.push_str(&parameter.name);
+            self.write_parts(&[if parameter.rest { "..." } else { "" }, &parameter.name]);
             if parameter.optional || parameter.initializer.is_some() {
                 self.output.push('?');
             }
@@ -1020,16 +992,16 @@ impl<'a> Printer<'a> {
             if index != 0 {
                 self.output.push_str(", ");
             }
-            if parameter.const_parameter {
-                self.output.push_str("const ");
-            }
-            if parameter.in_variance {
-                self.output.push_str("in ");
-            }
-            if parameter.out_variance {
-                self.output.push_str("out ");
-            }
-            self.output.push_str(&parameter.name);
+            self.write_parts(&[
+                if parameter.const_parameter {
+                    "const "
+                } else {
+                    ""
+                },
+                if parameter.in_variance { "in " } else { "" },
+                if parameter.out_variance { "out " } else { "" },
+                &parameter.name,
+            ]);
             if let Some(constraint) = &parameter.constraint {
                 self.output.push_str(" extends ");
                 self.write_type(constraint, TYPE_PREC_LOWEST);
@@ -1087,13 +1059,10 @@ impl<'a> Printer<'a> {
             TypeNodeKind::Intersection(types) => self.write_type_list(types, " & ", precedence),
             TypeNodeKind::Object(members) => {
                 self.output.push('{');
-                if members.iter().any(Self::type_member_is_emittable) {
+                if members.iter().any(|member| !member.recovered) {
                     self.output.push('\n');
                     self.indent += 1;
-                    for member in members
-                        .iter()
-                        .filter(|member| Self::type_member_is_emittable(member))
-                    {
+                    for member in members.iter().filter(|member| !member.recovered) {
                         self.write_indent();
                         self.write_type_member(member);
                         self.output.push('\n');
@@ -1134,26 +1103,15 @@ impl<'a> Printer<'a> {
                 name, arguments, ..
             } => {
                 self.output.push_str(name);
-                if !arguments.is_empty() {
-                    self.output.push('<');
-                    for (index, argument) in arguments.iter().enumerate() {
-                        if index != 0 {
-                            self.output.push_str(", ");
-                        }
-                        self.write_type(argument, TYPE_PREC_LOWEST);
-                    }
-                    self.output.push('>');
-                }
+                self.write_type_arguments(arguments);
             }
             TypeNodeKind::TypeQuery { name, .. } => {
-                self.output.push_str("typeof ");
-                self.output.push_str(name);
+                self.write_parts(&["typeof ", name]);
             }
             TypeNodeKind::Infer {
                 name, constraint, ..
             } => {
-                self.output.push_str("infer ");
-                self.output.push_str(name);
+                self.write_parts(&["infer ", name]);
                 if let Some(constraint) = constraint {
                     self.output.push_str(" extends ");
                     self.write_type(constraint, TYPE_PREC_LOWEST);
@@ -1165,10 +1123,7 @@ impl<'a> Printer<'a> {
                 ty,
                 ..
             } => {
-                if *asserts {
-                    self.output.push_str("asserts ");
-                }
-                self.output.push_str(parameter);
+                self.write_parts(&[if *asserts { "asserts " } else { "" }, parameter]);
                 if let Some(ty) = ty {
                     self.output.push_str(" is ");
                     self.write_type(ty, TYPE_PREC_LOWEST);
@@ -1211,9 +1166,7 @@ impl<'a> Printer<'a> {
                     self.output
                         .push_str(if *readonly { "readonly " } else { "-readonly " });
                 }
-                self.output.push('[');
-                self.output.push_str(parameter);
-                self.output.push_str(" in ");
+                self.write_parts(&["[", parameter, " in "]);
                 self.write_type(constraint, TYPE_PREC_LOWEST);
                 if let Some(name_type) = name_type {
                     self.output.push_str(" as ");
@@ -1226,10 +1179,7 @@ impl<'a> Printer<'a> {
                 self.output.push_str(": ");
                 self.write_type(value_type, TYPE_PREC_LOWEST);
                 self.output.push(';');
-                for member in members
-                    .iter()
-                    .filter(|member| Self::type_member_is_emittable(member))
-                {
+                for member in members.iter().filter(|member| !member.recovered) {
                     self.output.push(' ');
                     self.write_type_member(member);
                 }
@@ -1326,6 +1276,18 @@ impl<'a> Printer<'a> {
         }
         for _ in 0..self.indent {
             self.output.push_str("    ");
+        }
+    }
+
+    fn write_newline(&mut self) {
+        if !self.output.ends_with('\n') {
+            self.output.push('\n');
+        }
+    }
+
+    fn write_parts(&mut self, parts: &[&str]) {
+        for part in parts {
+            self.output.push_str(part);
         }
     }
 }

@@ -15,6 +15,7 @@ fn compile_with_no_unused(files: &[(&str, &str)], no_unused: bool) -> tsz::Compi
             .collect(),
         &CompilerOptions {
             allow_js: true,
+            check_js: Some(true),
             strict: false,
             no_emit: true,
             no_unused_locals: no_unused,
@@ -254,6 +255,7 @@ fn jsdoc_signature_withholds_quick_info_but_preserves_binder_definition_identity
         "/** @param {number} value */ function documented(value) { return value; } documented();";
     let mut service = LanguageService::new(CompilerOptions {
         allow_js: true,
+        check_js: Some(true),
         strict: false,
         no_emit: true,
         ..CompilerOptions::default()
@@ -360,6 +362,7 @@ fn variable_jsdoc_value_withholds_quick_info_but_keeps_definition_identity() {
     );
     let mut service = LanguageService::new(CompilerOptions {
         allow_js: true,
+        check_js: Some(true),
         strict: false,
         no_emit: true,
         ..CompilerOptions::default()
@@ -684,6 +687,7 @@ fn exported_external_module_root_keeps_its_local_value_group() {
         )],
         &CompilerOptions {
             allow_js: true,
+            check_js: Some(true),
             strict: false,
             strict_null_checks: Some(false),
             strict_property_initialization: Some(false),
@@ -792,6 +796,7 @@ fn expando_property_services_fail_closed_at_exact_member_nodes() {
     );
     let mut service = LanguageService::new(CompilerOptions {
         allow_js: true,
+        check_js: Some(true),
         no_emit: true,
         ..CompilerOptions::default()
     });
@@ -836,6 +841,7 @@ fn cross_file_repeated_root_property_service_nonclaims_are_order_independent() {
         let usage = "shared.bucket.value;";
         let mut service = LanguageService::new(CompilerOptions {
             allow_js: true,
+            check_js: Some(true),
             no_emit: true,
             ..CompilerOptions::default()
         });
@@ -865,6 +871,7 @@ fn incomplete_and_unresolved_javascript_members_are_service_nonclaimed() {
     ] {
         let mut service = LanguageService::new(CompilerOptions {
             allow_js: true,
+            check_js: Some(true),
             no_emit: true,
             ..CompilerOptions::default()
         });
@@ -914,21 +921,61 @@ fn typescript_property_assignment_keeps_the_ordinary_negative_diagnostic() {
 }
 
 #[test]
-fn unresolved_root_is_incomplete_without_a_speculative_property_diagnostic() {
-    let output = compile(&[("unresolved.js", "missing.value = 1;")]);
-    assert_eq!(codes(&output), [2304], "{:#?}", output.diagnostics);
-    assert!(!codes(&output).contains(&2339));
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+fn assignments_without_a_property_producer_use_ordinary_semantics() {
+    for (path, source, expected) in [
+        ("unresolved.js", "missing.value = 1;", &[2304][..]),
+        (
+            "renamed-unresolved.js",
+            "absentRenamed.deep.value = 1;",
+            &[2304][..],
+        ),
+        ("negative.js", "const target = {}; target[-1] = 1;", &[][..]),
+        ("wrapped.js", "const target = {}; target[(0)] = 1;", &[][..]),
+        (
+            "computed.js",
+            "const renamed = {}; const index = 0; renamed[index] = 1;",
+            &[][..],
+        ),
+    ] {
+        let output = compile(&[(path, source)]);
+        assert_eq!(
+            codes(&output),
+            expected,
+            "{path}: {:#?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{path}"
+        );
+    }
 }
 
 #[test]
-fn computed_property_assignment_remains_fail_closed() {
-    let output = compile(&[(
-        "computed.js",
-        "const target = {}; target['value'] = 1; target['value'];",
-    )]);
-    assert!(!codes(&output).contains(&2339), "{:#?}", output.diagnostics);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+fn canonical_element_property_assignments_remain_fail_closed() {
+    for (path, source) in [
+        (
+            "string.js",
+            "const target = {}; target['value'] = 1; target['value'];",
+        ),
+        (
+            "number.js",
+            "const renamed = {}; renamed[0] = 1; renamed[0];",
+        ),
+    ] {
+        let output = compile(&[(path, source)]);
+        assert!(
+            !codes(&output).contains(&2339),
+            "{path}: {:#?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{path}"
+        );
+    }
 }
 
 #[test]

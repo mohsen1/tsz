@@ -5,7 +5,7 @@ use crate::syntax::{
 };
 
 use super::object_shape::plain_type_parameters;
-use super::{Checker, ConstructOrigin, DeclarationModel, is_declaration_source};
+use super::{Checker, ConstructOrigin, DeclarationModel};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, Property, TypeId, TypeKind};
 
@@ -134,7 +134,9 @@ impl Checker<'_> {
         declaration: &ClassDeclaration,
     ) {
         if declaration.declared
-            || is_declaration_source(&self.program.files[file.0 as usize].source.path)
+            || self.program.files[file.0 as usize]
+                .source
+                .is_declaration_source()
         {
             return;
         }

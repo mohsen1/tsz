@@ -1147,13 +1147,6 @@ fn authored_structural_union_member(node: &TypeNode) -> bool {
     }
 }
 
-fn is_declaration_source(path: &std::path::Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
-}
-
 impl RelationContext for Checker<'_> {
     fn force_type(&mut self, ty: TypeId, depth: usize) -> Completion<TypeId> {
         match self.store.kind(ty).clone() {

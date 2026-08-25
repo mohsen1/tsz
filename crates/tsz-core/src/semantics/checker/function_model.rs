@@ -292,8 +292,10 @@ impl Checker<'_> {
                 let _ = self.require_completion(Completion::<()>::Deferred);
                 continue;
             };
-            let canonical_ambient = canonical.declared
-                || super::is_declaration_source(&self.program.files[file.0 as usize].source.path);
+            let declaration_source = self.program.files[file.0 as usize]
+                .source
+                .is_declaration_source();
+            let canonical_ambient = canonical.declared || declaration_source;
             for id in declarations {
                 let Some(DeclarationModel::Function { declaration, .. }) =
                     self.models.get(&id).copied()
@@ -309,10 +311,7 @@ impl Checker<'_> {
                         2383,
                     );
                 } else {
-                    let ambient = declaration.declared
-                        || super::is_declaration_source(
-                            &self.program.files[file.0 as usize].source.path,
-                        );
+                    let ambient = declaration.declared || declaration_source;
                     if ambient != canonical_ambient {
                         self.push_diagnostic(
                             file,

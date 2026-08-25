@@ -13,7 +13,7 @@ use crate::syntax::{
 };
 
 use super::{
-    Checker, is_declaration_source,
+    Checker,
     recursion::{ReferenceDemand, ReferenceExpansionStack},
     relation_diagnostic::ContextualType,
     type_member_grammar::ParameterGrammarHost,
@@ -89,7 +89,7 @@ impl Checker<'_> {
             }
             StatementKind::Function(declaration) => {
                 let source = &self.program.files[file.0 as usize].source;
-                let declaration_source = is_declaration_source(&source.path);
+                let declaration_source = source.is_declaration_source();
                 let javascript_source = matches!(
                     source.kind(),
                     SourceKind::JavaScript | SourceKind::JavaScriptJsx
@@ -219,7 +219,7 @@ impl Checker<'_> {
                     )
                     .unwrap_or_else(|| synthetic_identity(file, declaration.name_span.start));
                 let source = &self.program.files[file.0 as usize].source;
-                let declaration_source = is_declaration_source(&source.path);
+                let declaration_source = source.is_declaration_source();
                 let javascript_source = matches!(
                     source.kind(),
                     SourceKind::JavaScript | SourceKind::JavaScriptJsx

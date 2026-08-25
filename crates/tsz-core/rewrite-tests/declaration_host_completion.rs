@@ -5,6 +5,7 @@ use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, Sour
 fn options() -> CompilerOptions {
     CompilerOptions {
         allow_js: true,
+        check_js: Some(true),
         no_emit: true,
         strict: true,
         ..CompilerOptions::default()
@@ -444,6 +445,8 @@ fn opaque_namespace_module_and_ambient_global_hosts_defer_structurally() {
 #[test]
 fn declaration_hosts_respect_program_owned_standard_library_identity() {
     let library_options = CompilerOptions {
+        allow_js: true,
+        check_js: Some(true),
         lib: Some(vec!["es2022".to_string()]),
         no_emit: true,
         strict: true,
@@ -561,6 +564,7 @@ fn unmodeled_declaration_hosts_block_every_emit_product() {
                     vec![SourceInput::new(path, Arc::<str>::from(source))],
                     &CompilerOptions {
                         allow_js: true,
+                        check_js: Some(true),
                         declaration: true,
                         no_check,
                         module: module.to_string(),
@@ -594,6 +598,7 @@ fn javascript_module_roots_block_every_emit_product() {
                         vec![SourceInput::new(&path, Arc::<str>::from(source))],
                         &CompilerOptions {
                             allow_js: true,
+                            check_js: Some(true),
                             declaration: true,
                             no_check,
                             module: module.to_string(),

@@ -89,60 +89,47 @@ impl Parser<'_> {
         if self.not_parenthesized_arrows.contains(&self.index) {
             return None;
         }
-        let saved_index = self.index;
-        let saved_next_node = self.next_node;
-        let saved_diagnostics = self.diagnostics.len();
-        let saved_speculating = self.speculating;
-        let saved_rewrites = self.speculative_token_rewrites.len();
-        self.speculating = true;
-        self.bump();
-        let mut compatible = true;
-        while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
-            if !self.parameter_starts_arrow_speculation() {
-                compatible = false;
-                break;
+        let arrow = self.with_speculative_parse(|parser| {
+            parser.bump();
+            let mut compatible = true;
+            while !parser.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
+                if !parser.parameter_starts_arrow_speculation() {
+                    compatible = false;
+                    break;
+                }
+                parser.parse_parameter();
+                if parser.eat(TokenKind::Comma) || parser.at(TokenKind::RightParen) {
+                    continue;
+                }
+                if !parser.parameter_starts_arrow_speculation() {
+                    compatible = false;
+                    break;
+                }
             }
-            self.parse_parameter();
-            if self.eat(TokenKind::Comma) || self.at(TokenKind::RightParen) {
-                continue;
-            }
-            if !self.parameter_starts_arrow_speculation() {
-                compatible = false;
-                break;
-            }
-        }
-        compatible &= self.eat(TokenKind::RightParen);
-        let arrow = if !compatible {
-            None
-        } else if self.at(TokenKind::FatArrow) {
-            Some(ParenthesizedArrowToken::Present(self.index))
-        } else if self.eat(TokenKind::Colon) {
-            let annotation = self.parse_type();
-            if annotation.blocks_arrow_parse() {
+            compatible &= parser.eat(TokenKind::RightParen);
+            if !compatible {
                 None
-            } else if self.at(TokenKind::FatArrow) {
-                Some(ParenthesizedArrowToken::Present(self.index))
+            } else if parser.at(TokenKind::FatArrow) {
+                Some(ParenthesizedArrowToken::Present(parser.index))
+            } else if parser.eat(TokenKind::Colon) {
+                let annotation = parser.parse_type();
+                if annotation.blocks_arrow_parse() {
+                    None
+                } else if parser.at(TokenKind::FatArrow) {
+                    Some(ParenthesizedArrowToken::Present(parser.index))
+                } else {
+                    parser
+                        .at(TokenKind::LeftBrace)
+                        .then_some(ParenthesizedArrowToken::Missing)
+                }
             } else {
-                self.at(TokenKind::LeftBrace)
+                parser
+                    .at(TokenKind::LeftBrace)
                     .then_some(ParenthesizedArrowToken::Missing)
             }
-        } else {
-            self.at(TokenKind::LeftBrace)
-                .then_some(ParenthesizedArrowToken::Missing)
-        };
-        for (index, token) in self
-            .speculative_token_rewrites
-            .drain(saved_rewrites..)
-            .rev()
-        {
-            self.tokens[index] = token;
-        }
-        self.speculating = saved_speculating;
-        self.index = saved_index;
-        self.next_node = saved_next_node;
-        self.diagnostics.truncate(saved_diagnostics);
+        });
         if arrow.is_none() {
-            self.not_parenthesized_arrows.insert(saved_index);
+            self.not_parenthesized_arrows.insert(self.index);
         }
         arrow
     }
@@ -220,33 +207,19 @@ impl Parser<'_> {
         start: usize,
         definite: bool,
     ) -> Option<ParenthesizedArrowToken> {
-        let saved_index = self.index;
-        let saved_next_node = self.next_node;
-        let saved_diagnostics = self.diagnostics.len();
-        let saved_speculating = self.speculating;
-        let saved_rewrites = self.speculative_token_rewrites.len();
-        self.index = start;
-        self.speculating = true;
-        let annotation = self.parse_type();
-        let arrow = if self.at(TokenKind::FatArrow) {
-            (definite || !annotation.blocks_arrow_parse())
-                .then_some(ParenthesizedArrowToken::Present(self.index))
-        } else if definite || self.at(TokenKind::LeftBrace) && !annotation.blocks_arrow_parse() {
-            Some(ParenthesizedArrowToken::Missing)
-        } else {
-            None
-        };
-        for (index, token) in self
-            .speculative_token_rewrites
-            .drain(saved_rewrites..)
-            .rev()
-        {
-            self.tokens[index] = token;
-        }
-        self.speculating = saved_speculating;
-        self.index = saved_index;
-        self.next_node = saved_next_node;
-        self.diagnostics.truncate(saved_diagnostics);
-        arrow
+        self.with_speculative_parse(|parser| {
+            parser.index = start;
+            let annotation = parser.parse_type();
+            if parser.at(TokenKind::FatArrow) {
+                (definite || !annotation.blocks_arrow_parse())
+                    .then_some(ParenthesizedArrowToken::Present(parser.index))
+            } else if definite
+                || parser.at(TokenKind::LeftBrace) && !annotation.blocks_arrow_parse()
+            {
+                Some(ParenthesizedArrowToken::Missing)
+            } else {
+                None
+            }
+        })
     }
 }

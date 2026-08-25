@@ -1,8 +1,7 @@
 use crate::source::Span;
 use crate::syntax::{
-    Expression, ExpressionKind, Literal, Statement, StringLiteral, VariableDeclaration,
-    VariableKind, erased_expression_separated_number, expression_contains_no_substitution_template,
-    statements_contain_no_substitution_template,
+    Expression, ExpressionKind, Literal, StringLiteral, VariableDeclaration, VariableKind,
+    erased_expression_separated_number, expression_contains_no_substitution_template,
 };
 
 use super::{Printer, TYPE_PREC_LOWEST, is_quoted, quote_string, variable_kind_text};
@@ -83,10 +82,6 @@ impl Printer<'_> {
         }
         self.output.push_str(";\n");
     }
-}
-
-pub(super) fn function_body_contains_template(body: &[Statement]) -> bool {
-    statements_contain_no_substitution_template(body)
 }
 
 pub(super) fn expression_contains_template(expression: &Expression) -> bool {

@@ -98,6 +98,147 @@ fn tsserver_uses_content_length_and_reports_unsupported_commands_honestly() {
 }
 
 #[test]
+fn tsserver_preserves_native_check_js_file_modes_and_completion() {
+    let requests = [
+        json!({
+            "seq": 1, "type": "request", "command": "compilerOptionsForInferredProjects",
+            "arguments": {"options": {"checkJs": true}}
+        }),
+        json!({
+            "seq": 2, "type": "request", "command": "configure",
+            "arguments": {
+                "preferences": {"quotePreference": "single"},
+                "compilerOptions": {"allowJs": false, "checkJs": false}
+            }
+        }),
+        json!({
+            "seq": 3, "type": "request", "command": "open",
+            "arguments": {"file": "checked.js", "fileContent": "MissingChecked;"}
+        }),
+        json!({
+            "seq": 4, "type": "request", "command": "semanticDiagnosticsSync",
+            "arguments": {"file": "checked.js"}
+        }),
+        json!({
+            "seq": 5, "type": "request", "command": "compilerOptionsForInferredProjects",
+            "arguments": {"options": {"allowJs": true, "checkJs": false}}
+        }),
+        json!({
+            "seq": 6, "type": "request", "command": "open",
+            "arguments": {
+                "file": "Foo.js",
+                "fileContent": concat!(
+                    "/** @param {function ({OwnerID:string,AwayID:string}):void} x\n",
+                    "  * @param {function (string):void} y */\n",
+                    "function fn(x, y) { }",
+                )
+            }
+        }),
+        json!({
+            "seq": 7, "type": "request", "command": "semanticDiagnosticsSync",
+            "arguments": {"file": "Foo.js"}
+        }),
+        json!({
+            "seq": 8, "type": "request", "command": "open",
+            "arguments": {"file": "consumer.ts", "fileContent": "const typed: string = 1;"}
+        }),
+        json!({
+            "seq": 9, "type": "request", "command": "semanticDiagnosticsSync",
+            "arguments": {"file": "consumer.ts"}
+        }),
+    ];
+    let mut input = Vec::new();
+    for request in requests {
+        let body = serde_json::to_vec(&request).unwrap();
+        input.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        input.extend_from_slice(&body);
+    }
+    let mut output = Vec::new();
+    tsz_cli::tsserver::run_tsserver(Cursor::new(input), &mut output).unwrap();
+    let responses = decode_messages(&output);
+
+    assert_eq!(responses.len(), 9);
+    assert_eq!(responses[0]["body"], true);
+    assert!(responses[1].get("body").is_none());
+    assert_eq!(responses[3]["success"], true);
+    assert_eq!(responses[3]["body"][0]["code"], 2304);
+    assert_eq!(responses[4]["body"], true);
+    assert_eq!(responses[6]["success"], true);
+    assert_eq!(responses[6]["body"], json!([]));
+    assert_eq!(responses[8]["success"], true);
+    assert_eq!(responses[8]["body"][0]["code"], 2322);
+}
+
+#[test]
+fn tsserver_exposes_the_exact_open_snapshot_for_harness_consistency_checks() {
+    let path = "nested/renamed-consistency.ts";
+    let initial = "const icon = \"😀\";\nlet value = 1;";
+    let changed = "const icon = \"é\";\nlet value = 1;";
+    let requests = [
+        json!({
+            "seq": 1,
+            "type": "request",
+            "command": "open",
+            "arguments": {"file": path, "fileContent": initial}
+        }),
+        json!({
+            "seq": 2,
+            "type": "request",
+            "command": "tsz/text",
+            "arguments": {"file": path}
+        }),
+        json!({
+            "seq": 3,
+            "type": "request",
+            "command": "change",
+            "arguments": {
+                "file": path,
+                "line": 1,
+                "offset": 15,
+                "endLine": 1,
+                "endOffset": 17,
+                "insertString": "é"
+            }
+        }),
+        json!({
+            "seq": 4,
+            "type": "request",
+            "command": "tsz/text",
+            "arguments": {"file": path}
+        }),
+        json!({
+            "seq": 5,
+            "type": "request",
+            "command": "tsz/reset",
+            "arguments": {}
+        }),
+        json!({
+            "seq": 6,
+            "type": "request",
+            "command": "tsz/text",
+            "arguments": {"file": path}
+        }),
+    ];
+    let mut input = Vec::new();
+    for request in requests {
+        let body = serde_json::to_vec(&request).unwrap();
+        input.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        input.extend_from_slice(&body);
+    }
+    let mut output = Vec::new();
+    tsz_cli::tsserver::run_tsserver(Cursor::new(input), &mut output).unwrap();
+    let responses = decode_messages(&output);
+
+    assert_eq!(responses.len(), 6);
+    assert_eq!(responses[1]["success"], true);
+    assert_eq!(responses[1]["body"], initial);
+    assert_eq!(responses[3]["success"], true);
+    assert_eq!(responses[3]["body"], changed);
+    assert_eq!(responses[5]["success"], false);
+    assert_eq!(responses[5]["message"], format!("File is not open: {path}"));
+}
+
+#[test]
 fn tsserver_diagnostics_select_the_exact_session_client_wire_shape() {
     let diagnostic_path = "renamed/nested/wire-contract.ts";
     let clean_path = "renamed/nested/empty-control.ts";
@@ -610,6 +751,30 @@ fn every_native_binary_has_an_honest_help_surface() {
         );
         assert!(output.stderr.is_empty(), "{binary} --help wrote to stderr");
     }
+}
+
+#[test]
+fn cli_check_js_implies_allow_js_before_project_discovery() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(
+        project.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"noEmit":true}}"#,
+    )
+    .unwrap();
+    std::fs::write(project.path().join("case.js"), "MissingFromJavaScript;\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tsz"))
+        .current_dir(project.path())
+        .args(["--checkJs", "--pretty", "false"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("case.js(1,1): error TS2304: Cannot find name 'MissingFromJavaScript'."),
+        "{stdout:?}",
+    );
 }
 
 #[test]

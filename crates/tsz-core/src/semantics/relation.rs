@@ -139,6 +139,21 @@ pub(crate) trait RelationContext {
     fn canonical_union(&mut self, members: &[TypeId]) -> TypeId;
 }
 
+/// The active deferred-evaluator depth at a relation entry.
+///
+/// Relation recursion has its own structural depth; forcing must preserve this
+/// seed instead of converting structural nesting into evaluator fuel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EvaluationDepth(usize);
+
+impl EvaluationDepth {
+    pub(crate) const ROOT: Self = Self(0);
+
+    pub(crate) const fn from_active_depth(depth: usize) -> Self {
+        Self(depth)
+    }
+}
+
 pub(crate) fn relate_with_property_order<C: RelationContext>(
     context: &mut C,
     source: TypeId,
@@ -146,12 +161,31 @@ pub(crate) fn relate_with_property_order<C: RelationContext>(
     mode: RelationMode,
     property_order: RelationPropertyOrder,
 ) -> Result<(), RelationFailure> {
+    relate_with_property_order_at_evaluation_depth(
+        context,
+        source,
+        target,
+        mode,
+        property_order,
+        EvaluationDepth::ROOT,
+    )
+}
+
+pub(crate) fn relate_with_property_order_at_evaluation_depth<C: RelationContext>(
+    context: &mut C,
+    source: TypeId,
+    target: TypeId,
+    mode: RelationMode,
+    property_order: RelationPropertyOrder,
+    evaluation_depth: EvaluationDepth,
+) -> Result<(), RelationFailure> {
     Relation {
         context,
         active: HashSet::new(),
         source_references: ReferenceExpansionStack::new(ReferenceDemand::RelationSource),
         target_references: ReferenceExpansionStack::new(ReferenceDemand::RelationTarget),
         property_order,
+        evaluation_depth,
     }
     .relate_inner(source, target, mode, 0)
 }
@@ -162,6 +196,7 @@ struct Relation<'a, C> {
     source_references: ReferenceExpansionStack,
     target_references: ReferenceExpansionStack,
     property_order: RelationPropertyOrder,
+    evaluation_depth: EvaluationDepth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -309,8 +344,8 @@ impl<C: RelationContext> Relation<'_, C> {
         mode: RelationMode,
         depth: usize,
     ) -> Result<(), RelationFailure> {
-        let forced_source = self.force(source, source, target, depth)?;
-        let forced_target = self.force(target, source, target, depth)?;
+        let forced_source = self.force(source, source, target)?;
+        let forced_target = self.force(target, source, target)?;
         if forced_source != source || forced_target != target {
             return self.relate_inner(forced_source, forced_target, mode, depth + 1);
         }
@@ -821,9 +856,8 @@ impl<C: RelationContext> Relation<'_, C> {
         ty: TypeId,
         source: TypeId,
         target: TypeId,
-        depth: usize,
     ) -> Result<TypeId, RelationFailure> {
-        match self.context.force_type(ty, depth) {
+        match self.context.force_type(ty, self.evaluation_depth.0) {
             Completion::Complete(value) => Ok(value),
             Completion::Cycle => Err(failure(source, target, RelationFailureKind::Cycle)),
             Completion::Limit => Err(failure(

@@ -192,6 +192,36 @@ class TszServerBridge {
         }
     }
 
+    getText(fileName) {
+        const requestSeq = ++this._requestSeq;
+        const command = "tsz/text";
+        const responseBody = this.sendRequest(JSON.stringify({
+            seq: requestSeq,
+            type: "request",
+            command,
+            arguments: { file: fileName },
+        }));
+        let response;
+        try {
+            response = JSON.parse(responseBody);
+        } catch (err) {
+            throw new Error(`Invalid ${command} response: ${err.message}`);
+        }
+        if (response?.command !== command || response?.request_seq !== requestSeq) {
+            throw new Error(
+                `Stale ${command} response: expected request_seq=${requestSeq}, got ${responseBody}`
+            );
+        }
+        if (!response || response.success !== true) {
+            const message = response && response.message ? response.message : responseBody;
+            throw new Error(`tsz-server ${command} failed: ${message}`);
+        }
+        if (typeof response.body !== "string") {
+            throw new Error(`Malformed ${command} response: expected a string body`);
+        }
+        return response.body;
+    }
+
     /**
      * Shut down the worker and tsz-server.
      */
@@ -786,9 +816,22 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             );
         }
 
-        assertTextConsistent() {
-            throw new Error(
-                "assertTextConsistent is not available through the tsz-server protocol.",
+        assertTextConsistent(fileName) {
+            const serverText = bridge.getText(fileName);
+            const clientText = this._host.readFile(fileName);
+            ts.Debug.assert(
+                serverText === clientText,
+                [
+                    "Server and client text are inconsistent.",
+                    "",
+                    "Server:",
+                    serverText,
+                    "",
+                    "Client:",
+                    clientText,
+                    "",
+                    "This probably means something is wrong with the fourslash infrastructure, not with the test.",
+                ].join(ts.sys.newLine),
             );
         }
 

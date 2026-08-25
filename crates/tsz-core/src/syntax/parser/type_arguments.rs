@@ -3,6 +3,28 @@ use crate::diagnostics::Diagnostic;
 use crate::syntax::{TokenKind, TypeNode};
 
 impl Parser<'_> {
+    pub(super) fn with_speculative_parse<R>(&mut self, parse: impl FnOnce(&mut Self) -> R) -> R {
+        let saved_index = self.index;
+        let saved_next_node = self.next_node;
+        let saved_diagnostics = self.diagnostics.len();
+        let saved_speculating = self.speculating;
+        let saved_rewrites = self.speculative_token_rewrites.len();
+        self.speculating = true;
+        let result = parse(self);
+        for (index, token) in self
+            .speculative_token_rewrites
+            .drain(saved_rewrites..)
+            .rev()
+        {
+            self.tokens[index] = token;
+        }
+        self.speculating = saved_speculating;
+        self.index = saved_index;
+        self.next_node = saved_next_node;
+        self.diagnostics.truncate(saved_diagnostics);
+        result
+    }
+
     pub(super) fn parse_type_arguments(&mut self) -> Vec<TypeNode> {
         self.parse_type_arguments_with_status().0
     }
@@ -61,25 +83,9 @@ impl Parser<'_> {
         {
             return false;
         }
-        let saved_index = self.index;
-        let saved_next_node = self.next_node;
-        let saved_diagnostics = self.diagnostics.len();
-        let saved_speculating = self.speculating;
-        let saved_rewrites = self.speculative_token_rewrites.len();
-        self.speculating = true;
-        let (_, closed) = self.parse_type_arguments_with_status();
-        let matches_following = closed && predicate(self.kind());
-        for (index, token) in self
-            .speculative_token_rewrites
-            .drain(saved_rewrites..)
-            .rev()
-        {
-            self.tokens[index] = token;
-        }
-        self.speculating = saved_speculating;
-        self.index = saved_index;
-        self.next_node = saved_next_node;
-        self.diagnostics.truncate(saved_diagnostics);
-        matches_following
+        self.with_speculative_parse(|parser| {
+            let (_, closed) = parser.parse_type_arguments_with_status();
+            closed && predicate(parser.kind())
+        })
     }
 }

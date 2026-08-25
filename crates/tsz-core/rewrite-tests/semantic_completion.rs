@@ -229,6 +229,19 @@ fn required_annotations_visit_nested_components_in_unused_and_ambient_declaratio
 }
 
 #[test]
+fn structural_relation_depth_does_not_consume_evaluator_fuel() {
+    let depth = 100;
+    let annotation = format!("number{}", "[]".repeat(depth));
+    let initializer = format!("{}holder.value{}", "[".repeat(depth), "]".repeat(depth));
+    let output = compile(&format!(
+        "declare const holder:{{value:number}};const target:{annotation}={initializer};"
+    ));
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_completion(&output, SemanticCompletion::Complete);
+    assert_eq!(output.exit_status, CompileExitStatus::Success);
+}
+
+#[test]
 fn class_and_function_type_annotations_share_the_required_type_boundary() {
     let output = compile(
         "declare class Vessel { \

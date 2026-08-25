@@ -4,30 +4,16 @@ use crate::syntax::{
     TypeMemberNameKind, TypeNode, TypeNodeKind,
 };
 
-use super::literals::function_body_contains_template;
 use super::{PREC_LOWEST, Printer, TYPE_PREC_LOWEST};
 
 impl Printer<'_> {
     pub(super) fn write_declaration_function(&mut self, declaration: &FunctionDeclaration) {
-        if declaration.return_type.is_none()
-            && declaration.has_body
-            && !declaration.body.is_empty()
-            && (declaration
-                .parameters
-                .iter()
-                .any(|parameter| parameter.initializer.is_some())
-                || function_body_contains_template(&declaration.body))
-        {
-            // Return inference for defaulted implementations belongs to the
-            // checked declaration summary. Never publish `unknown` as if it
-            // were that summary.
-            self.declaration_supported = false;
-        }
         self.write_indent();
-        if declaration.exported {
-            self.output.push_str("export ");
-        }
-        self.output.push_str("declare function ");
+        self.output.push_str(if declaration.exported {
+            "export declare function "
+        } else {
+            "declare function "
+        });
         self.output.push_str(&declaration.name);
         self.write_type_parameters(&declaration.type_parameters);
         self.write_declaration_parameters(&declaration.parameters);
@@ -50,8 +36,7 @@ impl Printer<'_> {
             .filter(|parameter| is_parameter_property(parameter))
         {
             self.write_indent();
-            self.output.push_str(&parameter.name);
-            self.output.push_str(";\n");
+            self.write_parts(&[&parameter.name, ";\n"]);
         }
     }
 
@@ -113,10 +98,6 @@ impl Printer<'_> {
         }
     }
 
-    pub(super) const fn type_member_is_emittable(member: &TypeMember) -> bool {
-        !member.recovered
-    }
-
     pub(super) fn write_constructor_body(
         &mut self,
         body_span: Option<crate::source::Span>,
@@ -153,10 +134,8 @@ impl Printer<'_> {
             self.write_parameter_property_assignments(parameters);
         }
         if let Some(body_span) = body_span {
-            let ended_on_line = self.write_comments_before_close(body_span.end);
-            if !ended_on_line && !self.output.ends_with('\n') {
-                self.output.push('\n');
-            }
+            self.write_comments_before_close(body_span.end);
+            self.write_newline();
         }
         self.indent = self.indent.saturating_sub(1);
         self.write_indent();
@@ -169,11 +148,7 @@ impl Printer<'_> {
             .filter(|parameter| is_parameter_property(parameter))
         {
             self.write_indent();
-            self.output.push_str("this.");
-            self.output.push_str(&parameter.name);
-            self.output.push_str(" = ");
-            self.output.push_str(&parameter.name);
-            self.output.push_str(";\n");
+            self.write_parts(&["this.", &parameter.name, " = ", &parameter.name, ";\n"]);
         }
     }
 

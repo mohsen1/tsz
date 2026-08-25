@@ -2,7 +2,10 @@ use crate::bind::{
     BoundFlowNode, FlowAssignmentSource, FlowNarrowing, FlowPathSegment, TypeofWitness,
     TypeofWitnessSet,
 };
-use crate::semantics::relation::{RelationFailureKind, RelationMode, relate_with_property_order};
+use crate::semantics::relation::{
+    EvaluationDepth, RelationFailureKind, RelationMode,
+    relate_with_property_order_at_evaluation_depth,
+};
 use crate::semantics::types::{
     Completion, DeferredType, LiteralProvenance, TypeId, TypeKind, UnionPolicy,
 };
@@ -179,7 +182,7 @@ impl Checker<'_> {
             if matches!(self.store.kind(source), TypeKind::Union(_)) && !exact {
                 return Completion::Deferred;
             }
-            if completed!(self.flow_related(source, declared, RelationMode::Assignment)) {
+            if completed!(self.flow_related(source, declared, RelationMode::Assignment, depth)) {
                 if !exact {
                     return Completion::Deferred;
                 }
@@ -267,7 +270,7 @@ impl Checker<'_> {
         let narrowed = completed!(narrowed);
         let asserted = completed!(asserted);
         let Some((segment, rest)) = path.split_first() else {
-            return self.predicate_leaf(narrowed, asserted, truthy);
+            return self.predicate_leaf(narrowed, asserted, truthy, depth);
         };
         self.narrow_predicate_object(narrowed, segment, rest, asserted, truthy, depth)
     }
@@ -319,7 +322,13 @@ impl Checker<'_> {
         })
     }
 
-    fn predicate_leaf(&mut self, ty: TypeId, asserted: TypeId, truthy: bool) -> Completion<TypeId> {
+    fn predicate_leaf(
+        &mut self,
+        ty: TypeId,
+        asserted: TypeId,
+        truthy: bool,
+        depth: usize,
+    ) -> Completion<TypeId> {
         let never = self.store.builtins.never;
         let select = |when_true, when_false| {
             Completion::Complete(if truthy { when_true } else { when_false })
@@ -342,9 +351,14 @@ impl Checker<'_> {
         let mut overlap = Vec::new();
         for member in source.iter().copied() {
             for candidate in candidates.iter().copied() {
-                if completed!(self.flow_related(member, candidate, RelationMode::Subtype)) {
+                if completed!(self.flow_related(member, candidate, RelationMode::Subtype, depth)) {
                     overlap.push(member);
-                } else if completed!(self.flow_related(candidate, member, RelationMode::Subtype)) {
+                } else if completed!(self.flow_related(
+                    candidate,
+                    member,
+                    RelationMode::Subtype,
+                    depth,
+                )) {
                     overlap.push(candidate);
                 } else if self.predicate_type_is_incomplete(member)
                     || self.predicate_type_is_incomplete(candidate)
@@ -375,7 +389,7 @@ impl Checker<'_> {
         let true_part_is_incomplete = self.predicate_type_is_incomplete(true_part);
         let mut retained = Vec::new();
         for member in source {
-            if completed!(self.flow_related(member, true_part, RelationMode::Subtype)) {
+            if completed!(self.flow_related(member, true_part, RelationMode::Subtype, depth)) {
                 continue;
             }
             if true_part_is_incomplete || self.predicate_type_is_incomplete(member) {
@@ -455,8 +469,16 @@ impl Checker<'_> {
         source: TypeId,
         target: TypeId,
         mode: RelationMode,
+        depth: usize,
     ) -> Completion<bool> {
-        let relation = relate_with_property_order(self, source, target, mode, Default::default());
+        let relation = relate_with_property_order_at_evaluation_depth(
+            self,
+            source,
+            target,
+            mode,
+            Default::default(),
+            EvaluationDepth::from_active_depth(depth),
+        );
         let Err(failure) = relation else {
             return Completion::Complete(true);
         };

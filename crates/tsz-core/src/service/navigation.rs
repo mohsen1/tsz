@@ -503,6 +503,15 @@ struct ReferenceVisitor<'a> {
 }
 
 impl ReferenceVisitor<'_> {
+    fn scope_for_node(&self, node: NodeId, fallback: ScopeId) -> ScopeId {
+        self.file
+            .bindings
+            .scope_for_node
+            .get(&node)
+            .copied()
+            .unwrap_or(fallback)
+    }
+
     fn visit_statements(&mut self, statements: &[Statement], scope: ScopeId) {
         for statement in statements {
             self.visit_statement(statement, scope);
@@ -511,13 +520,7 @@ impl ReferenceVisitor<'_> {
 
     fn visit_bound_statements(&mut self, statements: &[Statement], scope: ScopeId) {
         for statement in statements {
-            let statement_scope = self
-                .file
-                .bindings
-                .scope_for_node
-                .get(&statement.id)
-                .copied()
-                .unwrap_or(scope);
+            let statement_scope = self.scope_for_node(statement.id, scope);
             self.visit_statement(statement, statement_scope);
         }
     }
@@ -560,13 +563,7 @@ impl ReferenceVisitor<'_> {
                     declaration.return_type.as_ref(),
                     declaration.has_body,
                 );
-                let function_scope = self
-                    .file
-                    .bindings
-                    .scope_for_node
-                    .get(&statement.id)
-                    .copied()
-                    .unwrap_or(scope);
+                let function_scope = self.scope_for_node(statement.id, scope);
                 if declaration.has_body {
                     for parameter in &declaration.parameters {
                         if let Some(initializer) = &parameter.initializer {
@@ -582,13 +579,7 @@ impl ReferenceVisitor<'_> {
             StatementKind::Class(declaration) => {
                 self.push_type_parameter_locals(&declaration.type_parameters);
                 self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
-                let class_scope = self
-                    .file
-                    .bindings
-                    .scope_for_node
-                    .get(&statement.id)
-                    .copied()
-                    .unwrap_or(scope);
+                let class_scope = self.scope_for_node(statement.id, scope);
                 if let Some(extends) = &declaration.extends {
                     self.visit_type(extends, scope);
                 }
@@ -623,13 +614,7 @@ impl ReferenceVisitor<'_> {
                                 None,
                                 *has_body,
                             );
-                            let member_scope = self
-                                .file
-                                .bindings
-                                .scope_for_node
-                                .get(&member.id)
-                                .copied()
-                                .unwrap_or(class_scope);
+                            let member_scope = self.scope_for_node(member.id, class_scope);
                             if *has_body {
                                 for parameter in parameters {
                                     if let Some(initializer) = &parameter.initializer {
@@ -658,13 +643,7 @@ impl ReferenceVisitor<'_> {
                                 return_type.as_ref(),
                                 *has_body,
                             );
-                            let member_scope = self
-                                .file
-                                .bindings
-                                .scope_for_node
-                                .get(&member.id)
-                                .copied()
-                                .unwrap_or(class_scope);
+                            let member_scope = self.scope_for_node(member.id, class_scope);
                             if *has_body {
                                 for parameter in parameters {
                                     if let Some(initializer) = &parameter.initializer {
@@ -704,44 +683,20 @@ impl ReferenceVisitor<'_> {
                 }
             }
             StatementKind::Block(statements) => {
-                let block_scope = self
-                    .file
-                    .bindings
-                    .scope_for_node
-                    .get(&statement.id)
-                    .copied()
-                    .unwrap_or(scope);
+                let block_scope = self.scope_for_node(statement.id, scope);
                 self.visit_statements(statements, block_scope);
             }
             StatementKind::If(control_flow) => {
                 self.visit_expression(&control_flow.condition, scope, false);
-                let then_scope = self
-                    .file
-                    .bindings
-                    .scope_for_node
-                    .get(&control_flow.then_statement.id)
-                    .copied()
-                    .unwrap_or(scope);
+                let then_scope = self.scope_for_node(control_flow.then_statement.id, scope);
                 self.visit_statement(&control_flow.then_statement, then_scope);
                 if let Some(else_statement) = &control_flow.else_statement {
-                    let else_scope = self
-                        .file
-                        .bindings
-                        .scope_for_node
-                        .get(&else_statement.id)
-                        .copied()
-                        .unwrap_or(scope);
+                    let else_scope = self.scope_for_node(else_statement.id, scope);
                     self.visit_statement(else_statement, else_scope);
                 }
             }
             StatementKind::Switch(control_flow) => {
-                let switch_scope = self
-                    .file
-                    .bindings
-                    .scope_for_node
-                    .get(&statement.id)
-                    .copied()
-                    .unwrap_or(scope);
+                let switch_scope = self.scope_for_node(statement.id, scope);
                 self.visit_expression(&control_flow.expression, switch_scope, false);
                 for clause in &control_flow.clauses {
                     if let SwitchClauseKind::Case(expression) = &clause.kind {
@@ -821,13 +776,7 @@ impl ReferenceVisitor<'_> {
                 self.visit_expression(index, scope, false);
             }
             ExpressionKind::FunctionLike(function) => {
-                let function_scope = self
-                    .file
-                    .bindings
-                    .scope_for_node
-                    .get(&expression.id)
-                    .copied()
-                    .unwrap_or(scope);
+                let function_scope = self.scope_for_node(expression.id, scope);
                 let retained_type_locals = self.visit_signature_types_with_host(
                     expression.id,
                     function_scope,

@@ -257,6 +257,122 @@ fn element_access_slots_follow_token_adjacency_not_comment_placement() {
 }
 
 #[test]
+fn variable_declaration_token_gaps_match_ts7() {
+    let source = concat!(
+        "var a = /*some comment*/ null;\n",
+        "var b /*some comment*/ = null;\n",
+        "var /*some comment*/ c = null;\n",
+        "\n// no space\n",
+        "var a=/*some comment*/null;\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "var a = /*some comment*/ null;\n",
+            "var b /*some comment*/ = null;\n",
+            "var /*some comment*/ c = null;\n",
+            "// no space\n",
+            "var a = /*some comment*/ null;\n",
+        )
+    );
+}
+
+#[test]
+fn binary_operator_token_gaps_match_ts7_continuation_layout() {
+    let source = concat!(
+        "var alpha = 'some'\n    // comment\n    + 'text';\n\n",
+        "var beta = 'some'\n    /* comment */\n    + 'text';\n\n",
+        "var gamma = 'some'\n    /* comment */\n    + /*comment1*/\n    'text';\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "var alpha = 'some'\n    // comment\n    + 'text';\n",
+            "var beta = 'some'\n    /* comment */\n    + 'text';\n",
+            "var gamma = 'some'\n    /* comment */\n    + /*comment1*/\n        'text';\n",
+        )
+    );
+}
+
+#[test]
+fn property_and_call_token_gaps_match_ts7_once_in_source_order() {
+    let source = concat!(
+        "fn /*call pre-paren*/ ();\n",
+        "renamed /*member pre-dot*/ . /*member after-dot*/ value;\n",
+        "renamed.outer /*nested pre-dot*/ . /*nested after-dot*/ leaf;\n",
+        "chain.first. /*later dot only*/second;\n",
+        "/*1*/Array/*2*/./*3*/toString/*4*/\n",
+        "/*1*/Array\n/*2*/./*3*/\n    // Single-line comment\n    toString/*4*/\n",
+        "/*1*/Array/*2*/./*3*/\n    // Single-line comment\n    toString/*4*/\n",
+        "/*1*/Array\n    // Single-line comment\n    /*2*/./*3*/toString/*4*/\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "fn /*call pre-paren*/();\n",
+            "renamed /*member pre-dot*/. /*member after-dot*/value;\n",
+            "renamed.outer /*nested pre-dot*/. /*nested after-dot*/leaf;\n",
+            "chain.first. /*later dot only*/second;\n",
+            "/*1*/ Array /*2*/. /*3*/toString; /*4*/\n",
+            "/*1*/ Array\n    /*2*/ . /*3*/\n        // Single-line comment\n        toString; /*4*/\n",
+            "/*1*/ Array /*2*/. /*3*/\n    // Single-line comment\n    toString; /*4*/\n",
+            "/*1*/ Array\n    // Single-line comment\n    /*2*/ . /*3*/toString; /*4*/\n",
+        )
+    );
+}
+
+#[test]
+fn if_statement_token_gaps_match_ts7_keyword_and_delimiter_owners() {
+    let source = concat!(
+        "/*1*/ if /*2*/ ( /*3*/ true /*4*/ ) /*5*/ {}\n\n",
+        "/*1*/ if /*2*/ ( /*3*/ true /*4*/ ) /*5*/ {} /*6*/ else /*7*/  {}\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "/*1*/ if /*2*/ ( /*3*/true /*4*/) /*5*/ { }\n",
+            "/*1*/ if /*2*/ ( /*3*/true /*4*/) /*5*/ { } /*6*/\n",
+            "else /*7*/ { }\n",
+        )
+    );
+}
+
+#[test]
+fn token_gap_comments_remove_cleanly_without_changing_nested_runtime_shape() {
+    let source = concat!(
+        "fn /*call*/ ();\n",
+        "renamed /*pre-dot*/ . /*after-dot*/ value;\n",
+        "const alpha /*after-name*/ = /*after-equals*/ 1;\n",
+        "const /*before-name*/ beta = 2;\n",
+        "const sum = alpha\n// before-op\n+ /*after-op*/ beta;\n",
+        "if /*after-if*/ (/*after-open*/ true /*before-close*/) /*after-close*/ {\n",
+        "    fn /*nested-call*/ ();\n",
+        "} /*before-else*/ else /*after-else*/ { renamed /*pre-dot*/ . /*after-dot*/ value; }\n",
+    );
+    assert_eq!(
+        javascript(source, "", true),
+        concat!(
+            "\"use strict\";\n",
+            "fn();\n",
+            "renamed.value;\n",
+            "const alpha = 1;\n",
+            "const beta = 2;\n",
+            "const sum = alpha + beta;\n",
+            "if (true) {\n",
+            "    fn();\n",
+            "}\n",
+            "else {\n",
+            "    renamed.value;\n",
+            "}\n",
+        )
+    );
+}
+
+#[test]
 fn unsupported_module_comment_slot_is_nonclaimed_before_emit_and_other_files_survive() {
     let sources = [
         (

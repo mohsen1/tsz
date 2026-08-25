@@ -513,39 +513,26 @@ impl Parser<'_> {
         {
             return false;
         }
-        let saved_index = self.index;
-        let saved_next_node = self.next_node;
-        let saved_diagnostics = self.diagnostics.len();
-        let saved_speculating = self.speculating;
-        let saved_rewrites = self.speculative_token_rewrites.len();
-        self.speculating = true;
-        let type_parameters = self.parse_type_parameters();
-        let parenthesized = self.at(TokenKind::LeftParen);
-        let allow_missing_return = self.source.kind() == SourceKind::TypeScriptJsx;
-        let arrow = parenthesized
-            .then(|| self.paren_expression_arrow_token(allow_missing_return))
-            .flatten();
-        let is_arrow = !type_parameters.is_empty() && arrow.is_some();
-        let rejected = !allow_missing_return
-            && !type_parameters.is_empty()
-            && parenthesized
-            && arrow.is_none()
-            && matches!(
-                self.paren_expression_arrow_token(true),
-                Some(ParenthesizedArrowToken::Present(_))
-            );
-        for (index, token) in self
-            .speculative_token_rewrites
-            .drain(saved_rewrites..)
-            .rev()
-        {
-            self.tokens[index] = token;
-        }
-        self.speculating = saved_speculating;
-        self.index = saved_index;
-        self.next_node = saved_next_node;
-        self.diagnostics.truncate(saved_diagnostics);
-        if rejected && !saved_speculating {
+        let (is_arrow, rejected) = self.with_speculative_parse(|parser| {
+            let type_parameters = parser.parse_type_parameters();
+            let parenthesized = parser.at(TokenKind::LeftParen);
+            let allow_missing_return = parser.source.kind() == SourceKind::TypeScriptJsx;
+            let arrow = parenthesized
+                .then(|| parser.paren_expression_arrow_token(allow_missing_return))
+                .flatten();
+            (
+                !type_parameters.is_empty() && arrow.is_some(),
+                !allow_missing_return
+                    && !type_parameters.is_empty()
+                    && parenthesized
+                    && arrow.is_none()
+                    && matches!(
+                        parser.paren_expression_arrow_token(true),
+                        Some(ParenthesizedArrowToken::Present(_))
+                    ),
+            )
+        });
+        if rejected && !self.speculating {
             let authored_span = self.current().span;
             self.retain_parser_recovery(
                 ParserRecoveryKind::RejectedGenericArrowPrefix,

@@ -359,3 +359,87 @@ fn ts7_trailing_text_corpus_witnesses_complete() {
         assert!(output.emitted_files.iter().any(|file| file.declaration));
     }
 }
+
+#[test]
+fn javascript_check_mode_and_source_directives_share_one_file_owner() {
+    let missing = "MissingName;\n";
+    for (name, check_js, directive, expected) in [
+        ("default", None, "", false),
+        ("option-off", Some(false), "", false),
+        ("option-on", Some(true), "", true),
+        ("directive-on", Some(false), "// @ts-check\n", true),
+        ("directive-off", Some(true), "// @ts-nocheck\n", false),
+    ] {
+        let source = format!("{directive}{missing}");
+        let output = Compiler::new().compile(
+            vec![input("case.js", &source)],
+            &CompilerOptions {
+                allow_js: true,
+                check_js,
+                no_emit: true,
+                ..CompilerOptions::default()
+            },
+        );
+        let diagnostics = diagnostic_fingerprint(&output);
+        if expected {
+            assert_eq!(
+                diagnostics,
+                vec![(
+                    "case.js".to_string(),
+                    2304,
+                    directive.len() as u32,
+                    "MissingName".len() as u32,
+                    DiagnosticCategory::Error,
+                    "Cannot find name 'MissingName'.".to_string(),
+                )],
+                "{name}",
+            );
+            assert!(output.stats.types > 0, "{name}");
+        } else {
+            assert!(diagnostics.is_empty(), "{name}: {diagnostics:?}");
+            assert_eq!(output.stats.types, 0, "{name}");
+        }
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn unchecked_javascript_still_supplies_types_to_checked_typescript() {
+    let javascript = "const shared = 1; MissingHidden;\n";
+    let typescript = "const copy: string = shared;\n";
+    let mut roots = vec![
+        input("producer.js", javascript),
+        input("consumer.ts", typescript),
+    ];
+    let compiler_options = CompilerOptions {
+        allow_js: true,
+        check_js: Some(false),
+        no_emit: true,
+        ..CompilerOptions::default()
+    };
+    for name in ["forward", "reverse"] {
+        let output = Compiler::new().compile(roots.clone(), &compiler_options);
+        assert_eq!(
+            diagnostic_fingerprint(&output),
+            vec![(
+                "consumer.ts".to_string(),
+                2322,
+                typescript.find("copy").unwrap() as u32,
+                "copy".len() as u32,
+                DiagnosticCategory::Error,
+                "Type 'number' is not assignable to type 'string'.".to_string(),
+            )],
+            "{name}",
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{name}"
+        );
+        roots.reverse();
+    }
+}
