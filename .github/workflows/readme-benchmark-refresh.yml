@@ -29,7 +29,9 @@ concurrency:
 jobs:
   refresh:
     name: Refresh README benchmark image
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Paused while the compiler is being rewritten. Keep this hard-disabled so
+    # neither the schedule nor a manual dispatch can create/update a PR.
+    if: github.event_name == 'automated_pr_creation_resumed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -51,7 +51,9 @@ concurrency:
 jobs:
   bump-pr:
     name: Open daily release-bump PR
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Paused while the compiler is being rewritten. The push-triggered
+    # tag-on-merge job below remains available for already-approved bumps.
+    if: github.event_name == 'automated_pr_creation_resumed'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
