@@ -36,12 +36,15 @@ pub(crate) trait DescendantAdapter<'ast> {
         next_statement: Option<&'ast Statement>,
     ) -> NestedStatement;
 
+    /// Structural adapters recurse through function-like children by default.
     fn function_like(
         &mut self,
         context: &Self::Context,
         expression: &'ast Expression,
         function: &'ast FunctionLikeExpression,
-    );
+    ) {
+        walk_function_like_descendants(self, context, expression, function);
+    }
 
     fn expression(&mut self, _context: &Self::Context, _expression: &'ast Expression) {}
 
@@ -53,7 +56,7 @@ pub(crate) fn walk_statement_descendants<'ast, A>(
     context: &A::Context,
     statement: &'ast Statement,
 ) where
-    A: DescendantAdapter<'ast>,
+    A: DescendantAdapter<'ast> + ?Sized,
 {
     match &statement.kind {
         StatementKind::Import(_)
@@ -121,7 +124,7 @@ pub(crate) fn walk_class_descendants<'ast, A>(
     context: &A::Context,
     declaration: &'ast ClassDeclaration,
 ) where
-    A: DescendantAdapter<'ast>,
+    A: DescendantAdapter<'ast> + ?Sized,
 {
     for member in &declaration.members {
         match &member.kind {
@@ -150,7 +153,7 @@ pub(crate) fn walk_function_like_descendants<'ast, A>(
     expression: &'ast Expression,
     function: &'ast FunctionLikeExpression,
 ) where
-    A: DescendantAdapter<'ast>,
+    A: DescendantAdapter<'ast> + ?Sized,
 {
     let context = adapter.context(
         context,
@@ -168,7 +171,7 @@ pub(crate) fn walk_expression_descendants<'ast, A>(
     context: &A::Context,
     expression: &'ast Expression,
 ) where
-    A: DescendantAdapter<'ast>,
+    A: DescendantAdapter<'ast> + ?Sized,
 {
     adapter.expression(context, expression);
     match &expression.kind {
@@ -226,7 +229,7 @@ fn walk_parameter_initializers<'ast, A>(
     context: &A::Context,
     parameters: &'ast [Parameter],
 ) where
-    A: DescendantAdapter<'ast>,
+    A: DescendantAdapter<'ast> + ?Sized,
 {
     for parameter in parameters {
         if let Some(initializer) = &parameter.initializer {
@@ -240,7 +243,7 @@ fn walk_statement_list<'ast, A>(
     context: &A::Context,
     statements: &'ast [Statement],
 ) where
-    A: DescendantAdapter<'ast>,
+    A: DescendantAdapter<'ast> + ?Sized,
 {
     for (index, statement) in statements.iter().enumerate() {
         walk_nested_statement(adapter, context, statement, statements.get(index + 1));
@@ -253,7 +256,7 @@ fn walk_nested_statement<'ast, A>(
     statement: &'ast Statement,
     next_statement: Option<&'ast Statement>,
 ) where
-    A: DescendantAdapter<'ast>,
+    A: DescendantAdapter<'ast> + ?Sized,
 {
     let context = adapter.context(context, DescendantContainer::Statement(statement));
     if adapter.nested_statement(&context, statement, next_statement) == NestedStatement::Descend {

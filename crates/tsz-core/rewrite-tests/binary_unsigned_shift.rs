@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tsz::diagnostics::DiagnosticCategory;
 use tsz::service::LanguageService;
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{BinaryOperator, Expression, ExpressionKind, StatementKind, parse_source};
@@ -253,6 +254,131 @@ fn unsigned_shift_is_one_operation_local_deferred_type_for_all_operand_controls(
 }
 
 #[test]
+fn bounded_literal_unsigned_shift_completes_only_for_number_left_operands() {
+    for (path, source) in [
+        ("direct.ts", "declare const cedar:number;cedar>>>0;"),
+        ("renamed.ts", "declare const willow:31;((willow))>>>((31));"),
+        (
+            "call.ts",
+            "declare function locate(value:number):number;locate(1)>>>0;",
+        ),
+        (
+            "literal-alias.ts",
+            "declare const birch:number;declare const amount:0;birch>>>amount;",
+        ),
+    ] {
+        let output = compile_files(&[(path, source)], checked_options());
+        assert_eq!(output.diagnostics, [], "{path}: {:#?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{path}"
+        );
+        assert_eq!(output.exit_status, CompileExitStatus::Success, "{path}");
+    }
+
+    // These values are valid or diagnosable in TS7, but stay Deferred until
+    // constant folding, negative/fractional counts, and operand diagnostics
+    // are owned together with TS6807.
+    for (path, source) in [
+        (
+            "number-right.ts",
+            "declare const left:number;declare const amount:number;left>>>amount;",
+        ),
+        (
+            "folded-right.ts",
+            "declare const left:number;left>>>(16+16);",
+        ),
+        ("overshift.ts", "declare const left:number;left>>>32;"),
+        ("negative.ts", "declare const left:number;left>>>-1;"),
+        ("fractional.ts", "declare const left:number;left>>>1.5;"),
+        ("any-left.ts", "declare const left:any;left>>>0;"),
+        ("unknown-left.ts", "declare const left:unknown;left>>>0;"),
+        ("bigint-left.ts", "declare const left:bigint;left>>>0;"),
+        ("string-left.ts", "declare const left:string;left>>>0;"),
+    ] {
+        let output = compile_files(&[(path, source)], checked_options());
+        assert_eq!(output.diagnostics, [], "{path}: {:#?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{path}"
+        );
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::SemanticIncomplete,
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn bounded_literal_shift_is_exact_across_warm_queries_runs_and_root_order() {
+    let affected = concat!(
+        "declare const cedar:number;",
+        "const warm=cedar>>>0;",
+        "const mismatch:string=cedar>>>0;",
+    );
+    let independent = "const stable:MissingIndependent=1;";
+    let expected = vec![
+        (
+            "affected.ts".to_string(),
+            affected.find("mismatch").unwrap() as u32,
+            "mismatch".len() as u32,
+            DiagnosticCategory::Error,
+            2322,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            0,
+        ),
+        (
+            "independent.ts".to_string(),
+            independent.find("MissingIndependent").unwrap() as u32,
+            "MissingIndependent".len() as u32,
+            DiagnosticCategory::Error,
+            2304,
+            "Cannot find name 'MissingIndependent'.".to_string(),
+            0,
+        ),
+    ];
+    let compiler = Compiler::new();
+    for iteration in 0..2 {
+        for files in [
+            [("affected.ts", affected), ("independent.ts", independent)],
+            [("independent.ts", independent), ("affected.ts", affected)],
+        ] {
+            let output = compiler.compile(
+                files
+                    .into_iter()
+                    .map(|(path, source)| SourceInput::new(path, Arc::<str>::from(source)))
+                    .collect(),
+                &checked_options(),
+            );
+            let actual = output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| {
+                    (
+                        diagnostic.file.clone(),
+                        diagnostic.start,
+                        diagnostic.length,
+                        diagnostic.category,
+                        diagnostic.code,
+                        diagnostic.message_text.clone(),
+                        diagnostic.related_information.len(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "iteration {iteration}");
+            assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+            assert_eq!(
+                output.exit_status,
+                CompileExitStatus::DiagnosticsPresentOutputsSkipped
+            );
+        }
+    }
+}
+
+#[test]
 fn dependent_relations_defer_while_independent_diagnostics_survive() {
     let same = concat!(
         "declare const left:number;declare const right:number;",
@@ -288,7 +414,7 @@ fn dependent_relations_defer_while_independent_diagnostics_survive() {
             .iter()
             .map(|diagnostic| (diagnostic.file.as_str(), diagnostic.code))
             .collect::<Vec<_>>(),
-        [("stable.ts", 2304)]
+        [("affected.ts", 2322), ("stable.ts", 2304)]
     );
     let mut service = LanguageService::new(checked_options());
     service.open("affected.ts", Arc::<str>::from(affected));
@@ -297,7 +423,7 @@ fn dependent_relations_defer_while_independent_diagnostics_survive() {
         service
             .semantic_diagnostics("affected.ts")
             .semantic_completion,
-        SemanticCompletion::Deferred
+        SemanticCompletion::Complete
     );
     assert_eq!(
         service
@@ -352,6 +478,17 @@ fn javascript_emit_preserves_unsigned_shift_on_supported_targets() {
 #[test]
 fn declaration_emit_withholds_only_inference_dependent_unsigned_shifts() {
     let affected = "export const shifted=x>>>0;";
+    let checked = compile_files(
+        &[
+            ("globals.d.ts", "declare const x:number;"),
+            ("affected.ts", affected),
+        ],
+        checked_options(),
+    );
+    assert_eq!(checked.diagnostics, []);
+    assert_eq!(checked.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(checked.exit_status, CompileExitStatus::Success);
+
     let stable = concat!(
         "export const y:number=x>>>0;",
         "export function f():number{return x>>>0}",

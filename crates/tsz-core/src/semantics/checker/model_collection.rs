@@ -4,9 +4,8 @@ use crate::bind::{DeclarationKind, ScopeId};
 use crate::source::FileId;
 use crate::syntax::{
     ClassDeclaration, DescendantAdapter, DescendantContainer, Expression, FunctionDeclaration,
-    FunctionLikeExpression, FunctionLikeSyntax, InterfaceDeclaration, NestedStatement, Parameter,
-    Statement, StatementKind, TypeAliasDeclaration, VariableDeclaration,
-    walk_function_like_descendants, walk_statement_descendants,
+    FunctionLikeSyntax, InterfaceDeclaration, NestedStatement, Parameter, Statement, StatementKind,
+    TypeAliasDeclaration, VariableDeclaration, walk_statement_descendants,
 };
 
 use super::Checker;
@@ -127,9 +126,7 @@ impl<'a> Checker<'a> {
                 }
                 _ => None,
             };
-            if let Some(model) = model {
-                self.models.insert(candidate.id, model);
-            }
+            self.models.extend(model.map(|model| (candidate.id, model)));
         }
     }
 }
@@ -163,15 +160,6 @@ impl<'program> DescendantAdapter<'program> for ModelCollector<'_, 'program> {
             self.checker.register_statement_model(self.file, statement);
         }
         NestedStatement::Descend
-    }
-
-    fn function_like(
-        &mut self,
-        context: &bool,
-        expression: &'program Expression,
-        function: &'program FunctionLikeExpression,
-    ) {
-        walk_function_like_descendants(self, context, expression, function);
     }
 
     fn expression(&mut self, _context: &bool, expression: &'program Expression) {

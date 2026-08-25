@@ -134,14 +134,6 @@ impl Checker<'_> {
         right: TypeId,
         depth: usize,
     ) -> BinaryEvaluation {
-        // Preserve this typed operation until TS7 operand and TS6807 diagnostics are owned.
-        if operator == DeferredBinaryOperator::UnsignedRightShift {
-            return BinaryEvaluation {
-                value: None,
-                completion: SemanticCompletion::Deferred,
-                diagnostics: BinaryDiagnostics::default(),
-            };
-        }
         let [left_forced, right_forced] = self.force_operands([left, right], depth);
         let (left, left_completion) = self.binary_operand(left, left_forced);
         let (right, right_completion) = self.binary_operand(right, right_forced);
@@ -166,6 +158,23 @@ impl Checker<'_> {
         let left_kind = self.store.kind(left);
         let right_kind = self.store.kind(right);
         let [left_flags, right_flags] = [left_kind, right_kind].map(binary_kind_flags);
+        if operator == DeferredBinaryOperator::UnsignedRightShift {
+            let supported = has_flag(left_flags, NUMBER_LIKE)
+                && matches!(
+                    right_kind,
+                    TypeKind::LiteralNumber(value, _)
+                        if value.array_index().is_some_and(|value| value < 32)
+                );
+            return BinaryEvaluation {
+                value: supported.then_some(self.store.builtins.number),
+                completion: if supported {
+                    operand_completion
+                } else {
+                    operand_completion.combine(SemanticCompletion::Deferred)
+                },
+                diagnostics: BinaryDiagnostics::default(),
+            };
+        }
         let mut diagnostics = BinaryDiagnostics {
             boolean_bitwise: matches!(
                 operator,
