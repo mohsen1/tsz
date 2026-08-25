@@ -157,6 +157,7 @@ pub enum DeferredBinaryOperator {
     Remainder,
     BitwiseAnd,
     BitwiseOr,
+    UnsignedRightShift,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1345,6 +1346,7 @@ impl TypeStore {
                     DeferredBinaryOperator::Remainder => 4,
                     DeferredBinaryOperator::BitwiseAnd => 5,
                     DeferredBinaryOperator::BitwiseOr => 6,
+                    DeferredBinaryOperator::UnsignedRightShift => 7,
                 },
                 Box::new(nested(*left)),
                 Box::new(nested(*right)),
@@ -1644,6 +1646,7 @@ impl TypeStore {
                     DeferredBinaryOperator::Remainder => "%",
                     DeferredBinaryOperator::BitwiseAnd => "&",
                     DeferredBinaryOperator::BitwiseOr => "|",
+                    DeferredBinaryOperator::UnsignedRightShift => ">>>",
                 },
                 self.display_inner(*right, depth + 1)
             ),

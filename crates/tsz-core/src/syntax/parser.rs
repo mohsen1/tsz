@@ -1040,7 +1040,7 @@ impl<'a> Parser<'a> {
 
     fn parse_assignment_expression(&mut self) -> Expression {
         let has_leading_jsdoc = self.current_has_leading_jsdoc();
-        let left = self.parse_binary_expression(0);
+        let left = self.parse_binary_expression_with_shift_assignment_recovery();
         if self.eat(TokenKind::Equals) {
             self.observe_template_expression_semantics(&left);
             let right = self.parse_assignment_expression();

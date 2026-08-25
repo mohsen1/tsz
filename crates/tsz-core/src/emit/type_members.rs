@@ -31,10 +31,7 @@ impl Printer<'_> {
     }
 
     pub(super) fn write_parameter_property_fields(&mut self, parameters: &[Parameter]) {
-        for parameter in parameters
-            .iter()
-            .filter(|parameter| is_parameter_property(parameter))
-        {
+        for parameter in parameter_properties(parameters) {
             self.write_indent();
             self.write_parts(&[&parameter.name, ";\n"]);
         }
@@ -67,10 +64,7 @@ impl Printer<'_> {
     }
 
     pub(super) fn write_parameter_property_declarations(&mut self, parameters: &[Parameter]) {
-        for parameter in parameters
-            .iter()
-            .filter(|parameter| is_parameter_property(parameter))
-        {
+        for parameter in parameter_properties(parameters) {
             self.write_indent();
             if has_parameter_modifier(parameter, ParameterModifier::Private) {
                 self.output.push_str("private ");
@@ -143,10 +137,7 @@ impl Printer<'_> {
     }
 
     fn write_parameter_property_assignments(&mut self, parameters: &[Parameter]) {
-        for parameter in parameters
-            .iter()
-            .filter(|parameter| is_parameter_property(parameter))
-        {
+        for parameter in parameter_properties(parameters) {
             self.write_indent();
             self.write_parts(&["this.", &parameter.name, " = ", &parameter.name, ";\n"]);
         }
@@ -193,41 +184,24 @@ impl Printer<'_> {
                 }
                 self.write_type_parameters(type_parameters);
                 self.write_declaration_parameters(parameters);
-                if let Some(return_type) = return_type {
-                    self.output.push_str(": ");
-                    self.write_type(return_type, TYPE_PREC_LOWEST);
-                } else {
-                    self.output.push_str(": any");
-                }
+                self.write_type_member_return(return_type.as_ref(), Some("any"));
             }
             TypeMemberKind::Call {
                 type_parameters,
                 parameters,
                 return_type,
-            } => {
-                self.write_type_parameters(type_parameters);
-                self.write_declaration_parameters(parameters);
-                if let Some(return_type) = return_type {
-                    self.output.push_str(": ");
-                    self.write_type(return_type, TYPE_PREC_LOWEST);
-                } else {
-                    self.output.push_str(": any");
-                }
             }
-            TypeMemberKind::Construct {
+            | TypeMemberKind::Construct {
                 type_parameters,
                 parameters,
                 return_type,
             } => {
-                self.output.push_str("new ");
+                if matches!(&member.kind, TypeMemberKind::Construct { .. }) {
+                    self.output.push_str("new ");
+                }
                 self.write_type_parameters(type_parameters);
                 self.write_declaration_parameters(parameters);
-                if let Some(return_type) = return_type {
-                    self.output.push_str(": ");
-                    self.write_type(return_type, TYPE_PREC_LOWEST);
-                } else {
-                    self.output.push_str(": any");
-                }
+                self.write_type_member_return(return_type.as_ref(), Some("any"));
             }
             TypeMemberKind::Index {
                 parameters,
@@ -251,10 +225,7 @@ impl Printer<'_> {
                     }
                 }
                 self.output.push(']');
-                if let Some(value_type) = value_type {
-                    self.output.push_str(": ");
-                    self.write_type(value_type, TYPE_PREC_LOWEST);
-                }
+                self.write_type_member_return(value_type.as_ref(), None);
             }
             TypeMemberKind::Accessor {
                 name,
@@ -268,12 +239,10 @@ impl Printer<'_> {
                 });
                 self.write_type_member_name(name);
                 self.write_declaration_parameters(parameters);
-                if let Some(return_type) = return_type {
-                    self.output.push_str(": ");
-                    self.write_type(return_type, TYPE_PREC_LOWEST);
-                } else if matches!(accessor, AccessorKind::Get) {
-                    self.output.push_str(": any");
-                }
+                self.write_type_member_return(
+                    return_type.as_ref(),
+                    matches!(accessor, AccessorKind::Get).then_some("any"),
+                );
             }
         }
         self.output.push(';');
@@ -293,6 +262,17 @@ impl Printer<'_> {
                 self.output.push(']');
             }
         }
+    }
+
+    fn write_type_member_return(&mut self, ty: Option<&TypeNode>, fallback: Option<&str>) {
+        let Some(ty) = ty else {
+            if let Some(fallback) = fallback {
+                self.write_parts(&[": ", fallback]);
+            }
+            return;
+        };
+        self.output.push_str(": ");
+        self.write_type(ty, TYPE_PREC_LOWEST);
     }
 }
 
@@ -314,6 +294,12 @@ pub(super) fn is_parameter_property(parameter: &Parameter) -> bool {
                 | ParameterModifier::Override
         )
     })
+}
+
+fn parameter_properties(parameters: &[Parameter]) -> impl Iterator<Item = &Parameter> {
+    parameters
+        .iter()
+        .filter(|parameter| is_parameter_property(parameter))
 }
 
 pub(super) fn optional_type_absorbs_undefined(ty: &TypeNode) -> bool {

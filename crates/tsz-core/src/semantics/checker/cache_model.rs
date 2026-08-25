@@ -46,23 +46,7 @@ impl Checker<'_> {
             }
             TypeKind::Function(signature) => cacheable_signature!(self, signature, active),
             TypeKind::ShapeFunction(signature) => cacheable_signature!(self, signature, active),
-            TypeKind::Any
-            | TypeKind::Unknown
-            | TypeKind::Never
-            | TypeKind::Void
-            | TypeKind::Undefined
-            | TypeKind::Null
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::String
-            | TypeKind::BigInt
-            | TypeKind::ObjectKeyword
-            | TypeKind::Symbol
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _)
-            | TypeKind::LiteralString(_, _)
-            | TypeKind::TypeParameter { .. }
-            | TypeKind::ClassConstructor { .. } => true,
+            non_recursive_type_kind!() => true,
         };
         active.remove(&ty);
         cacheable

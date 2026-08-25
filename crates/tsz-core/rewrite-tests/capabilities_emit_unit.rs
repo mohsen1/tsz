@@ -187,6 +187,138 @@ fn inferred_return_nonclaim_withholds_only_its_file_declaration_product() {
 }
 
 #[test]
+fn unsigned_shift_withholds_only_inferred_declaration_and_quick_info_products() {
+    let file = program_file(
+        0,
+        "unsigned-shift.ts",
+        concat!(
+            "declare const input:number;",
+            "export const inferred=()=>{return input>>>0};",
+            "export const typed:number=input>>>0;",
+            "export function stable():number{return input>>>0}",
+        ),
+    );
+    let [_, inferred, typed, stable] = file.syntax.statements.as_slice() else {
+        panic!("four declarations expected")
+    };
+    let analysis = default_analysis(&file);
+    for target in [CapabilityTarget::Declaration, CapabilityTarget::QuickInfo] {
+        let scope = CapabilityScope::node(file.source.id, inferred.id);
+        let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(target, scope) else {
+            panic!("{target:?} must wait for checked unsigned-shift inference")
+        };
+        assert_eq!(
+            reasons.copied().collect::<Vec<_>>(),
+            [CapabilityNonclaim {
+                target,
+                scope,
+                reason: NonclaimReason::Semantic(SemanticGap::UnsignedRightShift),
+                deletion: DeletionCondition::SemanticOwner(SemanticGap::UnsignedRightShift),
+            }]
+        );
+        for owner in [typed.id, stable.id] {
+            assert!(
+                analysis
+                    .claim(target, CapabilityScope::node(file.source.id, owner))
+                    .is_claimed(),
+                "authored annotations make {target:?} independent"
+            );
+        }
+    }
+    assert!(
+        analysis
+            .claim(
+                CapabilityTarget::JavaScript,
+                CapabilityScope::File(file.source.id),
+            )
+            .is_claimed()
+    );
+
+    let nested = program_file(
+        0,
+        "nested-unsigned-shift.ts",
+        concat!(
+            "declare const input:number;",
+            "function stable():number{const local=input>>>0;",
+            "function defaulted(value=input>>>0):void{}return 1}",
+            "class Vessel{field=input>>>0;typed:number=input>>>0}",
+        ),
+    );
+    let StatementKind::Function(function) = &nested.syntax.statements[1].kind else {
+        panic!("function expected")
+    };
+    let class = &nested.syntax.statements[2];
+    let nested_analysis = default_analysis(&nested);
+    for owner in [function.body[0].id, function.body[1].id, class.id] {
+        let scope = CapabilityScope::node(nested.source.id, owner);
+        let CapabilityClaim::Nonclaimed(reasons) =
+            nested_analysis.claim(CapabilityTarget::QuickInfo, scope)
+        else {
+            panic!("inferred QuickInfo owner must remain nonclaimed")
+        };
+        assert!(reasons.into_iter().any(|reason| {
+            reason.scope == scope
+                && reason.reason == NonclaimReason::Semantic(SemanticGap::UnsignedRightShift)
+                && reason.deletion
+                    == DeletionCondition::SemanticOwner(SemanticGap::UnsignedRightShift)
+        }));
+    }
+    assert!(
+        nested_analysis
+            .claim(
+                CapabilityTarget::Declaration,
+                CapabilityScope::node(nested.source.id, nested.syntax.statements[1].id),
+            )
+            .is_claimed(),
+        "an authored function return type is independent of its local shift"
+    );
+
+    for (path, source, gap) in [
+        (
+            "assignment-recovery.ts",
+            "cedar>>>=birch;",
+            SyntaxGap::UnsignedRightShiftAssignmentRecovery,
+        ),
+        (
+            "prefix-assignment-recovery.ts",
+            ">>>=cedar;",
+            SyntaxGap::UnsignedRightShiftAssignmentRecovery,
+        ),
+        (
+            "operand-recovery.ts",
+            "declare function f<T>():T;export const invalid=f<number>>>>0;",
+            SyntaxGap::UnsignedRightShiftOperandRecovery,
+        ),
+        (
+            "operand-recovery-spaced.ts",
+            "declare function f<T>():T;export const invalid=f<number> >>> 0;",
+            SyntaxGap::UnsignedRightShiftOperandRecovery,
+        ),
+        (
+            "operand-recovery-spaced.tsx",
+            "declare function f<T>():T;export const invalid=f<number> >>> 0;",
+            SyntaxGap::UnsignedRightShiftOperandRecovery,
+        ),
+    ] {
+        let recovered = program_file(0, path, source);
+        let recovered_analysis = default_analysis(&recovered);
+        for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
+            let scope = CapabilityScope::File(recovered.source.id);
+            let CapabilityClaim::Nonclaimed(reasons) = recovered_analysis.claim(target, scope)
+            else {
+                panic!("{path}: recovered shift must withhold {target:?}")
+            };
+            assert!(reasons.into_iter().any(|reason| {
+                reason.target == target
+                    && reason.scope == scope
+                    && reason.reason == NonclaimReason::Syntax(gap)
+                    && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+            }));
+        }
+    }
+}
+
+#[test]
 fn commonjs_namespace_import_reexport_has_one_typed_javascript_boundary() {
     for (path, module) in [
         ("src/constants.ts", "commonjs"),

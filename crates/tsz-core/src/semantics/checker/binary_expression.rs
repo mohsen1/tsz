@@ -48,20 +48,17 @@ binary_operator_schema! {
     Remainder => Remainder, "%";
     BitwiseAnd => BitwiseAnd, "&";
     BitwiseOr => BitwiseOr, "|";
+    UnsignedRightShift => UnsignedRightShift, ">>>";
 }
 
 impl BinaryEvaluation {
     fn into_completion(self) -> Completion<TypeId> {
-        if let Some(value) = self.value {
-            return Completion::Complete(value);
-        }
-        match self.completion {
-            SemanticCompletion::Deferred => Completion::Deferred,
-            SemanticCompletion::Cycle => Completion::Cycle,
-            SemanticCompletion::Limit => Completion::Limit,
-            SemanticCompletion::Complete => {
-                unreachable!("a complete binary evaluation has a value")
-            }
+        match (self.value, self.completion) {
+            (Some(value), _) => Completion::Complete(value),
+            (None, SemanticCompletion::Deferred) => Completion::Deferred,
+            (None, SemanticCompletion::Cycle) => Completion::Cycle,
+            (None, SemanticCompletion::Limit) => Completion::Limit,
+            (None, SemanticCompletion::Complete) => unreachable!("complete binary lacks value"),
         }
     }
 }
@@ -96,13 +93,12 @@ impl Checker<'_> {
                 [left.span, right.span, *operator_span, expression.span],
             );
         }
-        let logical = match operator {
+        if let Some(operator) = match operator {
             BinaryOperator::LogicalAnd => Some(DeferredLogicalOperator::And),
             BinaryOperator::LogicalOr => Some(DeferredLogicalOperator::Or),
             BinaryOperator::NullishCoalesce => Some(DeferredLogicalOperator::Nullish),
             _ => None,
-        };
-        if let Some(operator) = logical {
+        } {
             return self.store.intern(TypeKind::Deferred(DeferredType::Logical {
                 operator,
                 left: left_type,
@@ -117,15 +113,10 @@ impl Checker<'_> {
         operator: DeferredBinaryOperator,
         left: TypeId,
         right: TypeId,
-        [left_span, right_span, operator_span, expression_span]: [Span; 4],
+        spans: [Span; 4],
     ) -> TypeId {
         let evaluation = self.evaluate_binary(operator, left, right, 0);
-        self.report_binary_diagnostics(
-            file,
-            operator,
-            [left_span, right_span, operator_span, expression_span],
-            &evaluation.diagnostics,
-        );
+        self.report_binary_diagnostics(file, operator, spans, &evaluation.diagnostics);
         self.observe_completion(evaluation.completion);
         evaluation.value.unwrap_or_else(|| {
             self.store.intern(TypeKind::Deferred(DeferredType::Binary {
@@ -143,6 +134,14 @@ impl Checker<'_> {
         right: TypeId,
         depth: usize,
     ) -> BinaryEvaluation {
+        // Preserve this typed operation until TS7 operand and TS6807 diagnostics are owned.
+        if operator == DeferredBinaryOperator::UnsignedRightShift {
+            return BinaryEvaluation {
+                value: None,
+                completion: SemanticCompletion::Deferred,
+                diagnostics: BinaryDiagnostics::default(),
+            };
+        }
         let [left_forced, right_forced] = self.force_operands([left, right], depth);
         let (left, left_completion) = self.binary_operand(left, left_forced);
         let (right, right_completion) = self.binary_operand(right, right_forced);

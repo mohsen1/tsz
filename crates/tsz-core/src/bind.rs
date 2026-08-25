@@ -646,11 +646,12 @@ impl Binder {
             | TypeNodeKind::KeyOf(element)
             | TypeNodeKind::Readonly(element)
             | TypeNodeKind::Parenthesized(element) => self.bind_type_node(element, scope),
-            TypeNodeKind::Tuple(elements)
-            | TypeNodeKind::Union(elements)
-            | TypeNodeKind::Intersection(elements) => {
-                for element in elements {
-                    self.bind_type_node(element, scope);
+            TypeNodeKind::Tuple(arguments)
+            | TypeNodeKind::Union(arguments)
+            | TypeNodeKind::Intersection(arguments)
+            | TypeNodeKind::Reference { arguments, .. } => {
+                for argument in arguments {
+                    self.bind_type_node(argument, scope);
                 }
             }
             TypeNodeKind::Object(members) => {
@@ -688,11 +689,6 @@ impl Binder {
                     signature_scope,
                     signature_scope,
                 );
-            }
-            TypeNodeKind::Reference { arguments, .. } => {
-                for argument in arguments {
-                    self.bind_type_node(argument, scope);
-                }
             }
             TypeNodeKind::Infer { constraint, .. } => {
                 if let Some(constraint) = constraint {

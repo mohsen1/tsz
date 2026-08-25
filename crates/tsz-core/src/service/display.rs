@@ -142,12 +142,38 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
             if members.is_empty() {
                 return Some("{}".to_string());
             }
-            if !type_member_list_is_displayable(members) {
-                return None;
-            }
+            let mut names = Vec::<&str>::new();
             let rendered = members
                 .iter()
-                .map(|member| display_type_member(member, depth))
+                .map(|member| {
+                    let modifiers_displayable =
+                        match (&member.kind, member.modifiers.nodes.as_slice()) {
+                            (TypeMemberKind::Property { .. }, []) => true,
+                            (TypeMemberKind::Property { .. }, [modifier]) => {
+                                matches!(modifier.kind, crate::syntax::TypeMemberModifier::Readonly)
+                            }
+                            (_, modifiers) => modifiers.is_empty(),
+                        };
+                    if member.recovered || !modifiers_displayable {
+                        return None;
+                    }
+                    let name = match &member.kind {
+                        TypeMemberKind::Property { name, .. }
+                        | TypeMemberKind::Method { name, .. } => name,
+                        TypeMemberKind::Accessor { .. }
+                        | TypeMemberKind::Call { .. }
+                        | TypeMemberKind::Construct { .. }
+                        | TypeMemberKind::Index { .. } => return None,
+                    };
+                    let TypeMemberNameKind::Identifier(name) = &name.kind else {
+                        return None;
+                    };
+                    if names.contains(&name.as_str()) {
+                        return None;
+                    }
+                    names.push(name);
+                    display_type_member(member, depth)
+                })
                 .collect::<Option<Vec<_>>>()?;
             Some(format!("{{ {} }}", rendered.join(" ")))
         }
@@ -280,37 +306,6 @@ fn display_type_node_at_depth(node: &TypeNode, depth: usize) -> Option<String> {
         )
         | TypeNodeKind::Missing => None,
     }
-}
-
-fn type_member_list_is_displayable(members: &[TypeMember]) -> bool {
-    let mut names = Vec::<&str>::new();
-    for member in members {
-        let modifiers_displayable = match (&member.kind, member.modifiers.nodes.as_slice()) {
-            (TypeMemberKind::Property { .. }, []) => true,
-            (TypeMemberKind::Property { .. }, [modifier]) => {
-                matches!(modifier.kind, crate::syntax::TypeMemberModifier::Readonly)
-            }
-            (_, modifiers) => modifiers.is_empty(),
-        };
-        if member.recovered || !modifiers_displayable {
-            return false;
-        }
-        let name = match &member.kind {
-            TypeMemberKind::Property { name, .. } | TypeMemberKind::Method { name, .. } => name,
-            TypeMemberKind::Accessor { .. }
-            | TypeMemberKind::Call { .. }
-            | TypeMemberKind::Construct { .. }
-            | TypeMemberKind::Index { .. } => return false,
-        };
-        let TypeMemberNameKind::Identifier(name) = &name.kind else {
-            return false;
-        };
-        if names.contains(&name.as_str()) {
-            return false;
-        }
-        names.push(name);
-    }
-    true
 }
 
 fn display_type_member(member: &TypeMember, depth: usize) -> Option<String> {
@@ -517,10 +512,6 @@ fn is_identifier_continue(character: char) -> bool {
     is_identifier_start(character) || character.is_alphanumeric()
 }
 
-const fn descend(depth: usize) -> Option<usize> {
-    if depth >= MAX_DISPLAY_DEPTH {
-        None
-    } else {
-        Some(depth + 1)
-    }
+fn descend(depth: usize) -> Option<usize> {
+    (depth < MAX_DISPLAY_DEPTH).then(|| depth + 1)
 }

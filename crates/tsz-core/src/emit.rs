@@ -1,7 +1,6 @@
 //! Deterministic JavaScript and declaration emit for the supported syntax tree.
 //!
-//! Emit is deliberately a syntax transform. It erases type-only syntax and
-//! prints runtime nodes; it does not validate types or recover semantic facts.
+//! Emit erases type syntax and prints runtime nodes without semantic validation or recovery.
 
 mod comments;
 mod element_access;
@@ -743,6 +742,7 @@ impl<'a> Printer<'a> {
                 | BinaryOperator::GreaterThanEquals
                 | BinaryOperator::In
                 | BinaryOperator::InstanceOf => PREC_RELATIONAL,
+                BinaryOperator::UnsignedRightShift => PREC_SHIFT,
                 BinaryOperator::Add | BinaryOperator::Subtract => PREC_ADDITIVE,
                 BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => {
                     PREC_MULTIPLICATIVE

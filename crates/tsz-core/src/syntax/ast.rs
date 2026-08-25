@@ -36,6 +36,8 @@ pub(crate) enum SourceSyntaxFact {
     LiteralBoundary(AuthoredLiteralKind, LiteralSyntaxBoundary),
     ModuleExport,
     TemplateExpressionIdentifier,
+    UnsignedRightShiftAssignmentRecovery,
+    UnsignedRightShiftOperandRecovery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1563,6 +1565,7 @@ pub enum BinaryOperator {
     LessThanEquals,
     GreaterThan,
     GreaterThanEquals,
+    UnsignedRightShift,
     Equals,
     NotEquals,
     StrictEquals,

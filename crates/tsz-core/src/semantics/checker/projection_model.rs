@@ -399,24 +399,7 @@ impl Checker<'_> {
             | TypeKind::Invalid(InvalidType::MissingProperties { object, .. }) => {
                 self.requires_authored_shape_display_inner(object, active, references)
             }
-            TypeKind::Error
-            | TypeKind::Any
-            | TypeKind::Unknown
-            | TypeKind::Never
-            | TypeKind::Void
-            | TypeKind::Undefined
-            | TypeKind::Null
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::String
-            | TypeKind::BigInt
-            | TypeKind::ObjectKeyword
-            | TypeKind::Symbol
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _)
-            | TypeKind::LiteralString(_, _)
-            | TypeKind::TypeParameter { .. }
-            | TypeKind::ClassConstructor { .. } => Completion::Complete(false),
+            TypeKind::Error | non_recursive_type_kind!() => Completion::Complete(false),
         };
         active.remove(&ty);
         result

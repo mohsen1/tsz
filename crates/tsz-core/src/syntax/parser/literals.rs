@@ -319,6 +319,7 @@ impl Parser<'_> {
                 expression
             }
             _ => {
+                self.observe_unsigned_shift_prefix_recovery(token.kind);
                 self.observe_unmodeled_regular_expression_if_current();
                 self.observe_unmodeled_template_if_current();
                 let recovery_extent = self.recovery_extent_from_current(token.span);

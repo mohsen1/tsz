@@ -18,6 +18,7 @@ use super::{
 
 mod flow_containment;
 mod function_products;
+mod unsigned_shift;
 use flow_containment::FileBoundary;
 
 /// A compiler operation or externally visible product whose answer must be
@@ -104,6 +105,8 @@ pub(crate) enum SyntaxGap {
     JavaScriptModuleFormat,
     ModuleClauseComment,
     DeclarationOverloadSummary,
+    UnsignedRightShiftAssignmentRecovery,
+    UnsignedRightShiftOperandRecovery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -118,6 +121,9 @@ pub(crate) enum SemanticGap {
     DeclarationFunctionSummary,
     FunctionLikeService,
     ExplicitThisParameter,
+    /// Remove only when TS7.0.2 operands/results, TS18046/TS2365, TS6807
+    /// category/span/folding, and checked declaration-expression summaries are owned.
+    UnsignedRightShift,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -921,6 +927,7 @@ fn derive_file_nonclaims(
         file.syntax.parser_recovery_facts(),
         &javascript_jsdoc_casts,
     );
+    unsigned_shift::add_inferred_product_nonclaims(nonclaims, file);
 
     if file.syntax.statements.iter().any(|statement| {
         matches!(

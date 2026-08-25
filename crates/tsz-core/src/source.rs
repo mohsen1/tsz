@@ -1,6 +1,6 @@
 //! Source identity, spans, and line maps.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,39 @@ pub struct DeclId {
 /// Program-local symbol identity, assigned by deterministic declaration order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SymbolId(pub u32);
+
+/// Normalize path components without filesystem access or case folding.
+fn normalize_path_lexically(path: &Path, preserve_prefix_parent: bool) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match (component, normalized.components().next_back()) {
+            (Component::CurDir, _) => continue,
+            (Component::ParentDir, Some(Component::Normal(_))) => {
+                normalized.pop();
+            }
+            (Component::ParentDir, Some(Component::RootDir)) => {}
+            (Component::ParentDir, Some(Component::Prefix(_))) if !preserve_prefix_parent => {}
+            (Component::ParentDir, Some(Component::CurDir)) => {
+                unreachable!("current directories are removed eagerly")
+            }
+            (Component::ParentDir, Some(Component::ParentDir) | None) if path.is_absolute() => {}
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+pub(crate) fn normalize_clamped_path_lexically(path: &Path) -> PathBuf {
+    normalize_path_lexically(path, false)
+}
+
+pub(crate) fn normalize_import_path_lexically(path: &Path) -> PathBuf {
+    normalize_path_lexically(path, true)
+}
+
+pub(crate) fn display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Span {
@@ -195,7 +228,7 @@ impl SourceText {
         let path = base
             .and_then(|base| self.path.strip_prefix(base).ok())
             .unwrap_or(&self.path);
-        path.to_string_lossy().replace('\\', "/")
+        display_path(path)
     }
 }
 

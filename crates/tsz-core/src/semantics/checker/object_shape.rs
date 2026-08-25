@@ -803,25 +803,9 @@ impl Checker<'_> {
                 }
             }
             TypeKind::Function(_) | TypeKind::Deferred(_) => Completion::Deferred,
-            TypeKind::Error
-            | TypeKind::Invalid(_)
-            | TypeKind::Any
-            | TypeKind::Unknown
-            | TypeKind::Never
-            | TypeKind::Void
-            | TypeKind::Undefined
-            | TypeKind::Null
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::String
-            | TypeKind::BigInt
-            | TypeKind::ObjectKeyword
-            | TypeKind::Symbol
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _)
-            | TypeKind::LiteralString(_, _)
-            | TypeKind::TypeParameter { .. }
-            | TypeKind::ClassConstructor { .. } => Completion::Complete(()),
+            TypeKind::Error | TypeKind::Invalid(_) | non_recursive_type_kind!() => {
+                Completion::Complete(())
+            }
         };
         active.remove(&ty);
         result

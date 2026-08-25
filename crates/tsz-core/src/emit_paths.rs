@@ -6,7 +6,7 @@
 //! each other.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::config::{CompilerOptionKey, ProjectProvenance};
 use crate::diagnostics::{Diagnostic, RelatedInformation};
@@ -14,7 +14,9 @@ use crate::program::{
     CapabilityAnalysis, CapabilityScope, CapabilityTarget, CompilerOptions, ProgramFile,
     is_declaration_source,
 };
-use crate::source::{FileId, SourceText};
+use crate::source::{
+    FileId, SourceText, display_path, normalize_clamped_path_lexically as normalize_lexically,
+};
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct EmitFilePlan {
@@ -440,32 +442,6 @@ fn host_path_for_logical_output(source: &SourceText, output: &Path) -> PathBuf {
         working_directory.pop();
     }
     working_directory.join(output)
-}
-
-fn display_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
-}
-
-fn normalize_lexically(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match normalized.components().next_back() {
-                Some(Component::Normal(_)) => {
-                    normalized.pop();
-                }
-                Some(Component::ParentDir) | None if !path.is_absolute() => {
-                    normalized.push(component.as_os_str());
-                }
-                _ => {}
-            },
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }
 
 #[cfg(test)]

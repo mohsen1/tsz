@@ -101,7 +101,7 @@ pub struct DocumentHighlights {
     pub highlight_spans: Vec<HighlightSpan>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenameInfo {
     pub can_rename: bool,
@@ -140,26 +140,7 @@ enum SymbolKey {
     GlobalValue(String),
     GlobalType(String),
     GlobalValueAndType(String),
-    Synthetic {
-        file: FileId,
-        start: u32,
-        meaning: NavigationMeaning,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum NavigationMeaning {
-    Value,
-    Type,
-}
-
-impl From<Meaning> for NavigationMeaning {
-    fn from(value: Meaning) -> Self {
-        match value {
-            Meaning::Value => Self::Value,
-            Meaning::Type => Self::Type,
-        }
-    }
+    Synthetic { file: FileId, start: u32 },
 }
 
 #[derive(Debug, Clone)]
@@ -237,14 +218,7 @@ impl NavigationIndex {
     }
 
     pub(super) fn references(&self, path: &str, offset: u32) -> Vec<ReferencedSymbol> {
-        let Some(origin) = self.occurrence_at(path, offset) else {
-            return Vec::new();
-        };
-        let Some(declaration) = self
-            .declarations
-            .get(&origin.key)
-            .and_then(|declarations| declarations.first())
-        else {
+        let Some((origin, declaration)) = self.declaration_at(path, offset) else {
             return Vec::new();
         };
         let mark_definitions = origin.is_declaration;
@@ -320,14 +294,7 @@ impl NavigationIndex {
     }
 
     pub(super) fn rename(&self, path: &str, offset: u32) -> RenameResult {
-        let Some(origin) = self.occurrence_at(path, offset) else {
-            return RenameResult::failure();
-        };
-        let Some(declaration) = self
-            .declarations
-            .get(&origin.key)
-            .and_then(|declarations| declarations.first())
-        else {
+        let Some((origin, declaration)) = self.declaration_at(path, offset) else {
             return RenameResult::failure();
         };
         RenameResult {
@@ -369,6 +336,16 @@ impl NavigationIndex {
                         && occurrence.span.start + occurrence.span.length == offset
                 })
             })
+    }
+
+    fn declaration_at(
+        &self,
+        path: &str,
+        offset: u32,
+    ) -> Option<(&Occurrence, &DeclarationMetadata)> {
+        let occurrence = self.occurrence_at(path, offset)?;
+        let declaration = self.declarations.get(&occurrence.key)?.first()?;
+        Some((occurrence, declaration))
     }
 
     fn collect_bound_declarations(&mut self, file: &ProgramFile, dual_globals: &BTreeSet<String>) {
@@ -418,13 +395,16 @@ impl NavigationIndex {
             }) {
                 continue;
             }
-            let fallback = fallback_metadata(declaration.kind, &declaration.name);
+            let (fallback_kind, fallback_display) =
+                fallback_metadata(declaration.kind, &declaration.name);
             let syntax = syntax_metadata.get(&span_key);
             let is_local = declaration.scope != ScopeId(0)
                 || declaration.kind == DeclarationKind::Import
                 || (module_file && !syntax.is_some_and(|metadata| metadata.exported));
-            let kind =
-                syntax.map_or_else(|| fallback.kind.clone(), |metadata| metadata.kind.clone());
+            let kind = syntax.map_or_else(
+                || fallback_kind.to_string(),
+                |metadata| metadata.kind.clone(),
+            );
             let metadata = DeclarationMetadata {
                 file_name: file_name.clone(),
                 name: declaration.name.clone(),
@@ -439,11 +419,11 @@ impl NavigationIndex {
                 is_local,
                 is_ambient: syntax.is_some_and(|metadata| metadata.ambient),
                 display: syntax.map_or_else(
-                    || fallback.display.clone(),
+                    || fallback_display.clone(),
                     |metadata| metadata.display.clone(),
                 ),
                 display_parts: syntax.map_or_else(
-                    || fallback.display_parts.clone(),
+                    || vec![display_part(&fallback_display, "text")],
                     |metadata| metadata.display_parts.clone(),
                 ),
             };
@@ -469,7 +449,6 @@ impl NavigationIndex {
             file,
             file_name,
             index: self,
-            value_locals: Vec::new(),
             type_locals: Vec::new(),
         };
         visitor.visit_statements(&file.syntax.statements, ScopeId(0));
@@ -480,13 +459,8 @@ impl RenameResult {
     pub(super) fn failure() -> Self {
         Self {
             info: RenameInfo {
-                can_rename: false,
-                display_name: None,
-                full_display_name: None,
-                kind: None,
-                kind_modifiers: None,
-                trigger_span: None,
                 localized_error_message: Some("You cannot rename this element.".to_string()),
+                ..RenameInfo::default()
             },
             locations: Vec::new(),
         }
@@ -498,7 +472,6 @@ struct ReferenceVisitor<'a> {
     file: &'a ProgramFile,
     file_name: String,
     index: &'a mut NavigationIndex,
-    value_locals: Vec<BTreeMap<String, SymbolKey>>,
     type_locals: Vec<BTreeMap<String, SymbolKey>>,
 }
 
@@ -542,47 +515,28 @@ impl ReferenceVisitor<'_> {
                         false,
                     );
                 }
-                if let Some(assignment) = &declaration.assignment {
-                    self.visit_expression(assignment, scope, false);
-                }
+                self.visit_optional_expression(declaration.assignment.as_ref(), scope);
             }
             StatementKind::Variable(declaration) => {
-                if let Some(annotation) = &declaration.annotation {
-                    self.visit_type(annotation, scope);
-                }
-                if let Some(initializer) = &declaration.initializer {
-                    self.visit_expression(initializer, scope, false);
-                }
+                self.visit_optional_type(declaration.annotation.as_ref(), scope);
+                self.visit_optional_expression(declaration.initializer.as_ref(), scope);
             }
             StatementKind::Function(declaration) => {
-                let retained_type_locals = self.visit_signature_types_with_host(
+                self.visit_signature(
                     statement.id,
                     scope,
                     &declaration.type_parameters,
                     &declaration.parameters,
                     declaration.return_type.as_ref(),
                     declaration.has_body,
+                    Some(FunctionLikeBody::Statements(&declaration.body)),
                 );
-                let function_scope = self.scope_for_node(statement.id, scope);
-                if declaration.has_body {
-                    for parameter in &declaration.parameters {
-                        if let Some(initializer) = &parameter.initializer {
-                            self.visit_expression(initializer, function_scope, false);
-                        }
-                    }
-                }
-                self.visit_bound_statements(&declaration.body, function_scope);
-                if retained_type_locals {
-                    self.type_locals.pop();
-                }
             }
             StatementKind::Class(declaration) => {
                 self.push_type_parameter_locals(&declaration.type_parameters);
                 self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
                 let class_scope = self.scope_for_node(statement.id, scope);
-                if let Some(extends) = &declaration.extends {
-                    self.visit_type(extends, scope);
-                }
+                self.visit_optional_type(declaration.extends.as_ref(), scope);
                 for implemented in &declaration.implements {
                     self.visit_type(implemented, scope);
                 }
@@ -594,12 +548,8 @@ impl ReferenceVisitor<'_> {
                                 initializer,
                                 ..
                             } => {
-                                if let Some(annotation) = annotation {
-                                    self.visit_type(annotation, class_scope);
-                                }
-                                if let Some(initializer) = initializer {
-                                    self.visit_expression(initializer, class_scope, false);
-                                }
+                                self.visit_optional_type(annotation.as_ref(), class_scope);
+                                self.visit_optional_expression(initializer.as_ref(), class_scope);
                                 continue;
                             }
                             ClassMemberKind::Constructor {
@@ -629,26 +579,15 @@ impl ReferenceVisitor<'_> {
                                 *has_body,
                             ),
                         };
-                    let retained_type_locals = self.visit_signature_types_with_host(
+                    self.visit_signature(
                         member.id,
                         class_scope,
                         type_parameters,
                         parameters,
                         return_type,
                         has_body,
+                        Some(FunctionLikeBody::Statements(body)),
                     );
-                    let member_scope = self.scope_for_node(member.id, class_scope);
-                    if has_body {
-                        for parameter in parameters {
-                            if let Some(initializer) = &parameter.initializer {
-                                self.visit_expression(initializer, member_scope, false);
-                            }
-                        }
-                    }
-                    self.visit_bound_statements(body, member_scope);
-                    if retained_type_locals {
-                        self.type_locals.pop();
-                    }
                 }
                 self.type_locals.pop();
             }
@@ -670,9 +609,7 @@ impl ReferenceVisitor<'_> {
                 self.type_locals.pop();
             }
             StatementKind::Return(expression) => {
-                if let Some(expression) = expression {
-                    self.visit_expression(expression, scope, false);
-                }
+                self.visit_optional_expression(expression.as_ref(), scope);
             }
             StatementKind::Block(statements) => {
                 let block_scope = self.scope_for_node(statement.id, scope);
@@ -738,68 +675,35 @@ impl ReferenceVisitor<'_> {
                 callee,
                 type_arguments,
                 arguments,
-            } => {
-                self.visit_expression(callee, scope, false);
-                for type_argument in type_arguments.iter().flatten() {
-                    self.visit_type(type_argument, scope);
-                }
-                for argument in arguments {
-                    self.visit_expression(argument, scope, false);
-                }
-            }
+            } => self.visit_call_like(callee, type_arguments.iter().flatten(), arguments, scope),
             ExpressionKind::New {
                 callee,
                 type_arguments,
                 arguments,
-            } => {
-                self.visit_expression(callee, scope, false);
-                for type_argument in type_arguments {
-                    self.visit_type(type_argument, scope);
-                }
-                for argument in arguments {
-                    self.visit_expression(argument, scope, false);
-                }
+            } => self.visit_call_like(callee, type_arguments.iter(), arguments, scope),
+            ExpressionKind::Member { object, .. }
+            | ExpressionKind::Unary {
+                operand: object, ..
+            } => self.visit_expression(object, scope, false),
+            ExpressionKind::ElementAccess {
+                object: left,
+                index: right,
             }
-            ExpressionKind::Member { object, .. } => {
-                self.visit_expression(object, scope, false);
-            }
-            ExpressionKind::ElementAccess { object, index } => {
-                self.visit_expression(object, scope, false);
-                self.visit_expression(index, scope, false);
+            | ExpressionKind::Binary { left, right, .. } => {
+                self.visit_expression(left, scope, false);
+                self.visit_expression(right, scope, false);
             }
             ExpressionKind::FunctionLike(function) => {
                 let function_scope = self.scope_for_node(expression.id, scope);
-                let retained_type_locals = self.visit_signature_types_with_host(
+                self.visit_signature(
                     expression.id,
                     function_scope,
                     &function.type_parameters,
                     &function.parameters,
                     function.return_type.as_ref(),
                     true,
+                    Some(function.syntax.body()),
                 );
-                for parameter in &function.parameters {
-                    if let Some(initializer) = &parameter.initializer {
-                        self.visit_expression(initializer, function_scope, false);
-                    }
-                }
-                match function.syntax.body() {
-                    FunctionLikeBody::Expression(body) => {
-                        self.visit_expression(body, function_scope, false)
-                    }
-                    FunctionLikeBody::Statements(body) => {
-                        self.visit_bound_statements(body, function_scope)
-                    }
-                }
-                if retained_type_locals {
-                    self.type_locals.pop();
-                }
-            }
-            ExpressionKind::Binary { left, right, .. } => {
-                self.visit_expression(left, scope, false);
-                self.visit_expression(right, scope, false);
-            }
-            ExpressionKind::Unary { operand, .. } => {
-                self.visit_expression(operand, scope, false);
             }
             ExpressionKind::Assignment { left, right, .. } => {
                 self.visit_expression(left, scope, true);
@@ -812,6 +716,22 @@ impl ReferenceVisitor<'_> {
             ExpressionKind::Parenthesized(expression) => {
                 self.visit_expression(expression, scope, write);
             }
+        }
+    }
+
+    fn visit_call_like<'ast>(
+        &mut self,
+        callee: &Expression,
+        type_arguments: impl Iterator<Item = &'ast TypeNode>,
+        arguments: &[Expression],
+        scope: ScopeId,
+    ) {
+        self.visit_expression(callee, scope, false);
+        for type_argument in type_arguments {
+            self.visit_type(type_argument, scope);
+        }
+        for argument in arguments {
+            self.visit_expression(argument, scope, false);
         }
     }
 
@@ -848,12 +768,14 @@ impl ReferenceVisitor<'_> {
                 return_type,
                 ..
             } => {
-                self.visit_signature_types(
+                self.visit_signature(
                     *id,
                     scope,
                     type_parameters,
                     parameters,
                     Some(return_type),
+                    false,
+                    None,
                 );
             }
             TypeNodeKind::Reference {
@@ -876,14 +798,10 @@ impl ReferenceVisitor<'_> {
                 self.record_type_query_root(root, root_span, scope);
             }
             TypeNodeKind::Infer { constraint, .. } => {
-                if let Some(constraint) = constraint {
-                    self.visit_type(constraint, scope);
-                }
+                self.visit_optional_type(constraint.as_deref(), scope);
             }
             TypeNodeKind::Predicate { ty, .. } => {
-                if let Some(ty) = ty {
-                    self.visit_type(ty, scope);
-                }
+                self.visit_optional_type(ty.as_deref(), scope);
             }
             TypeNodeKind::Conditional {
                 check_type,
@@ -909,9 +827,7 @@ impl ReferenceVisitor<'_> {
                 let key = self.synthetic_type_parameter(parameter, *parameter_span);
                 self.type_locals
                     .push(BTreeMap::from([(parameter.clone(), key)]));
-                if let Some(name_type) = name_type {
-                    self.visit_type(name_type, scope);
-                }
+                self.visit_optional_type(name_type.as_deref(), scope);
                 self.visit_type(value_type, scope);
                 for member in members {
                     self.visit_type_member(member, scope);
@@ -941,12 +857,8 @@ impl ReferenceVisitor<'_> {
                 self.visit_expression(expression, scope, false);
             }
             if let Some(member_scope) = member_scope {
-                if let Some(ty) = ty {
-                    self.visit_type(ty, member_scope);
-                }
-                if let Some(initializer) = initializer {
-                    self.visit_expression(initializer, member_scope, false);
-                }
+                self.visit_optional_type(ty.as_ref(), member_scope);
+                self.visit_optional_expression(initializer.as_ref(), member_scope);
             }
             return;
         }
@@ -958,28 +870,18 @@ impl ReferenceVisitor<'_> {
         {
             self.visit_expression(expression, scope, false);
         }
-        self.visit_signature_types(member.id, scope, type_parameters, parameters, return_type);
-    }
-
-    fn visit_signature_types(
-        &mut self,
-        owner: NodeId,
-        enclosing_scope: ScopeId,
-        type_parameters: &[TypeParameterDeclaration],
-        parameters: &[Parameter],
-        return_type: Option<&TypeNode>,
-    ) {
-        self.visit_signature_types_with_host(
-            owner,
-            enclosing_scope,
+        self.visit_signature(
+            member.id,
+            scope,
             type_parameters,
             parameters,
             return_type,
             false,
+            None,
         );
     }
 
-    fn visit_signature_types_with_host(
+    fn visit_signature(
         &mut self,
         owner: NodeId,
         enclosing_scope: ScopeId,
@@ -987,27 +889,45 @@ impl ReferenceVisitor<'_> {
         parameters: &[Parameter],
         return_type: Option<&TypeNode>,
         implementation: bool,
-    ) -> bool {
-        let Some(signature_scope) = self.file.bindings.scope_for_node.get(&owner).copied() else {
-            return false;
-        };
-        self.push_type_parameter_locals(type_parameters);
-        self.visit_type_parameter_bounds(type_parameters, enclosing_scope);
-        for parameter in parameters {
-            if let Some(annotation) = &parameter.annotation {
-                self.visit_type(annotation, signature_scope);
+        body: Option<FunctionLikeBody<'_>>,
+    ) {
+        let signature_scope = self.file.bindings.scope_for_node.get(&owner).copied();
+        if let Some(signature_scope) = signature_scope {
+            self.push_type_parameter_locals(type_parameters);
+            self.visit_type_parameter_bounds(type_parameters, enclosing_scope);
+            for parameter in parameters {
+                if let Some(annotation) = &parameter.annotation {
+                    self.visit_type(annotation, signature_scope);
+                }
+                if !implementation && let Some(initializer) = &parameter.initializer {
+                    self.visit_expression(initializer, signature_scope, false);
+                }
             }
-            if !implementation && let Some(initializer) = &parameter.initializer {
-                self.visit_expression(initializer, signature_scope, false);
+            self.visit_optional_type(return_type, signature_scope);
+            if !implementation {
+                self.type_locals.pop();
             }
         }
-        if let Some(return_type) = return_type {
-            self.visit_type(return_type, signature_scope);
+        if let Some(body) = body {
+            let body_scope = self.scope_for_node(owner, enclosing_scope);
+            if implementation {
+                for initializer in parameters
+                    .iter()
+                    .filter_map(|parameter| parameter.initializer.as_ref())
+                {
+                    self.visit_expression(initializer, body_scope, false);
+                }
+            }
+            match body {
+                FunctionLikeBody::Expression(body) => {
+                    self.visit_expression(body, body_scope, false)
+                }
+                FunctionLikeBody::Statements(body) => self.visit_bound_statements(body, body_scope),
+            }
         }
-        if !implementation {
+        if signature_scope.is_some() && implementation {
             self.type_locals.pop();
         }
-        implementation
     }
 
     fn push_type_parameter_locals(&mut self, parameters: &[TypeParameterDeclaration]) {
@@ -1025,12 +945,20 @@ impl ReferenceVisitor<'_> {
         scope: ScopeId,
     ) {
         for parameter in parameters {
-            if let Some(constraint) = &parameter.constraint {
-                self.visit_type(constraint, scope);
-            }
-            if let Some(default) = &parameter.default {
-                self.visit_type(default, scope);
-            }
+            self.visit_optional_type(parameter.constraint.as_ref(), scope);
+            self.visit_optional_type(parameter.default.as_ref(), scope);
+        }
+    }
+
+    fn visit_optional_type(&mut self, node: Option<&TypeNode>, scope: ScopeId) {
+        if let Some(node) = node {
+            self.visit_type(node, scope);
+        }
+    }
+
+    fn visit_optional_expression(&mut self, expression: Option<&Expression>, scope: ScopeId) {
+        if let Some(expression) = expression {
+            self.visit_expression(expression, scope, false);
         }
     }
 
@@ -1043,11 +971,7 @@ impl ReferenceVisitor<'_> {
         write: bool,
     ) {
         let local = match meaning {
-            Meaning::Value => self
-                .value_locals
-                .iter()
-                .rev()
-                .find_map(|locals| locals.get(name)),
+            Meaning::Value => None,
             Meaning::Type => self
                 .type_locals
                 .iter()
@@ -1064,47 +988,25 @@ impl ReferenceVisitor<'_> {
         let Some(key) = key else {
             return;
         };
-        self.index.occurrences.push(Occurrence {
-            key,
-            file_name: self.file_name.clone(),
-            span: text_span(span),
-            context_span: None,
-            is_write_access: write,
-            is_declaration: false,
-        });
+        self.record_occurrence(key, span, write, false);
     }
 
     fn record_type_query_root(&mut self, name: &str, span: Span, scope: ScopeId) {
-        let local = self
-            .value_locals
-            .iter()
-            .rev()
-            .find_map(|locals| locals.get(name))
-            .cloned();
-        let key = local.or_else(|| {
-            self.program
-                .resolve_type_query_root(self.file.source.id, scope, name)
-                .map(|root| root.navigation_declaration())
-                .and_then(|declaration| self.index.declaration_keys.get(&declaration).cloned())
-        });
+        let key = self
+            .program
+            .resolve_type_query_root(self.file.source.id, scope, name)
+            .map(|root| root.navigation_declaration())
+            .and_then(|declaration| self.index.declaration_keys.get(&declaration).cloned());
         let Some(key) = key else {
             return;
         };
-        self.index.occurrences.push(Occurrence {
-            key,
-            file_name: self.file_name.clone(),
-            span: text_span(span),
-            context_span: None,
-            is_write_access: false,
-            is_declaration: false,
-        });
+        self.record_occurrence(key, span, false, false);
     }
 
     fn synthetic_type_parameter(&mut self, name: &str, span: Span) -> SymbolKey {
         let key = SymbolKey::Synthetic {
             file: self.file.source.id,
             start: span.start,
-            meaning: NavigationMeaning::Type,
         };
         let display = format!("(type parameter) {name} in type");
         self.index
@@ -1122,15 +1024,25 @@ impl ReferenceVisitor<'_> {
                 display: display.clone(),
                 display_parts: vec![display_part(&display, "text")],
             });
+        self.record_occurrence(key.clone(), span, true, true);
+        key
+    }
+
+    fn record_occurrence(
+        &mut self,
+        key: SymbolKey,
+        span: Span,
+        is_write_access: bool,
+        is_declaration: bool,
+    ) {
         self.index.occurrences.push(Occurrence {
-            key: key.clone(),
+            key,
             file_name: self.file_name.clone(),
             span: text_span(span),
             context_span: None,
-            is_write_access: true,
-            is_declaration: true,
+            is_write_access,
+            is_declaration,
         });
-        key
     }
 }
 
@@ -1160,15 +1072,18 @@ struct SyntaxMetadata {
 fn syntax_declaration_metadata(file: &ProgramFile) -> BTreeMap<(u32, u32), SyntaxMetadata> {
     let mut metadata = BTreeMap::new();
     let ambient_context = is_declaration_file(file);
-    {
-        let mut collector = SyntaxMetadataCollector {
-            metadata: &mut metadata,
-        };
-        for statement in &file.syntax.statements {
-            collector.statement(ambient_context, statement);
-        }
+    let mut collector = SyntaxMetadataCollector {
+        metadata: &mut metadata,
+    };
+    for statement in &file.syntax.statements {
+        collector.statement(ambient_context, statement);
     }
     metadata
+}
+
+fn is_declaration_file(file: &ProgramFile) -> bool {
+    let path = file.source.path.to_string_lossy();
+    path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
 }
 
 struct SyntaxMetadataCollector<'metadata> {
@@ -1386,8 +1301,8 @@ fn insert_parameter_metadata(
     );
 }
 
-fn fallback_metadata(kind: DeclarationKind, name: &str) -> SyntaxMetadata {
-    let (kind, display) = match kind {
+fn fallback_metadata(kind: DeclarationKind, name: &str) -> (&'static str, String) {
+    match kind {
         DeclarationKind::Variable => ("var", format!("var {name}")),
         DeclarationKind::Parameter => ("parameter", format!("(parameter) {name}")),
         DeclarationKind::Import => ("alias", format!("(alias) {name}")),
@@ -1402,20 +1317,7 @@ fn fallback_metadata(kind: DeclarationKind, name: &str) -> SyntaxMetadata {
         }
         DeclarationKind::AnonymousSignature => ("type", "(anonymous signature)".to_string()),
         DeclarationKind::UnmodeledHost => ("module", format!("module {name}")),
-    };
-    SyntaxMetadata {
-        kind: kind.to_string(),
-        context_span: None,
-        exported: false,
-        ambient: false,
-        display: display.clone(),
-        display_parts: vec![display_part(&display, "text")],
     }
-}
-
-fn is_declaration_file(file: &ProgramFile) -> bool {
-    let path = file.source.path.to_string_lossy();
-    path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
 }
 
 fn variable_display_parts(kind: &str, name: &str, ty: Option<&str>) -> Vec<SymbolDisplayPart> {
@@ -1447,33 +1349,22 @@ fn function_display_parts(
             parts.push(display_part(" ", "space"));
         }
         let Some(ty) = display_parameter_type(parameter) else {
-            return vec![display_part(
-                &format!("function {}", declaration.name),
-                "text",
-            )];
+            return fallback_function_parts(&declaration.name);
         };
-        if parameter.rest {
-            parts.push(display_part("...", "punctuation"));
-        }
-        parts.push(display_part(&parameter.name, "parameterName"));
-        if parameter.optional || parameter.initializer.is_some() {
-            parts.push(display_part("?", "punctuation"));
-        }
-        parts.push(display_part(":", "punctuation"));
-        parts.push(display_part(" ", "space"));
-        parts.push(display_part(&ty, display_type_part_kind(&ty)));
+        append_parameter_parts(&mut parts, parameter, &ty);
     }
     let Some(result) = declaration.return_type.as_ref().and_then(display_type_node) else {
-        return vec![display_part(
-            &format!("function {}", declaration.name),
-            "text",
-        )];
+        return fallback_function_parts(&declaration.name);
     };
     parts.push(display_part(")", "punctuation"));
     parts.push(display_part(":", "punctuation"));
     parts.push(display_part(" ", "space"));
     parts.push(display_part(&result, display_type_part_kind(&result)));
     parts
+}
+
+fn fallback_function_parts(name: &str) -> Vec<SymbolDisplayPart> {
+    vec![display_part(&format!("function {name}"), "text")]
 }
 
 fn parameter_display_parts(parameter: &Parameter) -> Vec<SymbolDisplayPart> {
@@ -1492,6 +1383,11 @@ fn parameter_display_parts(parameter: &Parameter) -> Vec<SymbolDisplayPart> {
         display_part(")", "punctuation"),
         display_part(" ", "space"),
     ];
+    append_parameter_parts(&mut parts, parameter, &ty);
+    parts
+}
+
+fn append_parameter_parts(parts: &mut Vec<SymbolDisplayPart>, parameter: &Parameter, ty: &str) {
     if parameter.rest {
         parts.push(display_part("...", "punctuation"));
     }
@@ -1499,10 +1395,11 @@ fn parameter_display_parts(parameter: &Parameter) -> Vec<SymbolDisplayPart> {
     if parameter.optional || parameter.initializer.is_some() {
         parts.push(display_part("?", "punctuation"));
     }
-    parts.push(display_part(":", "punctuation"));
-    parts.push(display_part(" ", "space"));
-    parts.push(display_part(&ty, display_type_part_kind(&ty)));
-    parts
+    parts.extend([
+        display_part(":", "punctuation"),
+        display_part(" ", "space"),
+        display_part(ty, display_type_part_kind(ty)),
+    ]);
 }
 
 fn display_type_part_kind(ty: &str) -> &'static str {

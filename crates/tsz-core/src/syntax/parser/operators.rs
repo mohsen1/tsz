@@ -1,4 +1,4 @@
-use super::super::{BinaryOperator, Expression, ExpressionKind, TokenKind};
+use super::super::{BinaryOperator, Expression, ExpressionKind, SourceSyntaxFact, TokenKind};
 use super::Parser;
 
 impl Parser<'_> {
@@ -6,6 +6,31 @@ impl Parser<'_> {
         let expression = self.parse_assignment_expression();
         self.observe_unmodeled_template_tail(&expression);
         expression
+    }
+
+    pub(super) fn parse_binary_expression_with_shift_assignment_recovery(&mut self) -> Expression {
+        let expression = self.parse_binary_expression(0);
+        if !self.speculating && self.at(TokenKind::GreaterThanGreaterThanGreaterThanEquals) {
+            self.source_syntax_facts
+                .insert(SourceSyntaxFact::UnsignedRightShiftAssignmentRecovery);
+        }
+        expression
+    }
+
+    pub(super) fn observe_unsigned_shift_prefix_recovery(&mut self, kind: TokenKind) {
+        if self.speculating {
+            return;
+        }
+        let fact = match kind {
+            TokenKind::GreaterThanGreaterThanGreaterThan => {
+                Some(SourceSyntaxFact::UnsignedRightShiftOperandRecovery)
+            }
+            TokenKind::GreaterThanGreaterThanGreaterThanEquals => {
+                Some(SourceSyntaxFact::UnsignedRightShiftAssignmentRecovery)
+            }
+            _ => None,
+        };
+        self.source_syntax_facts.extend(fact);
     }
 }
 
@@ -26,11 +51,12 @@ pub(super) const fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, 
         TokenKind::GreaterThanEquals => (BinaryOperator::GreaterThanEquals, 6),
         TokenKind::In => (BinaryOperator::In, 6),
         TokenKind::InstanceOf => (BinaryOperator::InstanceOf, 6),
-        TokenKind::Plus => (BinaryOperator::Add, 7),
-        TokenKind::Minus => (BinaryOperator::Subtract, 7),
-        TokenKind::Star => (BinaryOperator::Multiply, 8),
-        TokenKind::Slash => (BinaryOperator::Divide, 8),
-        TokenKind::Percent => (BinaryOperator::Remainder, 8),
+        TokenKind::GreaterThanGreaterThanGreaterThan => (BinaryOperator::UnsignedRightShift, 7),
+        TokenKind::Plus => (BinaryOperator::Add, 8),
+        TokenKind::Minus => (BinaryOperator::Subtract, 8),
+        TokenKind::Star => (BinaryOperator::Multiply, 9),
+        TokenKind::Slash => (BinaryOperator::Divide, 9),
+        TokenKind::Percent => (BinaryOperator::Remainder, 9),
         _ => return None,
     };
     Some(operator)

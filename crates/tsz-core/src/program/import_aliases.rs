@@ -6,10 +6,10 @@
 //! script global scope.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use crate::bind::{BoundFile, DeclarationKind, Meaning, ScopeId};
-use crate::source::{DeclId, FileId};
+use crate::source::{DeclId, FileId, normalize_import_path_lexically as normalize_path};
 use crate::syntax::{Statement, StatementKind};
 
 use super::{Program, ProgramFile};
@@ -222,27 +222,4 @@ fn statement_directly_exports_value(
                 _ => false,
             }
     })
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match normalized.components().next_back() {
-                Some(Component::Normal(_)) => {
-                    normalized.pop();
-                }
-                Some(Component::RootDir) => {}
-                Some(Component::CurDir) => unreachable!("current directories are removed eagerly"),
-                _ => {
-                    normalized.push(component.as_os_str());
-                }
-            },
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }
