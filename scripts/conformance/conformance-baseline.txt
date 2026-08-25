@@ -75,7 +75,6 @@ FAIL TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes3.ts | e
 FAIL TypeScript/tests/cases/compiler/inferTypePredicates.ts | expected:[TS2322,TS2345,TS2741,TS18048] actual:[TS2322,TS2345,TS2740,TS2741,TS18048]
 FAIL TypeScript/tests/cases/compiler/infiniteConstraints.ts | expected:[TS2322,TS2536] actual:[TS2322,TS2536]
 FAIL TypeScript/tests/cases/compiler/inheritance1.ts | expected:[TS2322,TS2420,TS2741] actual:[TS2322,TS2420,TS2741]
-FAIL TypeScript/tests/cases/compiler/inheritedStringIndexersFromDifferentBaseTypes2.ts | expected:[TS2413] actual:[]
 FAIL TypeScript/tests/cases/compiler/instanceofOperator.ts | expected:[TS2358,TS2359,TS2725] actual:[TS5108]
 FAIL TypeScript/tests/cases/compiler/intTypeCheck.ts | expected:[TS1109] actual:[TS1021,TS1109]
 FAIL TypeScript/tests/cases/compiler/isolatedDeclarationErrorsClasses.ts | expected:[TS1166,TS2304,TS7006,TS7010,TS7032,TS9008,TS9009,TS9011,TS9012,TS9013,TS9038] actual:[TS1166,TS2304,TS7006,TS7010,TS7032]
@@ -118,7 +117,7 @@ FAIL TypeScript/tests/cases/compiler/noInferUnionExcessPropertyCheck1.ts | expec
 FAIL TypeScript/tests/cases/compiler/noParameterReassignmentIIFEAnnotated.ts | expected:[TS2683,TS2740] actual:[TS2345,TS2683,TS8029]
 FAIL TypeScript/tests/cases/compiler/noParameterReassignmentJSIIFE.ts | expected:[TS2740] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/noUnusedLocals_writeOnlyProperty_dynamicNames.ts | expected:[TS6133] actual:[]
-FAIL TypeScript/tests/cases/compiler/null.ts | expected:[TS2365] actual:[]
+FAIL TypeScript/tests/cases/compiler/null.ts | expected:[TS2365] actual:[TS2365]
 FAIL TypeScript/tests/cases/compiler/objectLitIndexerContextualType.ts | expected:[TS2353,TS2362,TS2363] actual:[TS2353,TS2362,TS2363,TS7006]
 FAIL TypeScript/tests/cases/compiler/objectLiteralFunctionArgContextualTyping2.ts | expected:[TS2322,TS2353,TS2741] actual:[TS2345,TS2353,TS2741]
 FAIL TypeScript/tests/cases/compiler/optionalParamReferencingOtherParams2.ts | expected:[TS2304] actual:[TS2454]
@@ -140,6 +139,7 @@ FAIL TypeScript/tests/cases/compiler/propertySignatures.ts | expected:[TS2300,TS
 FAIL TypeScript/tests/cases/compiler/protectedMembers.ts | expected:[TS2322,TS2415,TS2445,TS2446] actual:[TS2322,TS2415,TS2445,TS2446]
 FAIL TypeScript/tests/cases/compiler/readonlyMembers.ts | expected:[TS2540,TS2542] actual:[TS2540,TS2542]
 FAIL TypeScript/tests/cases/compiler/recursiveClassReferenceTest.ts | expected:[TS2304,TS2663,TS2741] actual:[TS2304,TS2552,TS2663,TS2741]
+FAIL TypeScript/tests/cases/compiler/recursiveFunctionTypes.ts | expected:[TS2322,TS2345,TS2355,TS2394,TS2554,TS2769] actual:[TS2322,TS2345,TS2355,TS2394,TS2554,TS2769]
 FAIL TypeScript/tests/cases/compiler/redeclareParameterInCatchBlock.ts | expected:[TS2451,TS2492] actual:[TS2492]
 FAIL TypeScript/tests/cases/compiler/regularExpressionCharacterClassRangeOrder.ts | expected:[TS1517,TS1538] actual:[TS1517,TS1538]
 FAIL TypeScript/tests/cases/compiler/regularExpressionScanning.ts | expected:[TS1005,TS1487,TS1499,TS1500,TS1501,TS1502,TS1503,TS1506,TS1507,TS1508,TS1509,TS1511,TS1512,TS1515,TS1517,TS1518,TS1519,TS1520,TS1521,TS1522,TS1523,TS1524,TS1525,TS1527,TS1528,TS1529,TS1530,TS1531,TS1532,TS1533,TS1534,TS1535,TS1536,TS1537] actual:[TS1005,TS1487,TS1499,TS1500,TS1501,TS1502,TS1503,TS1506,TS1507,TS1508,TS1509,TS1511,TS1512,TS1515,TS1517,TS1518,TS1519,TS1520,TS1521,TS1522,TS1523,TS1524,TS1525,TS1527,TS1528,TS1529,TS1530,TS1531,TS1532,TS1533,TS1534,TS1535,TS1536,TS1537]
@@ -3531,6 +3531,7 @@ PASS TypeScript/tests/cases/compiler/inheritedMembersAndIndexSignaturesFromDiffe
 PASS TypeScript/tests/cases/compiler/inheritedModuleMembersForClodule.ts
 PASS TypeScript/tests/cases/compiler/inheritedOverloadedSpecializedSignatures.ts
 PASS TypeScript/tests/cases/compiler/inheritedStringIndexersFromDifferentBaseTypes.ts
+PASS TypeScript/tests/cases/compiler/inheritedStringIndexersFromDifferentBaseTypes2.ts
 PASS TypeScript/tests/cases/compiler/initializePropertiesWithRenamedLet.ts
 PASS TypeScript/tests/cases/compiler/initializedDestructuringAssignmentTypes.ts
 PASS TypeScript/tests/cases/compiler/initializedParameterBeforeNonoptionalNotOptional.ts
@@ -5137,7 +5138,6 @@ PASS TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType
 PASS TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType6.ts
 PASS TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType7.ts
 PASS TypeScript/tests/cases/compiler/recursiveFieldSetting.ts
-PASS TypeScript/tests/cases/compiler/recursiveFunctionTypes.ts
 PASS TypeScript/tests/cases/compiler/recursiveFunctionTypes1.ts
 PASS TypeScript/tests/cases/compiler/recursiveGenericMethodCall.ts
 PASS TypeScript/tests/cases/compiler/recursiveGenericSignatureInstantiation.ts
@@ -11845,7 +11845,6 @@ PASS TypeScript/tests/cases/conformance/types/unknown/unknownType1.ts
 PASS TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts
 PASS TypeScript/tests/cases/conformance/typings/typingsLookup1.ts
 PASS TypeScript/tests/cases/conformance/typings/typingsLookup2.ts
-PASS TypeScript/tests/cases/conformance/typings/typingsLookup3.ts
 PASS TypeScript/tests/cases/conformance/typings/typingsLookup4.ts
 PASS TypeScript/tests/cases/conformance/typings/typingsSuggestion1.ts
 PASS TypeScript/tests/cases/conformance/typings/typingsSuggestion2.ts
