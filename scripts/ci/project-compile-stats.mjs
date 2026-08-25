@@ -14,6 +14,8 @@ function nonnegativeInteger(value) {
   return Number.isInteger(value) && value >= 0;
 }
 
+const SEMANTIC_COMPLETIONS = new Set(["complete", "deferred", "cycle", "limit"]);
+
 export function compilerStatsFrom(value) {
   if (value?.schema_version !== 2) {
     throw new Error("payload schema_version must be 2");
@@ -23,8 +25,10 @@ export function compilerStatsFrom(value) {
     throw new Error("payload has no stats object");
   }
   const semanticCompletion = stats.semantic_completion;
-  if (semanticCompletion !== "complete") {
-    throw new Error('stats.semantic_completion must be exactly "complete"');
+  if (!SEMANTIC_COMPLETIONS.has(semanticCompletion)) {
+    throw new Error(
+      'stats.semantic_completion must be exactly one of "complete", "deferred", "cycle", or "limit"',
+    );
   }
   const rootFiles = stats.root_files;
   const sourceFiles = stats.source_files;

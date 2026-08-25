@@ -16,6 +16,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,9 +25,21 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const LIB = path.join(ROOT, "scripts", "ci", "lib", "project-compile-fingerprint.sh");
+const BATCH_HASHER = path.join(ROOT, "scripts", "ci", "lib", "project-source-tree-hash.mjs");
 const ORACLE_LIB = path.join(ROOT, "scripts", "ci", "lib", "project-tsc-oracle.sh");
 
 assert.ok(fs.existsSync(LIB), `fingerprint library missing: ${LIB}`);
+assert.ok(fs.existsSync(BATCH_HASHER), `batch hasher missing: ${BATCH_HASHER}`);
+assert.doesNotMatch(
+  fs.readFileSync(LIB, "utf8"),
+  /while IFS= read -r f;[\s\S]*sha256_of_file/,
+  "source-tree hashing must not spawn one checksum process per file",
+);
+assert.doesNotMatch(
+  fs.readFileSync(BATCH_HASHER, "utf8"),
+  /node:child_process|\bspawn(?:Sync)?\b|\bexec(?:File|Sync)?\b/,
+  "the batch helper must hash files in-process",
+);
 
 // Drive the sourced library from bash. Emits `KEY=value` lines we parse below.
 // `fp <label> <tsconfig> <src_dir>` prints the fingerprint for one invocation.
@@ -305,5 +318,115 @@ assert.notEqual(
 );
 assert.equal(kv.E_RESULT_LENGTH, "0", "symlink traversal failure disables result caching");
 assert.equal(kv.E_ORACLE_LENGTH, "0", "symlink traversal failure disables oracle caching");
+
+// A one-file and a many-file tree must each use exactly one batch process and
+// no platform checksum command. The many-file digest is independently rebuilt
+// with the legacy `<file sha>  <relative path>\n` stream to lock its identity.
+const batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-batch-hash-"));
+try {
+  const wrapperBin = path.join(batchRoot, "bin");
+  const processLog = path.join(batchRoot, "processes.log");
+  fs.mkdirSync(wrapperBin);
+  for (const command of ["sha256sum", "shasum"]) {
+    const wrapper = path.join(wrapperBin, command);
+    fs.writeFileSync(wrapper, `#!/usr/bin/env bash\nprintf '${command}\\n' >> "$HASH_PROCESS_LOG"\nexit 99\n`);
+    fs.chmodSync(wrapper, 0o755);
+  }
+  const nodeWrapper = path.join(wrapperBin, "node");
+  fs.writeFileSync(
+    nodeWrapper,
+    '#!/usr/bin/env bash\nprintf \'node\\n\' >> "$HASH_PROCESS_LOG"\n' +
+      '[[ -z "${HASH_REMOVE_BEFORE_READ:-}" ]] || rm -f -- "$HASH_REMOVE_BEFORE_READ"\n' +
+      'exec "$REAL_NODE" "$@"\n',
+  );
+  fs.chmodSync(nodeWrapper, 0o755);
+
+  const createTree = (name, count) => {
+    const tree = path.join(batchRoot, name);
+    const files = [];
+    fs.mkdirSync(tree);
+    for (let index = 0; index < count; index += 1) {
+      const file = path.join(tree, "src", `part-${String(index).padStart(4, "0")}.ts`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `export const value${index} = ${index};\n`);
+      files.push(file);
+    }
+    return { tree, files };
+  };
+  const empty = createTree("empty", 0);
+  const tiny = createTree("tiny", 1);
+  const many = createTree("many", 768);
+  for (const [relative, content] of [
+    ["node_modules/pkg/index.d.ts", "export declare const dependency: 1;\n"],
+    [".next/types/routes.json", '{"route":"/batch"}\n'],
+    ["src/with space.ts", "export const spaced = true;\n"],
+  ]) {
+    const file = path.join(many.tree, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+    many.files.push(file);
+  }
+  fs.symlinkSync(path.join(many.tree, "node_modules", "pkg"), path.join(many.tree, "linked-types"));
+  many.files.push(path.join(many.tree, "linked-types", "index.d.ts"));
+
+  const legacyDigest = ({ tree, files }) => {
+    const aggregate = crypto.createHash("sha256");
+    for (const file of [...files].sort()) {
+      const digest = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+      aggregate.update(`${digest}  ${path.relative(tree, file)}\n`);
+    }
+    return aggregate.digest("hex");
+  };
+  const runBatch = (fixture) => {
+    fs.writeFileSync(processLog, "");
+    const batch = spawnSync("bash", ["-c", 'source "$LIB_PATH"; hash_source_tree "$TREE_PATH"'], {
+      encoding: "utf8",
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        PATH: `${wrapperBin}:${process.env.PATH}`,
+        HASH_PROCESS_LOG: processLog,
+        LIB_PATH: LIB,
+        REAL_NODE: process.execPath,
+        TREE_PATH: fixture.tree,
+      },
+    });
+    assert.equal(batch.status, 0, batch.stderr);
+    assert.deepEqual(
+      fs.readFileSync(processLog, "utf8").trim().split(/\r?\n/),
+      ["node"],
+      "source-tree hashing uses one batch process regardless of file count",
+    );
+    return batch.stdout;
+  };
+
+  assert.equal(runBatch(empty), legacyDigest(empty));
+  assert.equal(runBatch(tiny), legacyDigest(tiny));
+  assert.equal(runBatch(many), legacyDigest(many));
+
+  const vanishing = createTree("vanishing", 2);
+  fs.writeFileSync(processLog, "");
+  const readFailure = spawnSync(
+    "bash",
+    ["-c", 'source "$LIB_PATH"; hash_source_tree "$TREE_PATH"'],
+    {
+      encoding: "utf8",
+      timeout: 15_000,
+      env: {
+        ...process.env,
+        PATH: `${wrapperBin}:${process.env.PATH}`,
+        HASH_PROCESS_LOG: processLog,
+        HASH_REMOVE_BEFORE_READ: vanishing.files[0],
+        LIB_PATH: LIB,
+        REAL_NODE: process.execPath,
+        TREE_PATH: vanishing.tree,
+      },
+    },
+  );
+  assert.notEqual(readFailure.status, 0, "a file disappearing after traversal fails closed");
+  assert.equal(readFailure.stdout, "", "read failure must never publish a partial digest");
+} finally {
+  fs.rmSync(batchRoot, { recursive: true, force: true });
+}
 
 console.log("project-compile-guard fingerprint: ok");

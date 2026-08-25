@@ -20,10 +20,10 @@ const sourcePaths = [
   path.join(configDir, "src", "b.ts"),
 ];
 
-const parsed = compilerStatsFrom({
+const statsPayload = (semantic_completion) => ({
   schema_version: 2,
   stats: {
-    semantic_completion: "complete",
+    semantic_completion,
     root_files: 2,
     source_files: 2,
     files: 2,
@@ -31,9 +31,17 @@ const parsed = compilerStatsFrom({
     source_file_paths: sourcePaths,
   },
 });
+const parsed = compilerStatsFrom(statsPayload("complete"));
 assert.equal(parsed.semanticCompletion, "complete");
 assert.deepEqual(parsed.rootFilePaths, rootPaths);
 assert.deepEqual(parsed.sourceFilePaths, sourcePaths);
+for (const semanticCompletion of ["complete", "deferred", "cycle", "limit"]) {
+  assert.equal(
+    compilerStatsFrom(statsPayload(semanticCompletion)).semanticCompletion,
+    semanticCompletion,
+    `${semanticCompletion} is valid typed completion telemetry`,
+  );
+}
 
 for (const invalid of [
   { schema_version: 1, stats: parsed },
@@ -64,7 +72,7 @@ for (const invalid of [
   assert.throws(() => compilerStatsFrom(invalid));
 }
 
-for (const semantic_completion of [undefined, null, "", "deferred", "cycle", "limit"]) {
+for (const semantic_completion of [undefined, null, "", "Complete", "complete ", "unknown", 0]) {
   assert.throws(
     () => compilerStatsFrom({
       schema_version: 2,

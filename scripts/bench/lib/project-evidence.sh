@@ -92,11 +92,14 @@ project_evidence_read_tsz_stats() {
   [[ "$PROJECT_EVIDENCE_TSZ_ROOT_FILES" =~ ^(0|[1-9][0-9]*)$ \
     && "$PROJECT_EVIDENCE_TSZ_SOURCE_FILES" =~ ^(0|[1-9][0-9]*)$ \
     && "$PROJECT_EVIDENCE_TSZ_ROOT_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
-    && "$PROJECT_EVIDENCE_TSZ_SOURCE_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
-    && "$PROJECT_EVIDENCE_SEMANTIC_COMPLETION" == "complete" ]] || {
+    && "$PROJECT_EVIDENCE_TSZ_SOURCE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || {
       PROJECT_EVIDENCE_FILES_REACHED_REASON="compiler stats malformed"
       return 1
     }
+  case "$PROJECT_EVIDENCE_SEMANTIC_COMPLETION" in
+    complete|deferred|cycle|limit) ;;
+    *) PROJECT_EVIDENCE_FILES_REACHED_REASON="compiler stats malformed"; return 1 ;;
+  esac
   PROJECT_EVIDENCE_FILES_REACHED_REASON=""
 }
 
@@ -228,6 +231,18 @@ collect_project_evidence() {
     local stats_reason="$PROJECT_EVIDENCE_FILES_REACHED_REASON"
     rm -f "$show_file" "$list_file" "$stats_file"
     project_evidence_fail "$stats_reason" "runner error" "$stats_reason"
+    return 1
+  fi
+  if [[ "$PROJECT_EVIDENCE_SEMANTIC_COMPLETION" != "complete" ]]; then
+    rm -f "$show_file" "$list_file" "$stats_file"
+    # Valid telemetry is retained below, but schema 2 denotes exact admission
+    # proof and therefore remains unset for every incomplete completion.
+    local incomplete_class="exit success"
+    if [[ "$tsz_rc" -ne 0 ]]; then
+      incomplete_class="$(project_failure_class "$([[ "$tsz_rc" -eq 124 ]] && echo timeout || echo "nonzero exit")" "$tsz_rc")"
+    fi
+    project_evidence_fail "semantic completion ${PROJECT_EVIDENCE_SEMANTIC_COMPLETION}" \
+      "$incomplete_class" "semantic completion ${PROJECT_EVIDENCE_SEMANTIC_COMPLETION}"
     return 1
   fi
   rm -f "$show_file" "$list_file" "$stats_file"

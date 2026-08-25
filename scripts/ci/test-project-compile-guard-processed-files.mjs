@@ -69,6 +69,7 @@ write_stats() {
     const fs = require("node:fs");
     const root = process.env.FAKE_PROJECT_ROOT;
     const mode = process.env.FAKE_STATS_MODE;
+    const semanticCompletion = ["deferred", "cycle", "limit"].includes(mode) ? mode : "complete";
     let roots = [root + "/src/index.ts", root + "/src/second.ts"];
     let sources = [
       root + "/src/index.ts", root + "/src/second.ts", root + "/src/three.ts",
@@ -87,7 +88,7 @@ write_stats() {
     fs.writeFileSync(process.env.FAKE_STATS_FILE, JSON.stringify({
       schema_version: 2,
       stats: {
-        semantic_completion: "complete",
+        semantic_completion: semanticCompletion,
         root_files: roots.length,
         source_files: sources.length,
         files: sources.length,
@@ -118,6 +119,10 @@ case "$FAKE_STATS_MODE" in
   legacy-schema)
     printf '%s\n' '{"schema_version":1,"stats":{"root_files":0,"source_files":0,"files":0,"root_file_paths":[],"source_file_paths":[]}}' > "$stats_file"
     exit 0
+    ;;
+  deferred|cycle|limit)
+    FAKE_STATS_FILE="$stats_file" write_stats
+    exit 3
     ;;
   positive|root-mismatch|source-mismatch|root-path-mismatch|source-path-mismatch|oracle-timeout|source-oracle-timeout)
     FAKE_STATS_FILE="$stats_file" write_stats
@@ -467,6 +472,33 @@ for (const mode of ["missing", "malformed", "malformed-paths", "legacy-schema"])
     mode === "missing" ? "compiler stats missing" : "compiler stats malformed",
     `${mode} machine stats stay non-evidence after a fresh rerun`,
   );
+}
+
+for (const semanticCompletion of ["deferred", "cycle", "limit"]) {
+  const { firstRow, row, output } = runCase(semanticCompletion, {
+    repeat: true,
+    cacheExpected: false,
+  });
+  for (const [label, value] of [["fresh", firstRow], ["rerun", row]]) {
+    assert.equal(value.state, "red", `${semanticCompletion} ${label}: producer RC3 is a red row`);
+    assert.equal(value.exit_class, "nonzero exit");
+    assert.equal(value.evidence_schema, null, "typed telemetry is not exact admission proof");
+    assert.equal(value.semantic_completion, semanticCompletion);
+    assert.equal(value.root_files, 2);
+    assert.equal(value.source_files, 7);
+    assert.equal(value.files_reached, 7);
+    assert.equal(value.files_reached_reason, null);
+    assert.match(value.root_file_fingerprint, /^[0-9a-f]{64}$/);
+    assert.match(value.source_file_fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(value.oracle_root_files, 2);
+    assert.equal(value.oracle_source_files, 7);
+    assert.equal(value.root_file_fingerprint, value.oracle_root_file_fingerprint);
+    assert.equal(value.source_file_fingerprint, value.oracle_source_file_fingerprint);
+    assert.equal(value.diagnostic_status, `semantic completion ${semanticCompletion}`);
+    assert.deepEqual(value.exit_codes.tsz, [3]);
+  }
+  assert.match(output, /result is non-evidence/);
+  assert.match(output, /result not cached/);
 }
 
 {

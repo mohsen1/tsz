@@ -64,9 +64,9 @@ case "\${FAKE_TSZ_CASE:-exact}" in
     printf '{"schema_version":2,"stats":{"root_files":1,"source_files":1,"root_file_paths":["%s"],"source_file_paths":["%s"]}}' \
       "$FAKE_SOURCE" "$FAKE_SOURCE" > "$stats"
     ;;
-  deferred)
-    printf '{"schema_version":2,"stats":{"semantic_completion":"deferred","root_files":1,"source_files":1,"root_file_paths":["%s"],"source_file_paths":["%s"]}}' \
-      "$FAKE_SOURCE" "$FAKE_SOURCE" > "$stats"
+  deferred|cycle|limit)
+    printf '{"schema_version":2,"stats":{"semantic_completion":"%s","root_files":1,"source_files":1,"root_file_paths":["%s"],"source_file_paths":["%s"]}}' \
+      "$FAKE_TSZ_CASE" "$FAKE_SOURCE" "$FAKE_SOURCE" > "$stats"
     ;;
   zero)
     printf '{"schema_version":2,"stats":{"semantic_completion":"complete","root_files":0,"source_files":0,"root_file_paths":[],"source_file_paths":[]}}' > "$stats"
@@ -231,7 +231,6 @@ for (const [caseName, config] of [
   ["malformed-stats", { tszCase: "malformed", missingReason: "compiler stats malformed" }],
   ["legacy-stats", { tszCase: "legacy", missingReason: "compiler stats malformed" }],
   ["missing-completion", { tszCase: "missing-completion", missingReason: "compiler stats malformed" }],
-  ["deferred-completion", { tszCase: "deferred", missingReason: "compiler stats malformed" }],
   ["zero-stats", { tszCase: "zero" }],
   ["equal-count-wrong-paths", { tszCase: "wrong-paths" }],
 ]) {
@@ -252,6 +251,38 @@ for (const [caseName, config] of [
   }
 }
 console.log("project evidence rejects true/missing/malformed/legacy/zero/wrong-path proofs");
+
+for (const semanticCompletion of ["deferred", "cycle", "limit"]) {
+  const run = runCase({
+    caseName: `${semanticCompletion}-completion`,
+    tszCase: semanticCompletion,
+    tszRc: 3,
+    exportArtifact: true,
+  });
+  try {
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(run.hyperfineCalled, false, `${semanticCompletion}: typed incomplete is not timed`);
+    assert.equal(run.row.state, "red");
+    assert.equal(run.row.exit_class, "nonzero exit");
+    assert.equal(run.row.evidence_schema, null, "typed telemetry is not exact admission proof");
+    assert.equal(run.row.semantic_completion, semanticCompletion);
+    assert.equal(run.row.root_files, 1);
+    assert.equal(run.row.source_files, 1);
+    assert.equal(run.row.files_reached, 1);
+    assert.equal(run.row.files_reached_reason, null);
+    assert.equal(run.row.root_file_fingerprint, run.row.oracle_root_file_fingerprint);
+    assert.equal(run.row.source_file_fingerprint, run.row.oracle_source_file_fingerprint);
+    assert.equal(run.row.diagnostic_status, `semantic completion ${semanticCompletion}`);
+    assert.deepEqual(run.row.exit_codes.tsz, [3]);
+    assert.match(run.output, new RegExp(`semantic completion ${semanticCompletion}`));
+    const published = run.artifact?.results?.[0]?.compatibility;
+    assert.equal(published?.semantic_completion, semanticCompletion);
+    assert.equal(published?.source_file_fingerprint, run.row.source_file_fingerprint);
+  } finally {
+    finish(run);
+  }
+}
+console.log("typed incomplete project evidence is retained but never timed");
 
 for (const rowName of ["msw-project", "effect-project", "drizzle-orm-project"]) {
   const expected = fixtureStubEvidenceFor(ROOT, rowName);

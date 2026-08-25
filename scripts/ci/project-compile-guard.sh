@@ -347,8 +347,7 @@ read_project_compiler_stats() {
   if [[ ! "$LAST_ROOT_FILES" =~ ^(0|[1-9][0-9]*)$ ]] \
     || [[ ! "$LAST_SOURCE_FILES" =~ ^(0|[1-9][0-9]*)$ ]] \
     || [[ ! "$LAST_ROOT_FILE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] \
-    || [[ ! "$LAST_SOURCE_FILE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] \
-    || [[ "$LAST_SEMANTIC_COMPLETION" != "complete" ]]; then
+    || [[ ! "$LAST_SOURCE_FILE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
     LAST_ROOT_FILES=""
     LAST_SOURCE_FILES=""
     LAST_ROOT_FILE_FINGERPRINT=""
@@ -436,6 +435,7 @@ record_project_compatibility() {
   local files_reached_reason="${12:-}"
   local fixture_sources
   fixture_sources="$(tsz_project_fixture_sources "$name")"
+  local evidence_schema=""; if [[ "${LAST_SEMANTIC_COMPLETION:-}" == "complete" && "$exit_class" == "exit success" && "$diagnostic_status" == "none" ]]; then evidence_schema=2; fi
 
   local peak_memory_bytes_reason=""
   if [ -z "$peak_memory_bytes" ]; then
@@ -451,7 +451,12 @@ record_project_compatibility() {
   COMPAT_EXIT_CLASS="$exit_class" \
   COMPAT_PHASE="$phase" \
   COMPAT_DIAGNOSTIC_STATUS="$diagnostic_status" \
+  COMPAT_EVIDENCE_SCHEMA="$evidence_schema" \
   COMPAT_SEMANTIC_COMPLETION="${LAST_SEMANTIC_COMPLETION:-}" \
+  COMPAT_ROOT_FILES="${LAST_ROOT_FILES:-}" COMPAT_SOURCE_FILES="${LAST_SOURCE_FILES:-}" \
+  COMPAT_ROOT_FILE_FINGERPRINT="${LAST_ROOT_FILE_FINGERPRINT:-}" COMPAT_SOURCE_FILE_FINGERPRINT="${LAST_SOURCE_FILE_FINGERPRINT:-}" \
+  COMPAT_ORACLE_ROOT_FILES="${LAST_TSC_ROOT_FILES:-}" COMPAT_ORACLE_SOURCE_FILES="${LAST_TSC_SOURCE_FILES:-}" \
+  COMPAT_ORACLE_ROOT_FILE_FINGERPRINT="${LAST_TSC_ROOT_FINGERPRINT:-}" COMPAT_ORACLE_SOURCE_FILE_FINGERPRINT="${LAST_TSC_SOURCE_FINGERPRINT:-}" \
   COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
   COMPAT_FILES_REACHED="$files_reached" \
   COMPAT_FILES_REACHED_REASON="$files_reached_reason" \
@@ -1044,7 +1049,7 @@ check_project() {
   local src_dir="${3:-$(dirname "$tsconfig")}"
   local tsc_exit_codes="${4:-}"
   local log="$FIXTURE_ROOT/${name}.log"
-  LAST_SEMANTIC_COMPLETION=""
+  LAST_ROOT_FILES=""; LAST_SOURCE_FILES=""; LAST_ROOT_FILE_FINGERPRINT=""; LAST_SOURCE_FILE_FINGERPRINT=""; LAST_SEMANTIC_COMPLETION=""; LAST_TSC_ROOT_FILES=""; LAST_TSC_SOURCE_FILES=""; LAST_TSC_ROOT_FINGERPRINT=""; LAST_TSC_SOURCE_FINGERPRINT=""
 
   # Result cache: skip recompilation when the tsz binary, pinned-oracle protocol,
   # and conservative full fixture-row compile-input identity are all unchanged
@@ -1140,6 +1145,8 @@ check_project() {
     if [[ "$_cached_schema" == "$COMPILE_RESULT_CACHE_SCHEMA" \
       && "$_cached_fp" == "$_fp" && "$_cached_stats_valid" == "1" \
       && "$_cached_tsc_stats_valid" == "1" ]]; then
+      LAST_ROOT_FILES="$_cached_roots"; LAST_SOURCE_FILES="$_cached_sources"; LAST_ROOT_FILE_FINGERPRINT="$_cached_root_fp"; LAST_SOURCE_FILE_FINGERPRINT="$_cached_source_fp"
+      LAST_TSC_ROOT_FILES="$_cached_tsc_roots"; LAST_TSC_SOURCE_FILES="$_cached_tsc_sources"; LAST_TSC_ROOT_FINGERPRINT="$_cached_tsc_root_fp"; LAST_TSC_SOURCE_FINGERPRINT="$_cached_tsc_source_fp"
       LAST_SEMANTIC_COMPLETION="$_cached_semantic_completion"
       echo "::group::${name}"
       echo "(result cache hit: ${_fp:0:12})"
@@ -1287,7 +1294,7 @@ check_project() {
       fi
     fi
   fi
-  if [[ "$stats_valid" == "1" && "$source_files" -gt 0 \
+  if [[ "$stats_valid" == "1" && "$LAST_SEMANTIC_COMPLETION" == "complete" && "$source_files" -gt 0 \
     && -z "$tsc_exit_codes" && "${#TSC_ORACLE_CMD[@]}" -gt 0 \
     && ( "$rc" -eq 0 || "$compiler_exit_class" == "nonzero exit" ) ]]; then
     oracle_log="$FIXTURE_ROOT/${name}.tsc.log"
@@ -1318,7 +1325,7 @@ check_project() {
     fi
   fi
   local oracle_evidence_missing=0
-  if [[ "$stats_valid" == "1" && "$source_files" -gt 0 \
+  if [[ "$stats_valid" == "1" && "$LAST_SEMANTIC_COMPLETION" == "complete" && "$source_files" -gt 0 \
     && ( "$rc" -eq 0 || "$compiler_exit_class" == "nonzero exit" ) \
     && ( "$tsc_graph_evidence_valid" != "1" \
       || "$diagnostic_oracle_available" != "1" ) ]]; then
@@ -1338,6 +1345,11 @@ check_project() {
     compiler_lines="$(diagnostic_lines_from_file "tsz" "$log" 19)"
     [[ -n "$compiler_lines" ]] && diagnostic_delta="${diagnostic_delta}"$'\n'"${compiler_lines}"
     files_reached=""
+  elif [[ "$LAST_SEMANTIC_COMPLETION" != "complete" ]]; then
+    result_rc=68
+    exit_class="${compiler_exit_class:-exit success}"
+    diagnostic_status="semantic completion ${LAST_SEMANTIC_COMPLETION}"
+    diagnostic_delta="harness: typed ${LAST_SEMANTIC_COMPLETION} completion is non-evidence"
   elif [[ "$source_files" -eq 0 ]]; then
     result_rc=65
     exit_class="fixture invalid"
@@ -1509,6 +1521,8 @@ check_project() {
       "$compiler_rc" "$tsconfig" "$src_dir" "$tsc_exit_codes" "$files_reason"
     if [[ "$exit_class" == "runner error" ]]; then
       echo "error: ${name} has no trustworthy compiler stats (${files_reason})" >&2
+    elif [[ "$LAST_SEMANTIC_COMPLETION" != "complete" ]]; then
+      echo "error: ${name} reported semantic completion ${LAST_SEMANTIC_COMPLETION}; result is non-evidence" >&2
     elif [[ "$exit_class" == "fixture invalid" ]]; then
       echo "error: ${name} processed zero source files; result is non-evidence" >&2
     elif [[ "$exit_class" == "oracle unavailable" ]]; then
@@ -1542,6 +1556,8 @@ check_project() {
     echo "::warning::${name} timeout lacks CPU-bound evidence (contention or missing sample); result not cached"
   elif [[ "$stats_valid" != "1" ]]; then
     echo "::warning::${name} missing/malformed compiler stats are non-evidence; result not cached"
+  elif [[ "$LAST_SEMANTIC_COMPLETION" != "complete" ]]; then
+    echo "::warning::${name} semantic completion ${LAST_SEMANTIC_COMPLETION} is non-evidence; result not cached"
   elif [[ "$oracle_evidence_missing" == "1" ]]; then
     echo "::warning::${name} incomplete pinned TypeScript 7 evidence; result not cached"
   elif [[ -n "$_cache_file" ]]; then
@@ -1562,6 +1578,7 @@ should_check_project() {
 
 run_project_row() {
   local name="$1"
+  LAST_ROOT_FILES=""; LAST_SOURCE_FILES=""; LAST_ROOT_FILE_FINGERPRINT=""; LAST_SOURCE_FILE_FINGERPRINT=""; LAST_SEMANTIC_COMPLETION=""; LAST_TSC_ROOT_FILES=""; LAST_TSC_SOURCE_FILES=""; LAST_TSC_ROOT_FINGERPRINT=""; LAST_TSC_SOURCE_FINGERPRINT=""
 
   case "$name" in
     utility-types-project)

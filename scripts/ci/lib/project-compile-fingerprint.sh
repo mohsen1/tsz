@@ -26,6 +26,9 @@ TSZ_COMPILE_FINGERPRINT_SOURCE_GLOBS=(
   '*.json'
 )
 
+_TSZ_COMPILE_FINGERPRINT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+_TSZ_COMPILE_FINGERPRINT_BATCH_HASHER="${_TSZ_COMPILE_FINGERPRINT_LIB_DIR}/project-source-tree-hash.mjs"
+
 # Stable sha256 of a file (Linux sha256sum / macOS shasum).
 sha256_of_file() {
   sha256sum "$1" 2>/dev/null | awk '{print $1}' \
@@ -77,28 +80,29 @@ hash_source_tree() {
     fi
   done
 
-  local listing digest
+  local listing sorted_listing digest
   listing="$(mktemp)" || return 1
+  sorted_listing="$(mktemp)" || {
+    rm -f "$listing"
+    return 1
+  }
   # Follow dependency symlinks so package-manager layouts cannot hide an
   # explicitly compiled declaration outside the lexical row tree. A cycle or
   # unreadable target must disable caching instead of hashing a partial walk.
   if ! find -L "$dir" \
     \( -path '*/.git/*' \) -prune -o \
     -type f \( "${find_name[@]}" \) -print > "$listing" 2>/dev/null; then
-    rm -f "$listing"
+    rm -f "$listing" "$sorted_listing"
     return 1
   fi
-  digest="$(LC_ALL=C sort "$listing" \
-    | while IFS= read -r f; do
-        file_digest="$(sha256_of_file "$f")"
-        [[ -n "$file_digest" ]] || exit 1
-        printf '%s  %s\n' "$file_digest" "${f#"$dir"/}"
-      done \
-    | sha256_of_stdin)" || {
-      rm -f "$listing"
-      return 1
-    }
-  rm -f "$listing"
+  # Preserve the legacy path/content stream while hashing every file in one
+  # bounded process instead of spawning a checksum process per input file.
+  if ! LC_ALL=C sort "$listing" > "$sorted_listing" \
+    || ! digest="$(node "$_TSZ_COMPILE_FINGERPRINT_BATCH_HASHER" "$dir" "$sorted_listing" 2>/dev/null)"; then
+    rm -f "$listing" "$sorted_listing"
+    return 1
+  fi
+  rm -f "$listing" "$sorted_listing"
   [[ -n "$digest" ]] || return 1
   printf '%s' "$digest"
 }
