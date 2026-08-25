@@ -1,4 +1,4 @@
-use crate::bind::{DeclarationKind, Meaning};
+use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::source::{DeclId, FileId, NodeId, SourceKind, Span};
 use crate::syntax::{
     AuthoredLiteralKind, CommentTrivia, DescendantContainer, ExpressionKind, ParserRecoveryKind,
@@ -76,6 +76,7 @@ pub(crate) enum SyntaxGap {
     GeneratorFunctionLike,
     VariableDeclaratorTail,
     CommonJsClass,
+    CommonJsNamespaceImportReexport,
     DeclarationHost,
     DefaultExportHost,
     Expression,
@@ -866,6 +867,37 @@ fn declaration_scope(
         .map(|statement| CapabilityScope::node(file.source.id, statement.id))
 }
 
+/// Runtime namespace-import declaration identities are binder-owned.
+/// Matching owner and name span connects syntax provenance without treating
+/// authored spelling as semantic identity.
+fn runtime_namespace_imports(file: &ProgramFile) -> BTreeSet<DeclId> {
+    let binding_key = |owner: NodeId, span: Span| (owner, span.start, span.end);
+    let mut namespace_bindings = BTreeSet::new();
+    for statement in &file.syntax.statements {
+        let StatementKind::Import(import) = &statement.kind else {
+            continue;
+        };
+        namespace_bindings.extend(
+            import
+                .bindings
+                .iter()
+                .filter(|binding| binding.namespace && !binding.type_only)
+                .map(|binding| binding_key(statement.id, binding.local_span)),
+        );
+    }
+    file.bindings
+        .declarations
+        .iter()
+        .filter(|declaration| {
+            declaration.kind == DeclarationKind::Import
+                && declaration.meaning == Meaning::Value
+                && namespace_bindings
+                    .contains(&binding_key(declaration.owner, declaration.name_span))
+        })
+        .map(|declaration| declaration.id)
+        .collect()
+}
+
 fn derive_file_nonclaims(
     nonclaims: &mut Vec<CapabilityNonclaim>,
     file: &ProgramFile,
@@ -897,12 +929,7 @@ fn derive_file_nonclaims(
             statement.span.start < comment.span.start && comment.span.end < statement.span.end
         })
     }) {
-        add_syntax(
-            nonclaims,
-            &[CapabilityTarget::JavaScript],
-            scope,
-            SyntaxGap::ModuleClauseComment,
-        );
+        add_javascript(nonclaims, scope, SyntaxGap::ModuleClauseComment);
     }
 
     if file.syntax.has_unmodeled_function_products() {
@@ -984,23 +1011,15 @@ fn derive_file_nonclaims(
         && target_requires_class_property_transform(&options.target)
         && nodes.boundaries.contains(&FileBoundary::ClassProperty)
     {
-        add_syntax(
-            nonclaims,
-            &[CapabilityTarget::JavaScript],
-            scope,
-            SyntaxGap::FunctionExpressionClassPropertyTransform,
-        );
+        let gap = SyntaxGap::FunctionExpressionClassPropertyTransform;
+        add_javascript(nonclaims, scope, gap);
     }
     if has_function_expression
         && is_effective_commonjs(&file.source.path, &options.module)
         && file.syntax.is_external_module()
     {
-        add_syntax(
-            nonclaims,
-            &[CapabilityTarget::JavaScript],
-            scope,
-            SyntaxGap::FunctionExpressionCommonJsTransform,
-        );
+        let gap = SyntaxGap::FunctionExpressionCommonJsTransform;
+        add_javascript(nonclaims, scope, gap);
     }
     for owner in nodes.flow_regions {
         let gap = SemanticGap::FlowTypeOfReference;
@@ -1063,6 +1082,8 @@ fn derive_file_nonclaims(
             SyntaxGap::FunctionLikeBindingPattern,
         );
     }
+    let namespace_imports = is_effective_commonjs(&file.source.path, &options.module)
+        .then(|| runtime_namespace_imports(file));
     for statement in &file.syntax.statements {
         if let StatementKind::Function(function) = &statement.kind
             && function.has_body
@@ -1075,6 +1096,22 @@ fn derive_file_nonclaims(
                 CapabilityScope::node(id, statement.id),
                 SemanticGap::DeclarationFunctionSummary,
             );
+        }
+        if let (Some(namespace_imports), StatementKind::Export(export)) =
+            (&namespace_imports, &statement.kind)
+            && !export.type_only
+            && !export.export_all
+            && export.module_specifier.is_none()
+            && export.specifiers.iter().any(|specifier| {
+                !specifier.type_only
+                    && file
+                        .bindings
+                        .resolve(ScopeId(0), &specifier.local, Meaning::Value)
+                        .is_some_and(|declaration| namespace_imports.contains(&declaration))
+            })
+        {
+            let gap = SyntaxGap::CommonJsNamespaceImportReexport;
+            add_javascript(nonclaims, CapabilityScope::node(id, statement.id), gap);
         }
     }
     for function in nodes.function_expressions {
@@ -1096,12 +1133,7 @@ fn derive_file_nonclaims(
             function.span.start <= recovery.authored_span.start
                 && recovery.authored_span.end <= function.span.end
         }) {
-            add_syntax(
-                nonclaims,
-                &[CapabilityTarget::JavaScript],
-                scope,
-                SyntaxGap::FunctionExpressionRecovery,
-            );
+            add_javascript(nonclaims, scope, SyntaxGap::FunctionExpressionRecovery);
         }
         let has_owned_comment = file
             .syntax
@@ -1113,21 +1145,12 @@ fn derive_file_nonclaims(
         }) && file.syntax.comments().iter().any(|comment| {
             span_owns_comment(root.span, comment) && !span_owns_comment(function.span, comment)
         }) {
-            add_syntax(
-                nonclaims,
-                &[CapabilityTarget::JavaScript],
-                CapabilityScope::node(id, root.id),
-                SyntaxGap::FunctionExpressionOuterComments,
-            );
+            let gap = SyntaxGap::FunctionExpressionOuterComments;
+            add_javascript(nonclaims, CapabilityScope::node(id, root.id), gap);
         }
         let body_is_single_line = span_is_single_line(&file.source, function.body_span);
         if has_owned_comment || body_is_single_line && !function.inline_body_supported {
-            add_syntax(
-                nonclaims,
-                &[CapabilityTarget::JavaScript],
-                scope,
-                SyntaxGap::FunctionExpressionPrinter,
-            );
+            add_javascript(nonclaims, scope, SyntaxGap::FunctionExpressionPrinter);
         }
     }
     for (owner, gap) in nodes.recovered_function_likes {
@@ -1151,40 +1174,27 @@ fn derive_file_nonclaims(
     if file.syntax.has_unmodeled_regular_expression_products() {
         add_both_emit(nonclaims, scope, SyntaxGap::RegularExpression);
     }
-    if file.syntax.has_unmodeled_numeric_recovery_products() {
-        add_both_emit(nonclaims, scope, SyntaxGap::NumericRecovery);
-        if file
-            .syntax
-            .has_authored_literal(AuthoredLiteralKind::NumericRecovery)
-        {
-            add_literal_semantic_nodes(
-                nonclaims,
-                file,
-                &declaration_statement_owners,
-                AuthoredLiteralKind::NumericRecovery,
-                SyntaxGap::NumericRecovery,
-            );
-        } else {
-            add_semantic_diagnostics(nonclaims, scope, SyntaxGap::NumericRecovery);
+    let mut add_numeric_nonclaims = |present: bool, kind, gap| {
+        if !present {
+            return;
         }
-    }
-    if file.syntax.has_unmodeled_numeric_separator_products() {
-        add_both_emit(nonclaims, scope, SyntaxGap::NumericSeparator);
-        if file
-            .syntax
-            .has_authored_literal(AuthoredLiteralKind::NumericSeparator)
-        {
-            add_literal_semantic_nodes(
-                nonclaims,
-                file,
-                &declaration_statement_owners,
-                AuthoredLiteralKind::NumericSeparator,
-                SyntaxGap::NumericSeparator,
-            );
+        add_both_emit(nonclaims, scope, gap);
+        if file.syntax.has_authored_literal(kind) {
+            add_literal_semantic_nodes(nonclaims, file, &declaration_statement_owners, kind, gap);
         } else {
-            add_semantic_diagnostics(nonclaims, scope, SyntaxGap::NumericSeparator);
+            add_semantic_diagnostics(nonclaims, scope, gap);
         }
-    }
+    };
+    add_numeric_nonclaims(
+        file.syntax.has_unmodeled_numeric_recovery_products(),
+        AuthoredLiteralKind::NumericRecovery,
+        SyntaxGap::NumericRecovery,
+    );
+    add_numeric_nonclaims(
+        file.syntax.has_unmodeled_numeric_separator_products(),
+        AuthoredLiteralKind::NumericSeparator,
+        SyntaxGap::NumericSeparator,
+    );
     if file.syntax.has_unicode_line_comment_terminator() {
         add_semantic_diagnostics(nonclaims, scope, SyntaxGap::UnicodeLineCommentTerminator);
     }
@@ -1352,18 +1362,7 @@ fn add_unmodeled_declaration_host_nodes(
     let mut unmapped = file.syntax.unmodeled_declaration_hosts().is_empty();
     for host in file.syntax.unmodeled_declaration_hosts() {
         if host.kind == UnmodeledDeclarationHostKind::Global {
-            add_syntax(
-                nonclaims,
-                &ALL_TARGETS[..5],
-                CapabilityScope::Program,
-                SyntaxGap::DeclarationHost,
-            );
-            add_service_nonclaims(
-                nonclaims,
-                CapabilityScope::Program,
-                SyntaxGap::DeclarationHost,
-                false,
-            );
+            add_declaration_host_nonclaims(nonclaims, CapabilityScope::Program);
             continue;
         }
         let mut owners = BTreeSet::new();
@@ -1382,25 +1381,23 @@ fn add_unmodeled_declaration_host_nodes(
         found = true;
         for owner in owners {
             let owner_scope = CapabilityScope::node(file.source.id, owner);
-            add_syntax(
-                nonclaims,
-                &ALL_TARGETS[..5],
-                owner_scope,
-                SyntaxGap::DeclarationHost,
-            );
-            add_service_nonclaims(nonclaims, owner_scope, SyntaxGap::DeclarationHost, false);
+            add_declaration_host_nonclaims(nonclaims, owner_scope);
         }
     }
     if !found || unmapped {
         let scope = CapabilityScope::File(file.source.id);
-        add_syntax(
-            nonclaims,
-            &ALL_TARGETS[..5],
-            scope,
-            SyntaxGap::DeclarationHost,
-        );
-        add_service_nonclaims(nonclaims, scope, SyntaxGap::DeclarationHost, false);
+        add_declaration_host_nonclaims(nonclaims, scope);
     }
+}
+
+fn add_declaration_host_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, scope: CapabilityScope) {
+    add_syntax(
+        nonclaims,
+        &ALL_TARGETS[..5],
+        scope,
+        SyntaxGap::DeclarationHost,
+    );
+    add_service_nonclaims(nonclaims, scope, SyntaxGap::DeclarationHost, false);
 }
 
 fn derive_program_literal_nonclaims(
@@ -1459,9 +1456,8 @@ fn derive_program_literal_nonclaims(
         );
         let file = &files[id.0 as usize];
         if is_effective_commonjs(&file.source.path, &options.module) {
-            add_syntax(
+            add_javascript(
                 nonclaims,
-                &[CapabilityTarget::JavaScript],
                 CapabilityScope::File(id),
                 SyntaxGap::DeclarationOverloadSummary,
             );
@@ -1857,6 +1853,10 @@ fn add_service_nonclaims(
 
 fn add_both_emit(nonclaims: &mut Vec<CapabilityNonclaim>, scope: CapabilityScope, gap: SyntaxGap) {
     add_syntax(nonclaims, &ALL_TARGETS[5..7], scope, gap);
+}
+
+fn add_javascript(nonclaims: &mut Vec<CapabilityNonclaim>, scope: CapabilityScope, gap: SyntaxGap) {
+    add_syntax(nonclaims, &[CapabilityTarget::JavaScript], scope, gap);
 }
 
 fn add_syntax(

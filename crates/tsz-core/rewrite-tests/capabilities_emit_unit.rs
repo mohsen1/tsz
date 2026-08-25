@@ -155,3 +155,166 @@ fn inferred_return_nonclaim_withholds_only_its_file_declaration_product() {
         "export declare function birch(): number;\nexport declare const other: number;\n"
     );
 }
+
+#[test]
+fn commonjs_namespace_import_reexport_has_one_typed_javascript_boundary() {
+    for (path, module) in [
+        ("src/constants.ts", "commonjs"),
+        ("src/constants.cts", "nodenext"),
+    ] {
+        let file = program_file(
+            0,
+            path,
+            concat!(
+                "import * as cedar from '../dep';\n",
+                "function wrapper(): void { const cedar = 1; }\n",
+                "export { cedar as birch };\n",
+            ),
+        );
+        let export = file.syntax.statements.last().expect("export statement");
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &CompilerOptions {
+                module: module.to_string(),
+                ..CompilerOptions::default()
+            },
+            CapabilityContext::default(),
+        );
+        let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(
+            CapabilityTarget::JavaScript,
+            CapabilityScope::File(file.source.id),
+        ) else {
+            panic!("{path}: CommonJS namespace re-export must not publish JavaScript")
+        };
+        assert_eq!(
+            reasons.copied().collect::<Vec<_>>(),
+            [CapabilityNonclaim {
+                target: CapabilityTarget::JavaScript,
+                scope: CapabilityScope::node(file.source.id, export.id),
+                reason: NonclaimReason::Syntax(SyntaxGap::CommonJsNamespaceImportReexport),
+                deletion: DeletionCondition::SyntaxOwner(
+                    SyntaxGap::CommonJsNamespaceImportReexport,
+                ),
+            }]
+        );
+        for target in [
+            CapabilityTarget::SemanticCheck,
+            CapabilityTarget::SemanticDiagnostics,
+            CapabilityTarget::Declaration,
+        ] {
+            assert!(
+                analysis
+                    .claim(target, CapabilityScope::File(file.source.id))
+                    .is_claimed(),
+                "{path}: {target:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn commonjs_namespace_import_reexport_controls_stay_claimed() {
+    for (path, module, source) in [
+        (
+            "esm.ts",
+            "esnext",
+            "import * as cedar from './dep'; export { cedar as birch };",
+        ),
+        (
+            "named.ts",
+            "commonjs",
+            "import { value as cedar } from './dep'; export { cedar as birch };",
+        ),
+        (
+            "default.ts",
+            "commonjs",
+            "import cedar from './dep'; export { cedar as birch };",
+        ),
+        (
+            "type-import.ts",
+            "commonjs",
+            "import type * as cedar from './dep'; export { type cedar as birch };",
+        ),
+        (
+            "type-export.ts",
+            "commonjs",
+            "import * as cedar from './dep'; export type { cedar as birch };",
+        ),
+        (
+            "remote.ts",
+            "commonjs",
+            "import * as cedar from './dep'; export { cedar as birch } from './other';",
+        ),
+        (
+            "export-all.ts",
+            "commonjs",
+            "export * as cedar from './dep';",
+        ),
+        (
+            "different-local.ts",
+            "commonjs",
+            "import * as cedar from './dep'; const birch = cedar; export { birch };",
+        ),
+        (
+            "redeclared.ts",
+            "commonjs",
+            "import * as cedar from './dep'; const cedar = 1; export { cedar };",
+        ),
+        (
+            "module.mts",
+            "nodenext",
+            "import * as cedar from './dep'; export { cedar as birch };",
+        ),
+    ] {
+        let file = program_file(0, path, source);
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(&file),
+            &CompilerOptions {
+                module: module.to_string(),
+                ..CompilerOptions::default()
+            },
+            CapabilityContext::default(),
+        );
+        let claim = analysis.claim(
+            CapabilityTarget::JavaScript,
+            CapabilityScope::File(file.source.id),
+        );
+        assert!(claim.is_claimed(), "{path}: {claim:?}");
+    }
+}
+
+#[test]
+fn commonjs_namespace_import_reexport_withholds_only_its_file_javascript() {
+    let output = Compiler::new().compile(
+        vec![
+            SourceInput::new(
+                "dep.d.ts",
+                Arc::<str>::from("export declare const value: number;"),
+            ),
+            SourceInput::new(
+                "src/affected.ts",
+                Arc::<str>::from("import * as cedar from '../dep'; export { cedar as birch };"),
+            ),
+            SourceInput::new(
+                "stable.ts",
+                Arc::<str>::from("export const stable: number = 1;"),
+            ),
+        ],
+        &CompilerOptions {
+            module: "commonjs".to_string(),
+            target: "es2015".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    assert_eq!(
+        output
+            .emitted_files
+            .iter()
+            .map(|file| file.path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        ["stable.js"]
+    );
+}
