@@ -9,7 +9,6 @@ use super::string_literal::{
     AuthoredEscape, ScannedCookedStringLiteral, ScannedStringLiteral, decode_authored_escape,
     scan_ordinary_string_literal,
 };
-use super::template_literal::ScannedTemplateLiteral;
 use super::{
     CommentClass, CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia, Token,
     TokenKind, is_single_line_whitespace,
@@ -20,11 +19,11 @@ pub struct ScanOutput {
     pub tokens: Vec<Token>,
     pub diagnostics: Vec<Diagnostic>,
     pub(super) identifier_values: Vec<ScannedIdentifierValue>,
-    pub(super) template_literals: Vec<ScannedTemplateLiteral>,
     pub(super) string_literals: Vec<ScannedStringLiteral>,
     pub(super) cooked_string_literals: Vec<ScannedCookedStringLiteral>,
     pub(super) numeric_literals: Vec<ScannedNumericLiteral>,
     pub(super) separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    pub(super) unterminated_template_spans: Vec<Span>,
     pub(super) numeric_separator_spans: Vec<Span>,
     pub(super) has_unmodeled_numeric_separator: bool,
     pub(super) regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
@@ -467,7 +466,7 @@ impl<'a> Scanner<'a> {
             }
             b'#' => TokenKind::Hash,
             b'\'' | b'"' => self.scan_string(start, byte),
-            b'`' => self.scan_template_start(start),
+            b'`' => self.scan_template_chunk(start, true),
             _ => {
                 // Invalid identifier escapes are reported at the authored
                 // backslash with TypeScript's zero-width scanner span.
@@ -624,10 +623,6 @@ impl<'a> Scanner<'a> {
         ))
     }
 
-    fn scan_template_start(&mut self, start: usize) -> TokenKind {
-        self.scan_template_chunk(start, true)
-    }
-
     fn scan_template_continuation(&mut self, start: usize) -> TokenKind {
         debug_assert_eq!(self.bytes.get(self.offset), Some(&b'}'));
         self.offset += 1;
@@ -640,13 +635,6 @@ impl<'a> Scanner<'a> {
                 b'`' => {
                     self.offset += 1;
                     if is_start {
-                        let span = Span::new(self.source.id, start, self.offset);
-                        self.output
-                            .template_literals
-                            .push(ScannedTemplateLiteral::terminated(
-                                span,
-                                &self.source.text[start..self.offset],
-                            ));
                         return TokenKind::NoSubstitutionTemplateLiteral;
                     }
                     self.template_expression_depths.pop();
@@ -664,20 +652,15 @@ impl<'a> Scanner<'a> {
                 _ => self.advance_character(),
             }
         }
+        let span = Span::new(self.source.id, start, self.offset);
         self.output.diagnostics.push(Diagnostic::at(
             self.source,
-            Span::new(self.source.id, start, self.offset),
+            span,
             "Unterminated template literal.".to_string(),
             1160,
         ));
+        self.output.unterminated_template_spans.push(span);
         if is_start {
-            let span = Span::new(self.source.id, start, self.offset);
-            self.output
-                .template_literals
-                .push(ScannedTemplateLiteral::unterminated(
-                    span,
-                    &self.source.text[start..self.offset],
-                ));
             TokenKind::NoSubstitutionTemplateLiteral
         } else {
             self.template_expression_depths.pop();

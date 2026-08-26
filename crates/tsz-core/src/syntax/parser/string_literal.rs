@@ -1,15 +1,11 @@
 use super::super::ExtendedUnicodeStringLiteral;
-use super::{Parser, literals::unquote};
+use super::{Parser, literals::unquote, scan_at};
 use crate::syntax::Token;
 
 impl Parser<'_> {
     pub(super) fn cooked_string_literal(&self, token: Token) -> Option<super::super::Utf16String> {
-        let index = self
-            .cooked_string_literals
-            .binary_search_by_key(&token.span.start, |literal| literal.span.start)
-            .ok()?;
-        let scanned = &self.cooked_string_literals[index];
-        (scanned.span == token.span).then(|| scanned.cooked.clone())
+        let literals = &self.cooked_string_literals;
+        scan_at(literals, token.span, |literal| literal.span).map(|literal| literal.cooked.clone())
     }
 
     pub(super) fn ordinary_string_literal_value(&self, token: Token) -> String {
@@ -23,11 +19,8 @@ impl Parser<'_> {
         &self,
         token: Token,
     ) -> Option<ExtendedUnicodeStringLiteral> {
-        let index = self
-            .string_literals
-            .binary_search_by_key(&token.span.start, |literal| literal.span.start)
-            .ok()?;
-        let scanned = &self.string_literals[index];
-        (scanned.span == token.span).then(|| scanned.syntax_literal())
+        let literals = &self.string_literals;
+        scan_at(literals, token.span, |literal| literal.span)
+            .map(|literal| literal.syntax_literal())
     }
 }

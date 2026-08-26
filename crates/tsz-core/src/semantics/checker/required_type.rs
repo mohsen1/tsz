@@ -1319,22 +1319,7 @@ fn is_bindable_computed_name(expression: &Expression) -> bool {
             operator: UnaryOperator::Plus | UnaryOperator::Minus,
             operand,
         } => matches!(operand.kind, ExpressionKind::Literal(Literal::Number(_))),
-        ExpressionKind::This
-        | ExpressionKind::Literal(Literal::BigInt(_) | Literal::Boolean(_) | Literal::Null)
-        | ExpressionKind::RegularExpression(_)
-        | ExpressionKind::Object(_)
-        | ExpressionKind::Array(_)
-        | ExpressionKind::ElementAccess { .. }
-        | ExpressionKind::Call { .. }
-        | ExpressionKind::New { .. }
-        | ExpressionKind::FunctionLike(_)
-        | ExpressionKind::Binary { .. }
-        | ExpressionKind::Unary { .. }
-        | ExpressionKind::Assignment { .. }
-        | ExpressionKind::As { .. }
-        | ExpressionKind::NonNull(_)
-        | ExpressionKind::Parenthesized(_)
-        | ExpressionKind::Missing => false,
+        _ => false,
     }
 }
 
@@ -1342,22 +1327,7 @@ fn is_entity_name_expression(expression: &Expression) -> bool {
     match &expression.kind {
         ExpressionKind::Identifier { entity_name, .. } => *entity_name,
         ExpressionKind::Member { object, .. } => is_entity_name_expression(object),
-        ExpressionKind::This
-        | ExpressionKind::Literal(_)
-        | ExpressionKind::RegularExpression(_)
-        | ExpressionKind::Object(_)
-        | ExpressionKind::Array(_)
-        | ExpressionKind::ElementAccess { .. }
-        | ExpressionKind::Call { .. }
-        | ExpressionKind::New { .. }
-        | ExpressionKind::FunctionLike(_)
-        | ExpressionKind::Binary { .. }
-        | ExpressionKind::Unary { .. }
-        | ExpressionKind::Assignment { .. }
-        | ExpressionKind::As { .. }
-        | ExpressionKind::NonNull(_)
-        | ExpressionKind::Parenthesized(_)
-        | ExpressionKind::Missing => false,
+        _ => false,
     }
 }
 

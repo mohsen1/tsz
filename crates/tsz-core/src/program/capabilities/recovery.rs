@@ -242,7 +242,11 @@ pub(super) fn add_parser_nodes(
     file: &ProgramFile,
     function_signatures: &[Span],
 ) {
+    let file_scope = CapabilityScope::File(file.source.id);
     for recovery in file.syntax.parser_recovery_facts() {
+        if recovery.kind == ParserRecoveryKind::Template {
+            add_both_emit(nonclaims, file_scope, SyntaxGap::Template);
+        }
         if recovery.kind != ParserRecoveryKind::GeneratorFunctionLike
             && function_signatures.iter().any(|signature| {
                 signature.start <= recovery.authored_span.start
@@ -271,7 +275,7 @@ pub(super) fn add_parser_nodes(
                 | ParserRecoveryKind::ComputedPropertyName
                 | ParserRecoveryKind::ClassExpression
         ) {
-            add_both_emit(nonclaims, CapabilityScope::File(file.source.id), gap);
+            add_both_emit(nonclaims, file_scope, gap);
         }
         let scope = CapabilityScope::node(file.source.id, recovery.owner.statement);
         if recovery.kind == ParserRecoveryKind::RejectedGenericArrowPrefix {

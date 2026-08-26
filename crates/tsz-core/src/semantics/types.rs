@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::source::{DeclId, FileId, NodeId};
 use crate::syntax::{KeywordType, parse_number_literal};
+use crate::text::quote_string;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeId(pub u32);
@@ -223,6 +224,7 @@ pub enum DeferredType<T = TypeId> {
     BigIntLiteral,
     NumericRecovery,
     Utf16StringLiteral,
+    TemplateValue,
     UniqueSymbol,
     GenericFunction,
     ObjectShape,
@@ -355,6 +357,7 @@ impl<T> DeferredType<T> {
             Self::BigIntLiteral => DeferredType::BigIntLiteral,
             Self::NumericRecovery => DeferredType::NumericRecovery,
             Self::Utf16StringLiteral => DeferredType::Utf16StringLiteral,
+            Self::TemplateValue => DeferredType::TemplateValue,
             Self::UniqueSymbol => DeferredType::UniqueSymbol,
             Self::GenericFunction => DeferredType::GenericFunction,
             Self::ObjectShape => DeferredType::ObjectShape,
@@ -959,6 +962,7 @@ impl TypeStore {
             | DeferredType::BigIntLiteral
             | DeferredType::NumericRecovery
             | DeferredType::Utf16StringLiteral
+            | DeferredType::TemplateValue
             | DeferredType::UniqueSymbol
             | DeferredType::GenericFunction
             | DeferredType::ObjectShape => {}
@@ -1039,6 +1043,10 @@ impl TypeStore {
     /// code units. The authored units never enter the type interner.
     pub fn deferred_utf16_string_literal(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::Utf16StringLiteral)
+    }
+
+    pub fn deferred_template_value(&mut self) -> TypeId {
+        self.fresh_deferred(DeferredType::TemplateValue)
     }
 
     fn fresh_deferred(&mut self, deferred: DeferredType) -> TypeId {
@@ -1406,7 +1414,7 @@ impl TypeStore {
             TypeKind::Symbol => "symbol".to_string(),
             TypeKind::LiteralBoolean(value, _) => value.to_string(),
             TypeKind::LiteralNumber(value, _) => value.display().to_string(),
-            TypeKind::LiteralString(value, _) => format!("\"{value}\""),
+            TypeKind::LiteralString(value, _) => quote_string(value),
             TypeKind::TypeParameter { name, .. } => name.clone(),
             TypeKind::ClassInstance {
                 name, arguments, ..
@@ -1673,6 +1681,9 @@ impl TypeStore {
             }
             TypeKind::Deferred(DeferredType::Utf16StringLiteral) => {
                 "deferred-utf16-string-literal".to_string()
+            }
+            TypeKind::Deferred(DeferredType::TemplateValue) => {
+                "deferred-template-expression".to_string()
             }
             TypeKind::Deferred(DeferredType::UniqueSymbol) => "unique symbol".to_string(),
             TypeKind::Deferred(DeferredType::GenericFunction) => {

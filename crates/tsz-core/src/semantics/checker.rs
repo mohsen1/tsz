@@ -536,6 +536,7 @@ impl<'a> Checker<'a> {
             ExpressionKind::Literal(literal) => {
                 self.literal_type(literal, LiteralProvenance::Fresh)
             }
+            ExpressionKind::Template(template) => self.infer_template(file, scope, template),
             ExpressionKind::RegularExpression(literal) => {
                 self.infer_regular_expression(file, literal)
             }
@@ -834,6 +835,7 @@ impl<'a> Checker<'a> {
             | DeferredType::BigIntLiteral
             | DeferredType::NumericRecovery
             | DeferredType::Utf16StringLiteral
+            | DeferredType::TemplateValue
             | DeferredType::UniqueSymbol
             | DeferredType::GenericFunction
             | DeferredType::ObjectShape => Completion::Deferred,
@@ -985,51 +987,6 @@ impl<'a> Checker<'a> {
                 alias.name_span,
                 format!("Type alias '{}' circularly references itself.", alias.name),
                 2456,
-            );
-        }
-    }
-
-    fn report_complexity(&mut self, deferred: &DeferredType) {
-        let span = match deferred {
-            DeferredType::Reference { declaration, .. } | DeferredType::Value(declaration) => {
-                self.models.get(declaration).map(|model| match model {
-                    DeclarationModel::TypeAlias { declaration, .. } => declaration.name_span,
-                    DeclarationModel::Interface { declaration, .. } => declaration.name_span,
-                    DeclarationModel::Variable { declaration, .. } => declaration.name_span,
-                    DeclarationModel::Parameter { parameter, .. } => parameter.name_span,
-                    DeclarationModel::Function { declaration, .. } => declaration.name_span,
-                    DeclarationModel::Class { declaration, .. } => declaration.name_span,
-                    DeclarationModel::JavaScriptProperty(right, _) => right.span,
-                })
-            }
-            DeferredType::Call { .. }
-            | DeferredType::GenericCall
-            | DeferredType::FlowReference { .. }
-            | DeferredType::LexicalThis { .. }
-            | DeferredType::Construct { .. }
-            | DeferredType::Property { .. }
-            | DeferredType::ElementAccess { .. }
-            | DeferredType::Predicate { .. }
-            | DeferredType::Binary { .. }
-            | DeferredType::Logical { .. }
-            | DeferredType::Unary { .. }
-            | DeferredType::KeyOf(_)
-            | DeferredType::Conditional { .. }
-            | DeferredType::Mapped { .. }
-            | DeferredType::IndexedAccess { .. }
-            | DeferredType::BigIntLiteral
-            | DeferredType::NumericRecovery
-            | DeferredType::Utf16StringLiteral
-            | DeferredType::UniqueSymbol
-            | DeferredType::GenericFunction
-            | DeferredType::ObjectShape => None,
-        };
-        if let Some(span) = span {
-            self.push_diagnostic(
-                span.file,
-                span,
-                "Type instantiation is excessively deep and possibly infinite.".to_string(),
-                2589,
             );
         }
     }

@@ -27,12 +27,12 @@ use crate::program::{
 };
 use crate::source::{SourceText, Span};
 use crate::syntax::{
-    BinaryOperator, ExportDeclaration, Expression, ExpressionKind, FunctionLikeSyntax,
-    ImportDeclaration, InterfaceDeclaration, ObjectProperty, Parameter, ParameterNameKind,
-    SourceUnit, Statement, StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind,
-    VariableDeclarator, VariableKind, VariableStatement, erased_assertion_expression,
-    keyword_type_text,
+    ExportDeclaration, Expression, ExpressionKind, ImportDeclaration, InterfaceDeclaration,
+    ObjectProperty, Parameter, ParameterNameKind, SourceUnit, Statement, StatementKind,
+    TypeAliasDeclaration, TypeNode, TypeNodeKind, VariableDeclarator, VariableKind,
+    VariableStatement, erased_assertion_expression, keyword_type_text,
 };
+use crate::text::quote_string;
 use operators::*;
 
 pub(crate) use literals::render_inferred_expression_type;
@@ -628,6 +628,7 @@ impl<'a> Printer<'a> {
             ExpressionKind::Literal(literal) => self
                 .output
                 .push_str(&self.literal_text(literal, expression.span)),
+            ExpressionKind::Template(_) => unreachable!("unclaimed template emit"),
             ExpressionKind::RegularExpression(literal) => self.write_regular_expression(literal),
             ExpressionKind::Object(properties) => {
                 self.write_object_literal(expression.span, properties)
@@ -810,55 +811,6 @@ impl<'a> Printer<'a> {
             self.output.push(' ');
         }
         self.output.push('}');
-    }
-
-    fn expression_precedence(&self, expression: &Expression) -> u8 {
-        match &expression.kind {
-            ExpressionKind::FunctionLike(function) => match &function.syntax {
-                FunctionLikeSyntax::Arrow(_) => PREC_ASSIGNMENT,
-                FunctionLikeSyntax::Function { .. } => PREC_PRIMARY,
-            },
-            ExpressionKind::Assignment { .. } => PREC_ASSIGNMENT,
-            ExpressionKind::Binary { operator, .. } => match operator {
-                BinaryOperator::LogicalOr | BinaryOperator::NullishCoalesce => PREC_LOGICAL_OR,
-                BinaryOperator::LogicalAnd => PREC_LOGICAL_AND,
-                BinaryOperator::BitwiseOr => PREC_BITWISE_OR,
-                BinaryOperator::BitwiseXor => PREC_BITWISE_XOR,
-                BinaryOperator::BitwiseAnd => PREC_BITWISE_AND,
-                BinaryOperator::Equals
-                | BinaryOperator::NotEquals
-                | BinaryOperator::StrictEquals
-                | BinaryOperator::StrictNotEquals => PREC_EQUALITY,
-                BinaryOperator::LessThan
-                | BinaryOperator::LessThanEquals
-                | BinaryOperator::GreaterThan
-                | BinaryOperator::GreaterThanEquals
-                | BinaryOperator::In
-                | BinaryOperator::InstanceOf => PREC_RELATIONAL,
-                BinaryOperator::LeftShift
-                | BinaryOperator::SignedRightShift
-                | BinaryOperator::UnsignedRightShift => PREC_SHIFT,
-                BinaryOperator::Add | BinaryOperator::Subtract => PREC_ADDITIVE,
-                BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => {
-                    PREC_MULTIPLICATIVE
-                }
-            },
-            ExpressionKind::Unary { .. } => PREC_UNARY,
-            ExpressionKind::Call { .. }
-            | ExpressionKind::New { .. }
-            | ExpressionKind::Member { .. }
-            | ExpressionKind::ElementAccess { .. } => PREC_POSTFIX,
-            ExpressionKind::As { expression, .. } => self.expression_precedence(expression),
-            ExpressionKind::NonNull(inner) => self.expression_precedence(inner),
-            ExpressionKind::Identifier { .. }
-            | ExpressionKind::This
-            | ExpressionKind::Literal(_)
-            | ExpressionKind::RegularExpression(_)
-            | ExpressionKind::Object(_)
-            | ExpressionKind::Array(_)
-            | ExpressionKind::Parenthesized(_)
-            | ExpressionKind::Missing => PREC_PRIMARY,
-        }
     }
 
     pub(super) fn write_expression_list(&mut self, expressions: &[Expression]) {
@@ -1371,29 +1323,4 @@ fn is_numeric_property_name(text: &str) -> bool {
             .chars()
             .all(|character| character.is_ascii_digit() || matches!(character, '.' | '-' | '+'))
         && text.parse::<f64>().is_ok()
-}
-
-fn quote_string(value: &str) -> String {
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            '\n' => quoted.push_str("\\n"),
-            '\r' => quoted.push_str("\\r"),
-            '\t' => quoted.push_str("\\t"),
-            '\u{08}' => quoted.push_str("\\b"),
-            '\u{0c}' => quoted.push_str("\\f"),
-            '\u{2028}' => quoted.push_str("\\u2028"),
-            '\u{2029}' => quoted.push_str("\\u2029"),
-            character if character.is_control() => {
-                let code = u32::from(character);
-                quoted.push_str(&format!("\\u{code:04x}"));
-            }
-            character => quoted.push(character),
-        }
-    }
-    quoted.push('"');
-    quoted
 }

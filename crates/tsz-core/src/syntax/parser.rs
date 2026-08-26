@@ -25,7 +25,6 @@ use super::numeric_literal::{ScannedNumericLiteral, ScannedSeparatedNumberLitera
 use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::scanner::ScannedIdentifierValue;
 use super::string_literal::{ScannedCookedStringLiteral, ScannedStringLiteral};
-use super::template_literal::ScannedTemplateLiteral;
 use super::{
     CommentTrivia, ContextualGrammarFact, ContextualGrammarKind, ExportDeclaration,
     ExportSpecifier, Expression, ExpressionKind, ImportBinding, ImportDeclaration,
@@ -45,6 +44,15 @@ pub fn parse_source(source: &SourceText) -> ParseOutput {
     let scanned = scan_source(source);
     Parser::new(source, scanned).parse()
 }
+
+fn scan_at<T>(values: &[T], span: Span, span_of: impl Fn(&T) -> Span) -> Option<&T> {
+    let index = values
+        .binary_search_by_key(&span.start, |value| span_of(value).start)
+        .ok()?;
+    let value = &values[index];
+    (span_of(value) == span).then_some(value)
+}
+
 struct Parser<'a> {
     source: &'a SourceText,
     tokens: Vec<Token>,
@@ -52,12 +60,12 @@ struct Parser<'a> {
     index: usize,
     next_node: u32,
     diagnostics: Vec<Diagnostic>,
-    template_literals: Vec<ScannedTemplateLiteral>,
     string_literals: Vec<ScannedStringLiteral>,
     cooked_string_literals: Vec<ScannedCookedStringLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
     separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
+    unterminated_template_spans: Vec<Span>,
     numeric_separator_spans: Vec<Span>,
     has_unmodeled_numeric_separator: bool,
     comments: Vec<CommentTrivia>,
@@ -91,12 +99,12 @@ impl<'a> Parser<'a> {
             index: 0,
             next_node: 0,
             diagnostics: scanned.diagnostics,
-            template_literals: scanned.template_literals,
             string_literals: scanned.string_literals,
             cooked_string_literals: scanned.cooked_string_literals,
             regular_expression_literals: scanned.regular_expression_literals,
             numeric_literals: scanned.numeric_literals,
             separated_numeric_literals: scanned.separated_numeric_literals,
+            unterminated_template_spans: scanned.unterminated_template_spans,
             numeric_separator_spans: scanned.numeric_separator_spans,
             has_unmodeled_numeric_separator: scanned.has_unmodeled_numeric_separator,
             comments: scanned.comments,
@@ -428,11 +436,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_specifier_type_modifier(&mut self) -> bool {
-        if !self.specifier_starts_with_type_modifier() {
-            return false;
-        }
-        self.bump();
-        true
+        self.specifier_starts_with_type_modifier() && self.eat(TokenKind::Type)
     }
 
     fn specifier_starts_with_type_modifier(&self) -> bool {
@@ -1240,13 +1244,7 @@ impl<'a> Parser<'a> {
     }
 
     fn identifier_value(&self, span: Span) -> Option<&ScannedIdentifierValue> {
-        self.identifier_values
-            .binary_search_by_key(&span.start, |identifier| identifier.span.start)
-            .ok()
-            .and_then(|index| {
-                let identifier = &self.identifier_values[index];
-                (identifier.span == span).then_some(identifier)
-            })
+        scan_at(&self.identifier_values, span, |identifier| identifier.span)
     }
 
     fn bump(&mut self) -> Token {

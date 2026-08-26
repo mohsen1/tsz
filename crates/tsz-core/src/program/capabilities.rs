@@ -1022,6 +1022,12 @@ fn derive_file_nonclaims(
     if file.syntax.has_unmodeled_function_products() {
         add_both_emit(nonclaims, scope, SyntaxGap::Function);
     }
+    if file
+        .syntax
+        .has_source_syntax_fact(SourceSyntaxFact::TemplateExpression)
+    {
+        add_both_emit(nonclaims, scope, SyntaxGap::Template);
+    }
     if [
         SourceSyntaxFact::AsyncClassModifier,
         SourceSyntaxFact::InvalidClassModifierOrder,
@@ -1237,7 +1243,6 @@ fn add_literal_boundary_nonclaims(
 ) {
     let scope = CapabilityScope::File(file.source.id);
     let (gap, semantic_nodes) = match family {
-        AuthoredLiteralKind::Template => (SyntaxGap::Template, true),
         AuthoredLiteralKind::RegularExpression => (SyntaxGap::RegularExpression, false),
         AuthoredLiteralKind::NumericRecovery => (SyntaxGap::NumericRecovery, true),
         AuthoredLiteralKind::NumericSeparator => (SyntaxGap::NumericSeparator, true),

@@ -1,5 +1,10 @@
+use crate::bind::ScopeId;
 use crate::program::SemanticCompletion;
-use crate::syntax::{Literal, NumberLiteral, StringLiteral};
+use crate::source::FileId;
+use crate::syntax::{
+    Expression, ExpressionKind, Literal, NumberLiteral, StringLiteral, TemplateExpression,
+    parse_number_literal,
+};
 
 use super::super::relation::RelationContext;
 use super::{Checker, Completion, LiteralProvenance, TypeId, TypeKind};
@@ -65,6 +70,24 @@ impl<'a> Checker<'a> {
         )
     }
 
+    pub(super) fn infer_template(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        template: &TemplateExpression,
+    ) -> TypeId {
+        for span in &template.spans {
+            self.infer_expression(file, scope, &span.expression, None);
+        }
+        if let Some(value) = template_constant(template).filter(|value| !value.is_empty()) {
+            return self
+                .store
+                .intern(TypeKind::LiteralString(value, LiteralProvenance::Fresh));
+        }
+        self.observe_completion(SemanticCompletion::Deferred);
+        self.store.deferred_template_value()
+    }
+
     pub(super) fn widen(&mut self, ty: TypeId) -> TypeId {
         if self.is_symbolic_regular_expression_type(ty) {
             return ty;
@@ -79,5 +102,26 @@ impl<'a> Checker<'a> {
             Completion::Deferred | Completion::Cycle | Completion::Limit => return ty,
         };
         self.store.widened_literal_type(ty)
+    }
+}
+
+fn template_constant(template: &TemplateExpression) -> Option<String> {
+    let mut value = template.head.clone();
+    for span in &template.spans {
+        value.push_str(&constant_string_value(&span.expression)?);
+        value.push_str(&span.literal);
+    }
+    Some(value)
+}
+
+fn constant_string_value(expression: &Expression) -> Option<String> {
+    match &expression.peel_parentheses().kind {
+        ExpressionKind::Literal(Literal::NoSubstitutionTemplate(literal)) => {
+            Some(literal.cooked.clone())
+        }
+        ExpressionKind::Literal(Literal::Number(number)) if number.validation_supported() => {
+            Some(parse_number_literal(number.semantic_text())?.display)
+        }
+        _ => None,
     }
 }

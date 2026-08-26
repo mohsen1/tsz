@@ -46,6 +46,32 @@ fn literal_array(store: &mut TypeStore, value: &str) -> TypeId {
 }
 
 #[test]
+fn string_literal_display_escapes_diagnostic_line_breaks_and_delimiters() {
+    let mut store = TypeStore::new();
+    let literal = store.intern(TypeKind::LiteralString(
+        "line\nbreak\r\t\"quoted\"\\tail".to_string(),
+        LiteralProvenance::Regular,
+    ));
+    assert_eq!(
+        store.display(literal),
+        "\"line\\nbreak\\r\\t\\\"quoted\\\"\\\\tail\"",
+    );
+}
+
+#[test]
+fn string_literal_display_matches_typescript_escape_string_edges() {
+    let mut store = TypeStore::new();
+    let literal = store.intern(TypeKind::LiteralString(
+        "\0x\u{0}7\u{8}\u{b}\u{c}\u{e}\u{1f}\u{85}\u{2028}\u{2029}\u{7f}\\\"'é😀".to_string(),
+        LiteralProvenance::Regular,
+    ));
+    assert_eq!(
+        store.display(literal),
+        "\"\\0x\\x007\\b\\v\\f\\u000E\\u001F\\u0085\\u2028\\u2029\u{7f}\\\\\\\"'é😀\"",
+    );
+}
+
+#[test]
 fn union_order_follows_typed_structure_not_allocation_or_input_order() {
     let mut reverse_allocation = TypeStore::new();
     let reverse_b = literal_array(&mut reverse_allocation, "b");

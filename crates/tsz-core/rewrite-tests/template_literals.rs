@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tsz::service::LanguageService;
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{
-    ExpressionKind, Literal, NoSubstitutionTemplateLiteral, StatementKind, parse_source,
+    Expression, ExpressionKind, Literal, NoSubstitutionTemplateLiteral, StatementKind, parse_source,
 };
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
@@ -45,7 +46,7 @@ fn javascript(output: &tsz::CompileOutput) -> &str {
         .as_str()
 }
 
-fn parse_template(raw: &str) -> NoSubstitutionTemplateLiteral {
+fn parse_initializer(raw: &str) -> Expression {
     let source = SourceText::new(
         FileId(0),
         PathBuf::from("syntax.ts"),
@@ -62,11 +63,15 @@ fn parse_template(raw: &str) -> NoSubstitutionTemplateLiteral {
     let Some(initializer) = &declaration.declarators[0].initializer else {
         panic!("expected an initializer");
     };
-    let ExpressionKind::Literal(Literal::NoSubstitutionTemplate(literal)) = &initializer.kind
-    else {
+    initializer.clone()
+}
+
+fn parse_template(raw: &str) -> NoSubstitutionTemplateLiteral {
+    let initializer = parse_initializer(raw);
+    let ExpressionKind::Literal(Literal::NoSubstitutionTemplate(literal)) = initializer.kind else {
         panic!("expected a no-substitution template literal");
     };
-    literal.clone()
+    literal
 }
 
 #[test]
@@ -85,6 +90,286 @@ fn syntax_retains_exact_raw_token_and_cooked_value() {
         let literal = parse_template(raw);
         assert_eq!(literal.raw, raw);
         assert_eq!(literal.cooked, cooked);
+    }
+}
+
+#[test]
+fn unterminated_template_tokens_are_not_recooked_as_escaped_closing_backticks() {
+    for target in ["es2015", "es6"] {
+        for source in [r"`\`", r"`\\", r"`\\\`", r"`\\\\\`"] {
+            let output = compile(
+                "unterminated.ts",
+                source,
+                CompilerOptions {
+                    no_emit: true,
+                    no_check: true,
+                    ..options(target)
+                },
+            );
+            assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+            assert_eq!(codes(&output), [1160], "{target} {source:?}");
+        }
+
+        let valid = compile(
+            "valid.ts",
+            r"`\\`;",
+            CompilerOptions {
+                no_emit: true,
+                no_check: true,
+                ..options(target)
+            },
+        );
+        assert_eq!(valid.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(valid.exit_status, CompileExitStatus::Success);
+        assert!(valid.diagnostics.is_empty());
+    }
+}
+
+#[test]
+fn syntax_retains_cooked_interpolated_chunks_and_nested_substitutions() {
+    let expression = parse_initializer("`a${1}b${`c${2}d`}e`");
+    let ExpressionKind::Template(template) = expression.kind else {
+        panic!("expected an interpolated template expression");
+    };
+    assert_eq!(template.head, "a");
+    assert_eq!(template.spans.len(), 2);
+    assert_eq!(template.spans[0].literal, "b");
+    assert!(matches!(
+        template.spans[0].expression.kind,
+        ExpressionKind::Literal(Literal::Number(_))
+    ));
+    assert_eq!(template.spans[1].literal, "e");
+    let ExpressionKind::Template(nested) = &template.spans[1].expression.kind else {
+        panic!("expected a nested template expression");
+    };
+    assert_eq!(nested.head, "c");
+    assert_eq!(nested.spans[0].literal, "d");
+}
+
+#[test]
+fn deeply_nested_templates_parse_without_recovery() {
+    const DEPTH: usize = 256;
+    let mut raw = String::with_capacity(DEPTH * 5 + 1);
+    for _ in 0..DEPTH {
+        raw.push_str("`${");
+    }
+    raw.push('0');
+    for _ in 0..DEPTH {
+        raw.push_str("}`");
+    }
+
+    let expression = parse_initializer(&raw);
+    let mut current = &expression;
+    for _ in 0..DEPTH {
+        let ExpressionKind::Template(template) = &current.kind else {
+            panic!("expected a nested template expression");
+        };
+        let [span] = template.spans.as_slice() else {
+            panic!("expected one substitution");
+        };
+        current = &span.expression;
+    }
+    assert!(matches!(
+        current.kind,
+        ExpressionKind::Literal(Literal::Number(_))
+    ));
+}
+
+#[test]
+fn nonempty_constant_templates_complete_while_unknown_values_and_emit_defer() {
+    let exact = "const exact: \"x1y\" = `x${1}y`;\n";
+    let sibling = SourceInput::new("sibling.ts", Arc::<str>::from("const sibling = 1;"));
+    let template = SourceInput::new("template.ts", Arc::<str>::from(exact));
+    for roots in [
+        vec![template.clone(), sibling.clone()],
+        vec![sibling, template],
+    ] {
+        let output = Compiler::new().compile(
+            roots,
+            &CompilerOptions {
+                no_emit: true,
+                strict: true,
+                ..options("es2015")
+            },
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
+        assert!(output.diagnostics.is_empty());
+    }
+
+    for source in [
+        "const empty: \"\" = `${\"\"}`;",
+        "const plain: \"xx\" = `x${\"x\"}`;",
+        r#"const surrogate = `x${"\uD800"}y`;"#,
+        r#"const mixed = `x${"\n\u{41}"}y`;"#,
+        "const asserted: \"xx\" = `x${\"x\" as string}`;",
+        "const nested = `a${`p${2}qr`}b`;",
+        "declare const value: number; const text = `x${value}`;",
+        "const conditional = `x${true ? 1 : 2}`;",
+        "const conditional = `x${(true ? 1 : 2)}y`;",
+        "const comma = `x${(1, 2)}y`;",
+        concat!(
+            "function* generator(): Generator<number, void, string> { ",
+            "const yielded = `x${(yield 1)}y`; }",
+        ),
+    ] {
+        let output = compile(
+            "boundary.ts",
+            source,
+            CompilerOptions {
+                no_emit: true,
+                strict: true,
+                ..options("es2015")
+            },
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert!(output.diagnostics.is_empty(), "{source:?}");
+    }
+
+    let malformed = compile(
+        "malformed.ts",
+        r#"const malformed = `x${"\u00G0"}y`;"#,
+        CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..options("es2015")
+        },
+    );
+    assert_eq!(malformed.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(malformed.exit_status, CompileExitStatus::SemanticIncomplete);
+    let [diagnostic] = malformed.diagnostics.as_slice() else {
+        panic!("expected one malformed-escape diagnostic");
+    };
+    assert_eq!(
+        (diagnostic.code, diagnostic.start, diagnostic.length),
+        (1125, 27, 0)
+    );
+
+    for source in ["const empty = `x${}y`;", "const malformed = `x${(}y`;"] {
+        let output = compile(
+            "malformed-substitution.ts",
+            source,
+            CompilerOptions {
+                no_emit: true,
+                strict: true,
+                ..options("es2015")
+            },
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        let [diagnostic] = output.diagnostics.as_slice() else {
+            panic!("expected one expression diagnostic: {source:?}");
+        };
+        assert_eq!(
+            (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ),
+            (
+                1109,
+                source.find('}').unwrap() as u32,
+                1,
+                "Expression expected.",
+            ),
+            "{source:?}",
+        );
+    }
+
+    let emitted = compile(
+        "withheld.ts",
+        exact,
+        CompilerOptions {
+            declaration: true,
+            strict: true,
+            ..options("es2015")
+        },
+    );
+    assert_eq!(emitted.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(emitted.exit_status, CompileExitStatus::SemanticIncomplete);
+    assert!(emitted.emitted_files.is_empty());
+}
+
+#[test]
+fn template_inference_withholds_only_its_quick_info_scope() {
+    let source = "const exact = `a${0}b`; exact; const sibling = 1; sibling;";
+    let declaration = source.find("exact").unwrap() as u32;
+    let reference = source.rfind("exact").unwrap() as u32;
+    let sibling = source.find("sibling").unwrap() as u32;
+    let mut service = LanguageService::new(CompilerOptions {
+        no_emit: true,
+        strict: true,
+        ..options("es2015")
+    });
+    service.open("service.ts", Arc::<str>::from(source));
+
+    assert!(service.quick_info("service.ts", declaration + 1).is_none());
+    assert_eq!(
+        service
+            .quick_info("service.ts", sibling + 1)
+            .expect("unrelated declarations keep QuickInfo")
+            .display,
+        "const sibling: 1"
+    );
+    let definition = service
+        .definition_and_bound_span("service.ts", reference + 1)
+        .expect("template references keep binder-owned navigation");
+    assert_eq!(definition.definitions.len(), 1);
+    assert_eq!(definition.definitions[0].name, "exact");
+    assert_eq!(definition.definitions[0].text_span.start, declaration);
+    assert_eq!(definition.text_span.start, reference);
+}
+
+#[test]
+fn template_literal_diagnostics_escape_cooked_line_breaks() {
+    let source = concat!(
+        "let abc: \"AB\\r\\nC\" = `AB\nC`;\n",
+        "let deferred: \"DE\\nF\" = `DE${\"\\n\"}F`;\n",
+    );
+    let output = compile(
+        "line-break.ts",
+        source,
+        CompilerOptions {
+            no_emit: true,
+            strict: true,
+            ..options("es2015")
+        },
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    let [diagnostic] = output.diagnostics.as_slice() else {
+        panic!("expected one line-break relation diagnostic");
+    };
+    assert_eq!(diagnostic.code, 2322);
+    assert_eq!(
+        diagnostic.message_text,
+        "Type '\"AB\\nC\"' is not assignable to type '\"AB\\r\\nC\"'.",
+    );
+}
+
+#[test]
+fn instanceof_defers_until_the_binary_diagnostic_owner_is_dependency_closed() {
+    for source in [
+        "const result = ((`a${0}b`)) instanceof function () {};",
+        "const result = (0 as any) instanceof `a${0}b`;",
+        "const text = `a${0}b`; const result = text instanceof function () {};",
+        "const result = \"\" instanceof function () {};",
+    ] {
+        let output = compile(
+            "instanceof.ts",
+            source,
+            CompilerOptions {
+                no_emit: true,
+                strict: true,
+                ..options("es2015")
+            },
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert!(output.diagnostics.is_empty(), "{source:?}");
     }
 }
 

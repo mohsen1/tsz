@@ -178,15 +178,54 @@ fn class_member_needs_semantic_summary(file: &ProgramFile, member: &ClassMember)
                 | ClassMemberSymbol::ReservedStaticPrototype
         )
     ) || matches!(&member.kind,
-        ClassMemberKind::Constructor { type_parameters, return_type, .. }
-            if !type_parameters.is_empty()
-                || return_type.is_some()
-                || member.modifiers.static_member
-                || member.modifiers.readonly
-                || member.modifiers.abstract_member
-                || member.modifiers.declared
-                || member.modifiers.async_member
-                || member.modifiers.unsupported_for_overload_completion)
+    ClassMemberKind::Constructor { type_parameters, return_type, .. }
+        if !type_parameters.is_empty()
+            || return_type.is_some()
+            || !member.modifiers.constructor_modifiers_are_modeled()
+    ) || class_member_has_unchecked_template(member)
+}
+
+fn class_member_has_unchecked_template(member: &ClassMember) -> bool {
+    let body_template = match &member.kind {
+        ClassMemberKind::Constructor { body, .. }
+        | ClassMemberKind::Method {
+            body,
+            accessor: None,
+            ..
+        } => contains_template(ExpressionRoot::Statements(body), ExpressionTraversal::All),
+        ClassMemberKind::Property { .. } | ClassMemberKind::Method { .. } => false,
+    };
+    let parameter_default_template = match &member.kind {
+        ClassMemberKind::Constructor { parameters, .. }
+        | ClassMemberKind::Method { parameters, .. } => parameters.iter().any(|parameter| {
+            parameter.initializer.as_ref().is_some_and(|initializer| {
+                contains_template(
+                    ExpressionRoot::Expression(initializer),
+                    ExpressionTraversal::Executed,
+                )
+            })
+        }),
+        ClassMemberKind::Property { .. } => false,
+    };
+    let property_initializer_template = matches!(&member.kind,
+        ClassMemberKind::Property { annotation: None, initializer: Some(initializer), .. }
+            if !is_lexical_this_call_host(initializer)
+                && contains_template(ExpressionRoot::Expression(initializer), ExpressionTraversal::Executed));
+    body_template || parameter_default_template || property_initializer_template
+}
+
+fn contains_template(root: ExpressionRoot<'_>, traversal: ExpressionTraversal) -> bool {
+    contains_matching_expression(root, traversal, |expression| {
+        matches!(expression.kind, ExpressionKind::Template(_))
+    })
+}
+
+fn is_lexical_this_call_host(expression: &Expression) -> bool {
+    let ExpressionKind::Call { callee, .. } = &expression.peel_parentheses().kind else {
+        return false;
+    };
+    matches!(&callee.peel_parentheses().kind,
+        ExpressionKind::Member { object, .. } if matches!(object.kind, ExpressionKind::This))
 }
 
 fn class_accessor_pair_needs_semantic_summary(
@@ -280,10 +319,10 @@ pub(super) const fn class_member_declaration_type_is_erased(member: &ClassMember
 
 pub(super) fn class_parameter_property_type_is_published(parameter: &Parameter) -> bool {
     parameter.is_property()
-        && !parameter
+        && parameter
             .modifiers
             .iter()
-            .any(|modifier| modifier.kind == ParameterModifier::Private)
+            .all(|modifier| modifier.kind != ParameterModifier::Private)
 }
 
 fn member_needs_diagnostic_summary(
@@ -291,20 +330,27 @@ fn member_needs_diagnostic_summary(
     member: &ClassMember,
     options: &CompilerOptions,
 ) -> bool {
-    if accessor_body_semantics_are_modeled(class, member, options) {
-        return false;
-    }
-    AccessorRequirement::All.in_class_member(member)
-        || accessor_body_needs_semantic_summary(member)
-        || match &member.kind {
-            ClassMemberKind::Constructor { parameters, .. }
-            | ClassMemberKind::Method { parameters, .. } => parameters.iter().any(|parameter| {
-                expression_needs_diagnostic_summary(parameter.initializer.as_ref())
-            }),
-            ClassMemberKind::Property { initializer, .. } => {
-                expression_needs_diagnostic_summary(initializer.as_ref())
-            }
-        }
+    !accessor_body_semantics_are_modeled(class, member, options)
+        && (AccessorRequirement::All.in_class_member(member)
+            || matches!(
+                member.kind,
+                ClassMemberKind::Method {
+                    accessor: Some(_),
+                    has_body: true,
+                    ..
+                }
+            )
+            || match &member.kind {
+                ClassMemberKind::Constructor { parameters, .. }
+                | ClassMemberKind::Method { parameters, .. } => {
+                    parameters.iter().any(|parameter| {
+                        expression_needs_diagnostic_summary(parameter.initializer.as_ref())
+                    })
+                }
+                ClassMemberKind::Property { initializer, .. } => {
+                    expression_needs_diagnostic_summary(initializer.as_ref())
+                }
+            })
 }
 
 fn statement_needs_diagnostic_summary(statement: &Statement) -> bool {
@@ -466,16 +512,6 @@ impl AccessorRequirement {
     }
 
     fn in_class_member(self, member: &ClassMember) -> bool {
-        if matches!(&member.kind,
-            ClassMemberKind::Method {
-                accessor: Some(accessor),
-                parameters,
-                return_type,
-                ..
-            } if self.matches(*accessor, parameters, return_type.as_ref()))
-        {
-            return true;
-        }
         match &member.kind {
             ClassMemberKind::Constructor { parameters, .. } => parameters
                 .iter()
@@ -488,8 +524,13 @@ impl AccessorRequirement {
                 type_parameters,
                 parameters,
                 return_type,
+                accessor,
                 ..
-            } => self.in_signature(type_parameters, parameters, return_type.as_ref()),
+            } => {
+                accessor.as_ref().is_some_and(|accessor| {
+                    self.matches(*accessor, parameters, return_type.as_ref())
+                }) || self.in_signature(type_parameters, parameters, return_type.as_ref())
+            }
         }
     }
 
@@ -529,28 +570,20 @@ impl AccessorRequirement {
     }
 
     fn in_type_member(self, member: &TypeMember) -> bool {
-        if self.direct_type_member(member) {
-            return true;
-        }
-        match &member.kind {
-            TypeMemberKind::Property { ty, .. } => {
-                ty.as_ref().is_some_and(|node| self.in_type(node))
-            }
-            _ => member.kind.signature().is_some_and(
+        self.direct_type_member(member)
+            || member.kind.signature().is_some_and(
                 |(_, type_parameters, parameters, return_type)| {
                     self.in_signature(type_parameters, parameters, return_type)
                 },
-            ),
-        }
+            )
+            || matches!(&member.kind,
+                TypeMemberKind::Property { ty: Some(ty), .. } if self.in_type(ty))
     }
 
     fn in_class_header(self, class: &ClassDeclaration) -> bool {
+        let mut heritage = class.extends.iter().chain(&class.implements);
         type_parameter_types(&class.type_parameters).any(|node| self.in_type(node))
-            || class
-                .extends
-                .as_ref()
-                .is_some_and(|node| self.in_type(node))
-            || class.implements.iter().any(|node| self.in_type(node))
+            || heritage.any(|node| self.in_type(node))
     }
 
     fn owned_by_expression(self, expression: &Expression) -> bool {
@@ -608,17 +641,6 @@ impl AccessorRequirement {
         };
         inferred || self == Self::All && grammar
     }
-}
-
-const fn accessor_body_needs_semantic_summary(member: &ClassMember) -> bool {
-    matches!(
-        member.kind,
-        ClassMemberKind::Method {
-            accessor: Some(_),
-            has_body: true,
-            ..
-        }
-    )
 }
 
 /// The checker owns this deliberately small straight-line accessor body

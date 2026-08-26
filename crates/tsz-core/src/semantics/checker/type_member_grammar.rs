@@ -68,14 +68,69 @@ impl Checker<'_> {
                 value_type,
             } = &member.kind
             {
-                self.validate_index_signature(
+                let [parameter] = parameters.as_slice() else {
+                    let span = parameters
+                        .first()
+                        .map_or(member.span, |parameter| parameter.name_span);
+                    d!(self, file, span, 1096);
+                    continue;
+                };
+                if let Some(span) = parameter.rest_span {
+                    d!(self, file, span, 1017);
+                    self.validate_rest_parameter_type(
+                        file,
+                        scope,
+                        parameter,
+                        type_parameters,
+                        false,
+                    );
+                    continue;
+                }
+                if !parameter.modifiers.is_empty() {
+                    if parameter.is_property() {
+                        d!(self, file, parameter.span, 2369);
+                    }
+                    d!(self, file, parameter.name_span, 1018);
+                    continue;
+                }
+                if let Some(span) = parameter.optional_span {
+                    d!(self, file, span, 1019);
+                    continue;
+                }
+                if parameter.initializer.is_some() {
+                    d!(self, file, parameter.name_span, 1020);
+                    d!(self, file, parameter.span, 2371);
+                    continue;
+                }
+                let Some(annotation) = &parameter.annotation else {
+                    d!(self, file, parameter.name_span, 1022);
+                    continue;
+                };
+                if matches!(
+                    annotation.kind,
+                    TypeNodeKind::Keyword(KeywordType::UniqueSymbol)
+                ) {
+                    d!(self, file, annotation.span, 1335);
+                    continue;
+                }
+                let invalid = match self.index_key_syntax(
                     file,
                     scope,
-                    member,
-                    parameters,
-                    value_type.as_ref(),
+                    annotation,
                     type_parameters,
-                );
+                    &mut HashSet::new(),
+                ) {
+                    IndexKeySyntax::LiteralOrGeneric => Some(1337),
+                    IndexKeySyntax::Invalid => Some(1268),
+                    IndexKeySyntax::Valid | IndexKeySyntax::Unknown => None,
+                };
+                if let Some(code) = invalid {
+                    d!(self, file, parameter.name_span, code);
+                    continue;
+                }
+                if value_type.is_none() {
+                    d!(self, file, member.span, 1021);
+                }
             }
         }
     }
@@ -428,74 +483,6 @@ impl Checker<'_> {
                     d!(self, file, span, 2386);
                 }
             }
-        }
-    }
-
-    fn validate_index_signature(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        member: &TypeMember,
-        parameters: &[Parameter],
-        value_type: Option<&TypeNode>,
-        type_parameters: &HashMap<String, TypeId>,
-    ) {
-        let [parameter] = parameters else {
-            let span = parameters
-                .first()
-                .map_or(member.span, |parameter| parameter.name_span);
-            d!(self, file, span, 1096);
-            return;
-        };
-        if let Some(span) = parameter.rest_span {
-            d!(self, file, span, 1017);
-            self.validate_rest_parameter_type(file, scope, parameter, type_parameters, false);
-            return;
-        }
-        if !parameter.modifiers.is_empty() {
-            if parameter.is_property() {
-                d!(self, file, parameter.span, 2369);
-            }
-            d!(self, file, parameter.name_span, 1018);
-            return;
-        }
-        if let Some(span) = parameter.optional_span {
-            d!(self, file, span, 1019);
-            return;
-        }
-        if parameter.initializer.is_some() {
-            d!(self, file, parameter.name_span, 1020);
-            d!(self, file, parameter.span, 2371);
-            return;
-        }
-        let Some(annotation) = &parameter.annotation else {
-            d!(self, file, parameter.name_span, 1022);
-            return;
-        };
-        if matches!(
-            annotation.kind,
-            TypeNodeKind::Keyword(KeywordType::UniqueSymbol)
-        ) {
-            d!(self, file, annotation.span, 1335);
-            return;
-        }
-        let invalid = match self.index_key_syntax(
-            file,
-            scope,
-            annotation,
-            type_parameters,
-            &mut HashSet::new(),
-        ) {
-            IndexKeySyntax::LiteralOrGeneric => Some(1337),
-            IndexKeySyntax::Invalid => Some(1268),
-            IndexKeySyntax::Valid | IndexKeySyntax::Unknown => None,
-        };
-        if let Some(code) = invalid {
-            d!(self, file, parameter.name_span, code);
-            return;
-        }
-        if value_type.is_none() {
-            d!(self, file, member.span, 1021);
         }
     }
 

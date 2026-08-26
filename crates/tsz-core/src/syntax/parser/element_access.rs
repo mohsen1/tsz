@@ -43,11 +43,7 @@ impl Parser<'_> {
                 "An element access expression should take an argument.",
                 1011,
             );
-            Expression {
-                id: self.alloc_node(),
-                span: self.current().span,
-                kind: ExpressionKind::Missing,
-            }
+            self.missing_expression(self.current().span)
         } else {
             self.parse_expression()
         };

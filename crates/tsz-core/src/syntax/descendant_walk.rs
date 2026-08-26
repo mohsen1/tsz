@@ -233,6 +233,11 @@ pub(crate) fn walk_expression_descendants<'ast, A>(
         | ExpressionKind::Literal(_)
         | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Missing => {}
+        ExpressionKind::Template(template) => {
+            for span in &template.spans {
+                walk_expression_descendants(adapter, context, &span.expression);
+            }
+        }
         ExpressionKind::Object(properties) => {
             for property in properties {
                 walk_expression_descendants(adapter, context, &property.value);

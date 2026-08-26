@@ -791,6 +791,197 @@ fn reserved_class_member_names_and_constructor_extras_defer_only_semantics() {
 }
 
 #[test]
+fn templates_in_skipped_class_hosts_defer_only_the_class_member_semantics_owner() {
+    let source = concat!(
+        "class ConstructorString { constructor() { const value = `x${\"y\"}z`; } }\n",
+        "class ConstructorConditional { constructor(flag:boolean) { const value = `x${flag ? 1 : 2}z`; } }\n",
+        "class MethodBody { method(value:string) { return `x${value}z`; } }\n",
+        "class PropertyInitializer { value = `x${\"y\"}z`; }\n",
+        "class ConstructorDefault { constructor(value = ((`x${1}z`))) {} }\n",
+        "class MethodDefault { method(value = `x${1}z`) {} }\n",
+        "class NestedMethodBody { method() { const callback = () => `x${1}z`; } }\n",
+        "const independent: string = 1;\n",
+    );
+    let file = program_file(0, "constructor-template.ts", source);
+    let classes = file
+        .syntax
+        .statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Class(class) => Some(class),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let affected = classes
+        .iter()
+        .map(|class| &class.members[0])
+        .collect::<Vec<_>>();
+    let analysis = default_analysis(&file);
+    for member in [
+        affected[0],
+        affected[2],
+        affected[3],
+        affected[4],
+        affected[5],
+        affected[6],
+    ] {
+        let scope = CapabilityScope::node(file.source.id, member.id);
+        for target in [
+            CapabilityTarget::SemanticCheck,
+            CapabilityTarget::RequiredType,
+            CapabilityTarget::SemanticDiagnostics,
+        ] {
+            let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(target, scope) else {
+                panic!("a skipped class semantic host must defer: {target:?}")
+            };
+            assert!(reasons.into_iter().any(|reason| {
+                reason.target == target
+                    && reason.scope == scope
+                    && reason.reason == NonclaimReason::Semantic(SemanticGap::ClassMemberSemantics)
+                    && reason.deletion
+                        == DeletionCondition::SemanticOwner(SemanticGap::ClassMemberSemantics)
+            }));
+        }
+        assert!(
+            analysis
+                .claim(CapabilityTarget::QuickInfo, scope)
+                .is_claimed(),
+            "the class-member semantic gap does not erase binder-owned QuickInfo",
+        );
+    }
+
+    let conditional_source =
+        "class Conditional { constructor(flag: boolean) { const value = `x${flag ? 1 : 2}z`; } }";
+    let conditional_output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "constructor-conditional-template.ts",
+            Arc::<str>::from(conditional_source),
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            target: "esnext".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        conditional_output.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert_eq!(
+        conditional_output.exit_status,
+        CompileExitStatus::SemanticIncomplete
+    );
+    assert!(conditional_output.diagnostics.is_empty());
+
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "constructor-template.ts",
+            Arc::<str>::from(source),
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            strict: true,
+            target: "esnext".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [2322],
+        "an independent same-file diagnostic remains visible",
+    );
+
+    let positive = concat!(
+        "class Annotated { value: \"x1y\" = `x${1}y`; }\n",
+        "class Accessor { get value(): \"x\" { return `x`; } }\n",
+        "class ConstructorDefault { constructor(callback = () => `x${1}y`) {} }\n",
+        "class MethodDefault { method(callback = () => `x${1}y`) {} }\n",
+        "class PropertyFunction { value = () => `x${1}y`; }\n",
+        "class LexicalCall { dispatch(value: string): void {} value = (this.dispatch)(`x${1}y`); }\n",
+        "const exact: \"x1y\" = `x${((1))}y`;\n",
+    );
+    let positive_file = program_file(0, "checked-class-template.ts", positive);
+    let positive_analysis = default_analysis(&positive_file);
+    let positive_classes = positive_file
+        .syntax
+        .statements
+        .iter()
+        .filter_map(|statement| {
+            let StatementKind::Class(class) = &statement.kind else {
+                return None;
+            };
+            Some(class)
+        })
+        .collect::<Vec<_>>();
+    for member in [
+        &positive_classes[0].members[0],
+        &positive_classes[1].members[0],
+        &positive_classes[2].members[0],
+        &positive_classes[3].members[0],
+        &positive_classes[4].members[0],
+        &positive_classes[5].members[1],
+    ] {
+        let scope = CapabilityScope::node(positive_file.source.id, member.id);
+        for target in [
+            CapabilityTarget::SemanticCheck,
+            CapabilityTarget::RequiredType,
+            CapabilityTarget::SemanticDiagnostics,
+        ] {
+            assert!(
+                positive_analysis.claim(target, scope).is_claimed(),
+                "visited annotated/accessor semantics remain claimed: {target:?}",
+            );
+        }
+    }
+    let compile_checked = |source: &str| {
+        Compiler::new().compile(
+            vec![SourceInput::new(
+                "checked-class-template.ts",
+                Arc::<str>::from(source),
+            )],
+            &CompilerOptions {
+                no_emit: true,
+                strict: true,
+                target: "esnext".to_string(),
+                ..CompilerOptions::default()
+            },
+        )
+    };
+    for source in [
+        "class ConstructorDefault { constructor(callback = () => `x${1}y`) {} }",
+        "class MethodDefault { method(callback = () => `x${1}y`) {} }",
+    ] {
+        let output = compile_checked(source);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert!(output.diagnostics.is_empty(), "{source}");
+    }
+    for source in [
+        "class Annotated { value: \"x1y\" = `x${1}y`; }",
+        "class Accessor { get value(): \"x\" { return `x`; } }",
+        "class PropertyFunction { value = () => `x${1}y`; }",
+        "class LexicalCall { dispatch(value: string): void {} value = (this.dispatch)(`x${1}y`); }",
+        "const exact: \"x1y\" = `x${((1))}y`;",
+    ] {
+        let output = compile_checked(source);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source}"
+        );
+        assert_eq!(output.exit_status, CompileExitStatus::Success, "{source}");
+        assert!(output.diagnostics.is_empty(), "{source}");
+    }
+}
+
+#[test]
 fn generic_quoted_constructor_names_remain_ordinary_methods() {
     let source = concat!(
         "export class Generic{'constructor'<T>(){}}\n",

@@ -942,18 +942,18 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     result_scope_service.open("results.ts", Arc::<str>::from(result_scope_source));
     let safe_declaration = result_scope_source.find("safe").expect("safe") as u32;
     assert!(
-        result_scope_service
+        !result_scope_service
             .references("results.ts", safe_declaration)
             .is_empty(),
-        "opaque template substitutions cannot publish exhaustive references"
+        "represented template substitutions publish exhaustive references"
     );
     assert!(
-        result_scope_service
+        !result_scope_service
             .document_highlights("results.ts", safe_declaration, &["results.ts".to_string()])
             .is_empty()
     );
     assert!(
-        !result_scope_service
+        result_scope_service
             .rename("results.ts", safe_declaration)
             .info
             .can_rename
@@ -979,17 +979,17 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     let mut cross_file_service = LanguageService::new(CompilerOptions::default());
     cross_file_service.open("declaration.ts", Arc::<str>::from("const shared = 1;"));
     cross_file_service.open(
-        "opaque-use.ts",
+        "template-use.ts",
         Arc::<str>::from("const gap = `${shared}`;"),
     );
     assert!(
-        cross_file_service
+        !cross_file_service
             .references("declaration.ts", "const ".len() as u32)
             .is_empty(),
-        "an opaque substitution blocks exhaustive cross-file references"
+        "a represented substitution publishes exhaustive cross-file references"
     );
     assert!(
-        !cross_file_service
+        cross_file_service
             .rename("declaration.ts", "const ".len() as u32)
             .info
             .can_rename
@@ -1085,7 +1085,7 @@ fn plain_template_service_completion_is_complete_across_file_orders() {
 }
 
 #[test]
-fn nested_template_recovery_keeps_inner_required_type_siblings_definitive() {
+fn represented_nested_templates_preserve_inner_required_type_siblings() {
     let cases = [
         (
             "nested-template.ts",
@@ -1144,17 +1144,41 @@ fn nested_template_recovery_keeps_inner_required_type_siblings_definitive() {
                 SemanticCompletion::Deferred,
                 "{path}"
             );
+            let mut expected = [
+                "dependent",
+                "renamedUse",
+                "nestedUse",
+                "firstUse",
+                "secondUse",
+            ]
+            .into_iter()
+            .filter_map(|name| {
+                source.find(name).map(|start| {
+                    (
+                        path.to_string(),
+                        2322,
+                        start as u32,
+                        name.len() as u32,
+                        DiagnosticCategory::Error,
+                        "Type 'string' is not assignable to type 'number'.".to_string(),
+                        Vec::new(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+            expected.push((
+                path.to_string(),
+                2304,
+                source.find("MissingInside").expect("required-type sibling") as u32,
+                "MissingInside".len() as u32,
+                DiagnosticCategory::Error,
+                "Cannot find name 'MissingInside'.".to_string(),
+                Vec::new(),
+            ));
+            expected.sort_by_key(|diagnostic| diagnostic.2);
             assert_eq!(
                 semantic_fingerprint(&result),
-                vec![(
-                    path.to_string(),
-                    2304,
-                    source.find("MissingInside").expect("required-type sibling") as u32,
-                    "MissingInside".len() as u32,
-                    DiagnosticCategory::Error,
-                    "Cannot find name 'MissingInside'.".to_string(),
-                    Vec::new(),
-                )],
+                expected,
                 "{path}: {:#?}",
                 result.diagnostics,
             );
@@ -1169,7 +1193,7 @@ fn nested_template_recovery_keeps_inner_required_type_siblings_definitive() {
 }
 
 #[test]
-fn nested_template_recovery_isolates_service_query_origins() {
+fn represented_nested_templates_preserve_service_query_origins() {
     let source = concat!(
         "function QueryShell() {\n",
         "  {\n",
@@ -1187,15 +1211,21 @@ fn nested_template_recovery_isolates_service_query_origins() {
     service.open(path, Arc::<str>::from(source));
 
     for _ in 0..2 {
-        assert!(service.quick_info(path, broken).is_none());
-        assert!(service.definition_and_bound_span(path, broken).is_none());
-        assert!(service.references(path, broken).is_empty());
-        assert!(
+        assert_eq!(
             service
+                .quick_info(path, broken)
+                .expect("annotated template declaration quick info")
+                .display,
+            "const broken: string"
+        );
+        assert!(service.definition_and_bound_span(path, broken).is_some());
+        assert!(!service.references(path, broken).is_empty());
+        assert!(
+            !service
                 .document_highlights(path, broken, &[path.to_string()])
                 .is_empty()
         );
-        assert!(!service.rename(path, broken).info.can_rename);
+        assert!(service.rename(path, broken).info.can_rename);
 
         let quick_info = service
             .quick_info(path, sibling)

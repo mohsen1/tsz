@@ -2,41 +2,25 @@ use super::super::{
     AuthoredLiteralKind, Expression, ExpressionKind, Literal, NumberLiteral, NumericRecoveryKind,
     Token, TokenKind,
 };
-use super::Parser;
+use super::{Parser, scan_at};
 use crate::diagnostics::Diagnostic;
 
 impl Parser<'_> {
     pub(super) fn number_literal(&self, token: Token) -> NumberLiteral {
-        if let Some(index) = self
-            .numeric_literals
-            .binary_search_by_key(&token.span.start, |literal| literal.span.start)
-            .ok()
-            .filter(|index| self.numeric_literals[*index].span == token.span)
-        {
-            return NumberLiteral::Recovery(self.numeric_literals[index].syntax_literal());
+        if let Some(literal) = scan_at(&self.numeric_literals, token.span, |literal| literal.span) {
+            return NumberLiteral::Recovery(literal.syntax_literal());
         }
-        self.separated_numeric_literals
-            .binary_search_by_key(&token.span.start, |literal| literal.span.start)
-            .ok()
-            .filter(|index| self.separated_numeric_literals[*index].span == token.span)
-            .map_or_else(
-                || NumberLiteral::Plain(self.text(token.span).to_string()),
-                |index| {
-                    NumberLiteral::Separated(
-                        self.separated_numeric_literals[index].syntax_literal(),
-                    )
-                },
-            )
+        let literals = &self.separated_numeric_literals;
+        scan_at(literals, token.span, |literal| literal.span).map_or_else(
+            || NumberLiteral::Plain(self.text(token.span).to_string()),
+            |literal| NumberLiteral::Separated(literal.syntax_literal()),
+        )
     }
 
     pub(super) fn observe_unmodeled_numeric_separator_if_current(&mut self) {
         let span = self.current().span;
-        if self
-            .separated_numeric_literals
-            .binary_search_by_key(&span.start, |literal| literal.span.start)
-            .ok()
-            .is_some_and(|index| self.separated_numeric_literals[index].span == span)
-        {
+        let literals = &self.separated_numeric_literals;
+        if scan_at(literals, span, |literal| literal.span).is_some() {
             self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericSeparator);
         }
     }
@@ -83,11 +67,9 @@ impl Parser<'_> {
             && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
         {
             self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericRecovery);
-            let recovery_extent = self.recovery_extent_from_current(expression.span);
-            self.retain_parser_recovery(
+            self.retain_recovery_extent(
                 super::super::ParserRecoveryKind::Expression,
                 expression.span,
-                recovery_extent,
             );
             return false;
         }
@@ -106,11 +88,9 @@ impl Parser<'_> {
         );
         self.diagnostics.push(diagnostic);
         self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericRecovery);
-        let recovery_extent = self.recovery_extent_from_current(expression.span);
-        self.retain_parser_recovery(
+        self.retain_recovery_extent(
             super::super::ParserRecoveryKind::Expression,
             expression.span,
-            recovery_extent,
         );
         true
     }

@@ -17,6 +17,7 @@ pub mod service;
 pub mod source;
 pub mod standard_library;
 pub mod syntax;
+mod text;
 
 pub use program::{
     CompileExitStatus, CompileOutput, Compiler, CompilerOptions, EmittedFile, SemanticCompletion,

@@ -275,12 +275,12 @@ fn predicate_if_region_withholds_both_branches_and_container_suffix() {
         (
             "predicate-region.ts",
             "isText",
-            "MissingCondition&&(((isText)))(value)&&`head${\"gap\"}tail`",
+            "MissingCondition&&(((isText)))(value)&&(null as any)`head${\"gap\"}tail`",
         ),
         (
             "renamed-predicate-region.ts",
             "renamedPredicate",
-            "MissingCondition&&((renamedPredicate))((value))&&`head${\"gap\"}tail`",
+            "MissingCondition&&((renamedPredicate))((value))&&(null as any)`head${\"gap\"}tail`",
         ),
     ] {
         let source = format!(

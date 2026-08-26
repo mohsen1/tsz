@@ -86,6 +86,7 @@ pub(super) fn expression_has_recovered_left_edge(expression: &Expression) -> boo
         ExpressionKind::Identifier { .. }
         | ExpressionKind::This
         | ExpressionKind::Literal(_)
+        | ExpressionKind::Template(_)
         | ExpressionKind::RegularExpression(_)
         | ExpressionKind::Object(_)
         | ExpressionKind::Array(_)

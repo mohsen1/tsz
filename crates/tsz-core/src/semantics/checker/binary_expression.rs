@@ -87,6 +87,9 @@ impl Checker<'_> {
         };
         let left_type = self.infer_expression(file, scope, left, None);
         let right_type = self.infer_expression(file, scope, right, None);
+        if *operator == BinaryOperator::InstanceOf {
+            self.observe_completion(SemanticCompletion::Deferred);
+        }
         if let Some(operator) = deferred_operator(*operator) {
             return self.infer_binary_expression(
                 file,

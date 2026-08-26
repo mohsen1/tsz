@@ -110,12 +110,8 @@ impl Parser<'_> {
             ]) && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
             {
                 let authored_span = self.current().span;
-                let recovery_extent = self.recovery_extent_from_current(authored_span);
-                self.retain_parser_recovery(
-                    ParserRecoveryKind::Declaration,
-                    authored_span,
-                    recovery_extent,
-                );
+                let recovery_extent =
+                    self.retain_recovery_extent(ParserRecoveryKind::Declaration, authored_span);
                 self.recover_statement(Some(recovery_extent));
             }
             declarators.push(VariableDeclarator {
@@ -365,11 +361,6 @@ impl Parser<'_> {
         } else {
             binding_start
         };
-        let recovery_extent = self.recovery_extent_from_current(authored_span);
-        self.retain_parser_recovery(
-            ParserRecoveryKind::Declaration,
-            authored_span,
-            recovery_extent,
-        );
+        self.retain_recovery_extent(ParserRecoveryKind::Declaration, authored_span);
     }
 }

@@ -267,6 +267,52 @@ impl Checker<'_> {
         operands.map(|operand| self.force_operand(operand, depth))
     }
 
+    pub(super) fn report_complexity(&mut self, deferred: &DeferredType) {
+        let span = match deferred {
+            DeferredType::Reference { declaration, .. } | DeferredType::Value(declaration) => {
+                self.models.get(declaration).map(|model| match model {
+                    DeclarationModel::TypeAlias { declaration, .. } => declaration.name_span,
+                    DeclarationModel::Interface { declaration, .. } => declaration.name_span,
+                    DeclarationModel::Variable { declaration, .. } => declaration.name_span,
+                    DeclarationModel::Parameter { parameter, .. } => parameter.name_span,
+                    DeclarationModel::Function { declaration, .. } => declaration.name_span,
+                    DeclarationModel::Class { declaration, .. } => declaration.name_span,
+                    DeclarationModel::JavaScriptProperty(right, _) => right.span,
+                })
+            }
+            DeferredType::Call { .. }
+            | DeferredType::GenericCall
+            | DeferredType::FlowReference { .. }
+            | DeferredType::LexicalThis { .. }
+            | DeferredType::Construct { .. }
+            | DeferredType::Property { .. }
+            | DeferredType::ElementAccess { .. }
+            | DeferredType::Predicate { .. }
+            | DeferredType::Binary { .. }
+            | DeferredType::Logical { .. }
+            | DeferredType::Unary { .. }
+            | DeferredType::KeyOf(_)
+            | DeferredType::Conditional { .. }
+            | DeferredType::Mapped { .. }
+            | DeferredType::IndexedAccess { .. }
+            | DeferredType::BigIntLiteral
+            | DeferredType::NumericRecovery
+            | DeferredType::Utf16StringLiteral
+            | DeferredType::TemplateValue
+            | DeferredType::UniqueSymbol
+            | DeferredType::GenericFunction
+            | DeferredType::ObjectShape => None,
+        };
+        if let Some(span) = span {
+            self.push_diagnostic(
+                span.file,
+                span,
+                "Type instantiation is excessively deep and possibly infinite.".to_string(),
+                2589,
+            );
+        }
+    }
+
     pub(super) fn evaluate_type_alias_reference(
         &mut self,
         declaration: DeclId,

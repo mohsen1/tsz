@@ -1152,6 +1152,11 @@ impl Binder {
             | ExpressionKind::Literal(_)
             | ExpressionKind::RegularExpression(_)
             | ExpressionKind::Missing => {}
+            ExpressionKind::Template(template) => {
+                for span in &template.spans {
+                    self.bind_expression(&span.expression, scope, control);
+                }
+            }
             ExpressionKind::Object(properties) => {
                 for property in properties {
                     self.bind_expression_with_demand(

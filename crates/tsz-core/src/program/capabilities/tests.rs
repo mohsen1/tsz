@@ -334,12 +334,17 @@ fn swallowed_template_identifiers_withhold_reference_enumeration_program_wide() 
         (
             "template-reference.ts",
             "const safe = 1; const gap = `${safe}`; const useSafe = safe;",
-            true,
+            false,
         ),
         (
             "template-literal.ts",
             "const safe = 1; const gap = `${\"safe\"}`; const useSafe = safe;",
             false,
+        ),
+        (
+            "tagged-template-reference.ts",
+            "declare const tag: any; const safe = 1; const gap = tag`${safe}`;",
+            true,
         ),
     ] {
         let file = program_file(0, path, source);
@@ -368,8 +373,17 @@ fn swallowed_template_identifiers_withhold_reference_enumeration_program_wide() 
 
 #[test]
 fn exact_template_recovery_may_reenter_a_claimed_arrow_required_type_owner() {
-    let source = "const values = [`head${\"gap\"}tail`, (value: MissingArrowType) => value];";
+    let source =
+        "const values = [(null as any)`head${\"gap\"}tail`, (value: MissingArrowType) => value];";
     let file = program_file(0, "required-arrow.ts", source);
+    assert_eq!(
+        file.syntax
+            .parser_recovery_facts()
+            .iter()
+            .filter(|fact| fact.kind == ParserRecoveryKind::Template)
+            .count(),
+        1,
+    );
     let statement = &file.syntax.statements[0];
     let StatementKind::Variable(variable) = &statement.kind else {
         panic!("variable expected: {statement:#?}");
@@ -508,7 +522,7 @@ fn recovered_type_members_use_the_type_recovery_product_owner() {
 #[test]
 fn non_expression_parameters_retain_their_containing_statement_capability_scope() {
     let source = concat!(
-        "class Holder { method(value = `head${renamed}tail`) { return value; } } ",
+        "class Holder { method(value = (null as any)`head${renamed}tail`) { return value; } } ",
         "const renamed = 1;",
     );
     let file = program_file(0, "member-parameter.ts", source);

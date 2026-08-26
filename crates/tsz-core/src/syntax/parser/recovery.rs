@@ -1,8 +1,8 @@
 use super::Parser;
 use crate::source::{SourceKind, Span};
 use crate::syntax::{
-    ParserRecoveryFact, ParserRecoveryKind, ParserRecoveryOwner, Statement, Token, TokenKind,
-    TypeNode, TypeNodeKind,
+    Expression, ExpressionKind, ParserRecoveryFact, ParserRecoveryKind, ParserRecoveryOwner,
+    Statement, Token, TokenKind, TypeNode, TypeNodeKind,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +34,14 @@ impl ClassMemberListRecovery {
 }
 
 impl Parser<'_> {
+    pub(super) const fn missing_expression(&mut self, span: Span) -> Expression {
+        Expression {
+            id: self.alloc_node(),
+            span,
+            kind: ExpressionKind::Missing,
+        }
+    }
+
     pub(super) fn error_current(&mut self, message: &str, code: u32) {
         self.diagnostics.push(crate::diagnostics::Diagnostic::at(
             self.source,
@@ -125,11 +133,7 @@ impl Parser<'_> {
         self.reject_tagged_template(receiver);
         if self.at(TokenKind::Satisfies) {
             let authored_span = self.current().span;
-            self.retain_parser_recovery(
-                ParserRecoveryKind::Expression,
-                authored_span,
-                self.recovery_extent_from_current(authored_span),
-            );
+            self.retain_recovery_extent(ParserRecoveryKind::Expression, authored_span);
         }
     }
 
@@ -145,6 +149,12 @@ impl Parser<'_> {
             recovery_extent,
             PendingParserRecoveryParticipation::ControlAndAnalysis,
         );
+    }
+
+    pub(super) fn retain_recovery_extent(&mut self, kind: ParserRecoveryKind, span: Span) -> Span {
+        let extent = self.recovery_extent_from_current(span);
+        self.retain_parser_recovery(kind, span, extent);
+        extent
     }
 
     pub(super) fn record_parser_recovery_for_analysis(
@@ -369,8 +379,7 @@ impl Parser<'_> {
                 | TokenKind::TemplateMiddle
                 | TokenKind::TemplateTail
         ) {
-            let recovery_extent = self.recovery_extent_from_current(token.span);
-            self.retain_parser_recovery(ParserRecoveryKind::Type, token.span, recovery_extent);
+            self.retain_recovery_extent(ParserRecoveryKind::Type, token.span);
         }
         self.error_current("Type expected.", 1110);
         if consume {

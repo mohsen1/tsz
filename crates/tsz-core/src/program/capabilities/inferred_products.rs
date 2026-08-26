@@ -8,8 +8,9 @@ use super::emit_targets::{
     class_member_declaration_type_is_erased, class_parameter_property_type_is_published,
 };
 use super::{
-    CapabilityNonclaim, CapabilityScope, CapabilityTarget, ProgramFile, SemanticGap, SyntaxGap,
-    add_both_emit, add_semantic,
+    CapabilityNonclaim, CapabilityScope, CapabilityTarget, DeletionCondition, NonclaimReason,
+    ProgramFile, SemanticGap, SyntaxGap, add_both_emit, add_nonclaims as record_nonclaims,
+    add_semantic,
 };
 
 pub(super) fn add_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &ProgramFile) {
@@ -20,7 +21,7 @@ pub(super) fn add_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &Prog
 fn add_unsigned_shift_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &ProgramFile) {
     let id = file.source.id;
     let inference = InferredExpression::Shift;
-    let mut record = |target, owner| {
+    let record = |nonclaims: &mut Vec<CapabilityNonclaim>, target, owner| {
         add_semantic(
             nonclaims,
             &[target],
@@ -32,19 +33,30 @@ fn add_unsigned_shift_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &
         if inferred_statement(root, inference)
             || matches!(&root.kind, StatementKind::Export(value) if inference.occurs_in(value.assignment.as_ref()))
         {
-            record(CapabilityTarget::Declaration, root.id);
+            record(nonclaims, CapabilityTarget::Declaration, root.id);
         }
         root.for_each_statement(&mut |statement| {
             if inferred_statement(statement, inference)
                 || matches!(&statement.kind, StatementKind::Class(value) if value.members.iter().any(|member| inferred_member(member, inference)))
             {
-                record(CapabilityTarget::QuickInfo, statement.id);
+                record(nonclaims, CapabilityTarget::QuickInfo, statement.id);
+            }
+            if inferred_statement(statement, InferredExpression::Template)
+                || matches!(&statement.kind, StatementKind::Class(value) if value.members.iter().any(|member| inferred_member(member, InferredExpression::Template)))
+            {
+                record_nonclaims(
+                    nonclaims,
+                    &[CapabilityTarget::QuickInfo],
+                    CapabilityScope::node(id, statement.id),
+                    NonclaimReason::Syntax(SyntaxGap::Template),
+                    DeletionCondition::DeepestSemanticOwner(SyntaxGap::Template),
+                );
             }
         });
         if let StatementKind::Class(class) = &root.kind {
             for member in &class.members {
                 if inferred_member(member, inference) {
-                    record(CapabilityTarget::Declaration, member.id);
+                    record(nonclaims, CapabilityTarget::Declaration, member.id);
                 }
             }
         }
@@ -108,6 +120,7 @@ enum InferredExpression {
     Shift,
     Call,
     LiteralSummary,
+    Template,
 }
 
 impl InferredExpression {
@@ -139,6 +152,7 @@ impl InferredExpression {
                             | Literal::Number(NumberLiteral::Recovery(_))
                     )
             ),
+            Self::Template => matches!(expression.kind, ExpressionKind::Template(_)),
         }
     }
 }

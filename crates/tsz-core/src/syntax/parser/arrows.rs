@@ -1,5 +1,5 @@
 use super::Parser;
-use crate::syntax::{ArrowBody, Expression, ExpressionKind, TokenKind, TypeNode, TypeNodeKind};
+use crate::syntax::{ArrowBody, TokenKind, TypeNode, TypeNodeKind};
 
 #[derive(Clone, Copy)]
 pub(super) enum ParenthesizedArrowToken {
@@ -45,11 +45,7 @@ impl Parser<'_> {
         let expression = if token.kind.is_identifier() {
             self.parse_primary_expression()
         } else {
-            Expression {
-                id: self.alloc_node(),
-                span: token.span,
-                kind: ExpressionKind::Missing,
-            }
+            self.missing_expression(token.span)
         };
         (ArrowBody::Expression(Box::new(expression)), None)
     }

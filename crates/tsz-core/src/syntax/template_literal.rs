@@ -1,8 +1,6 @@
-use crate::source::Span;
-
 use super::descendant_walk::{ExpressionRoot, ExpressionTraversal, contains_matching_expression};
 use super::string_literal::{AuthoredEscape, decode_authored_escape};
-use super::{Expression, ExpressionKind, Literal};
+use super::{Expression, ExpressionKind, Literal, TokenKind};
 
 /// Syntax-owned spelling and template value for a complete, valid,
 /// no-substitution template literal.
@@ -15,21 +13,6 @@ pub struct NoSubstitutionTemplateLiteral {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ScannedTemplateLiteral {
-    pub span: Span,
-    raw: String,
-    cooked: TemplateCooked,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum TemplateCooked {
-    Valid(String),
-    InvalidEscape(TemplateEscapeDiagnostic),
-    Unrepresentable,
-    Unterminated,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TemplateEscapeDiagnostic {
     pub relative_start: u32,
     pub length: u32,
@@ -37,57 +20,37 @@ pub(super) struct TemplateEscapeDiagnostic {
     pub message: String,
 }
 
-impl ScannedTemplateLiteral {
-    pub(super) fn terminated(span: Span, raw: &str) -> Self {
-        let cooked = match cook(raw) {
-            Ok(cooked) => TemplateCooked::Valid(cooked),
-            Err(CookError::Diagnostic(diagnostic)) => TemplateCooked::InvalidEscape(diagnostic),
-            Err(CookError::Unrepresentable) => TemplateCooked::Unrepresentable,
-        };
-        Self {
-            span,
-            raw: raw.to_string(),
-            cooked,
-        }
-    }
-
-    pub(super) fn unterminated(span: Span, raw: &str) -> Self {
-        Self {
-            span,
-            raw: raw.to_string(),
-            cooked: TemplateCooked::Unterminated,
-        }
-    }
-
-    pub(super) fn syntax_literal(&self) -> Option<NoSubstitutionTemplateLiteral> {
-        let TemplateCooked::Valid(cooked) = &self.cooked else {
-            return None;
-        };
-        Some(NoSubstitutionTemplateLiteral {
-            raw: self.raw.clone(),
-            cooked: cooked.clone(),
-        })
-    }
-
-    pub(super) fn escape_diagnostic(&self) -> Option<TemplateEscapeDiagnostic> {
-        let TemplateCooked::InvalidEscape(diagnostic) = &self.cooked else {
-            return None;
-        };
-        Some(diagnostic.clone())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CookError {
+pub(super) enum CookError {
     Diagnostic(TemplateEscapeDiagnostic),
     Unrepresentable,
 }
 
-fn cook(raw: &str) -> Result<String, CookError> {
-    if raw.len() < 2 || !raw.starts_with('`') || !raw.ends_with('`') {
-        return Err(CookError::Unrepresentable);
+pub(super) fn scan_no_substitution_template(
+    raw: &str,
+) -> Result<NoSubstitutionTemplateLiteral, CookError> {
+    let body = raw
+        .strip_prefix('`')
+        .and_then(|raw| raw.strip_suffix('`'))
+        .ok_or(CookError::Unrepresentable)?;
+    Ok(NoSubstitutionTemplateLiteral {
+        raw: raw.to_string(),
+        cooked: cook(body)?,
+    })
+}
+
+pub(super) fn scan_template_chunk(raw: &str, kind: TokenKind) -> Result<String, CookError> {
+    let body = match kind {
+        TokenKind::TemplateHead => raw.strip_prefix('`').and_then(|raw| raw.strip_suffix("${")),
+        TokenKind::TemplateMiddle => raw.strip_prefix('}').and_then(|raw| raw.strip_suffix("${")),
+        TokenKind::TemplateTail => raw.strip_prefix('}').and_then(|raw| raw.strip_suffix('`')),
+        _ => None,
     }
-    let body = &raw[1..raw.len() - 1];
+    .ok_or(CookError::Unrepresentable)?;
+    cook(body)
+}
+
+fn cook(body: &str) -> Result<String, CookError> {
     let bytes = body.as_bytes();
     let mut cooked = String::with_capacity(body.len());
     let mut offset = 0;
@@ -227,7 +190,7 @@ pub(crate) fn expression_contains_no_substitution_template(expression: &Expressi
 const fn is_template_literal(expression: &Expression) -> bool {
     matches!(
         &expression.kind,
-        ExpressionKind::Literal(Literal::NoSubstitutionTemplate(_))
+        ExpressionKind::Literal(Literal::NoSubstitutionTemplate(_)) | ExpressionKind::Template(_)
     )
 }
 

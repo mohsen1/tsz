@@ -5,7 +5,7 @@ fn typed_region_reason_does_not_poison_a_sibling_statement() {
     let file = program_file(
         0,
         "mixed.ts",
-        "const gap = `head${\"value\"}tail`; const sibling: string = missingOwned;",
+        "const gap = (null as any)`head${\"value\"}tail`; const sibling: string = missingOwned;",
     );
     let analysis = default_analysis(&file);
     let [gap, sibling] = file.syntax.statements.as_slice() else {
@@ -50,7 +50,7 @@ fn typed_region_reason_does_not_poison_a_sibling_statement() {
 fn nested_parser_recovery_owns_the_smallest_statement() {
     let source = concat!(
         "function wrapper() {\n",
-        "  const gap: string = `head${\"value\"}tail`;\n",
+        "  const gap: string = (null as any)`head${\"value\"}tail`;\n",
         "  const kept: MissingInside = 1;\n",
         "}\n",
     );
@@ -60,8 +60,17 @@ fn nested_parser_recovery_owns_the_smallest_statement() {
     };
     let gap = &function.body[0];
     let kept = function.body.last().expect("kept nested statement");
+    let recovery_facts = file.syntax.parser_recovery_facts();
+    assert_eq!(
+        recovery_facts
+            .iter()
+            .filter(|fact| fact.kind == ParserRecoveryKind::Template)
+            .count(),
+        1,
+        "facts={recovery_facts:#?}",
+    );
     assert!(
-        file.syntax.parser_recovery_facts().iter().all(|fact| {
+        recovery_facts.iter().all(|fact| {
             fact.owner.root_statement == file.syntax.statements[0].id
                 && function
                     .body
@@ -70,8 +79,7 @@ fn nested_parser_recovery_owns_the_smallest_statement() {
                     .any(|statement| statement.id == fact.owner.statement)
                 && fact.recovery_extent.end <= kept.span.start
         }),
-        "gap={gap:#?}, kept={kept:#?}, facts={:#?}",
-        file.syntax.parser_recovery_facts(),
+        "gap={gap:#?}, kept={kept:#?}, facts={recovery_facts:#?}",
     );
     let analysis = default_analysis(&file);
     assert!(
@@ -412,7 +420,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
 fn flow_contained_recovery_fragments_allow_name_only_descendant_discovery() {
     let source = concat!(
         "function shell(value:string|number){\n",
-        "  if(MissingBefore&&`head${\"gap\"}tail`&&MissingAfter){\n",
+        "  if(MissingBefore&&(null as any)`head${\"gap\"}tail`&&MissingAfter){\n",
         "    MissingThen;\n",
         "  }else{MissingElse;}\n",
         "}\n",
@@ -476,8 +484,8 @@ fn flow_contained_recovery_fragments_allow_name_only_descendant_discovery() {
 #[test]
 fn declaration_nonclaims_follow_direct_and_return_value_owners() {
     for (path, body) in [
-        ("condition.ts", "if (`head${\"gap\"}tail`) {}"),
-        ("expression.ts", "`head${\"gap\"}tail`;"),
+        ("condition.ts", "if ((null as any)`head${\"gap\"}tail`) {}"),
+        ("expression.ts", "(null as any)`head${\"gap\"}tail`;"),
     ] {
         let source = format!(
             "function shell(value: string | number) {{\n  const before: string = value;\n  {body}\n}}\n"
@@ -501,22 +509,22 @@ fn declaration_nonclaims_follow_direct_and_return_value_owners() {
     for (path, source, name) in [
         (
             "direct.ts",
-            "const direct = `head${\"gap\"}tail`;",
+            "const direct = (null as any)`head${\"gap\"}tail`;",
             "direct",
         ),
         (
             "return.ts",
-            "function returned() { return `head${\"gap\"}tail`; }",
+            "function returned() { return (null as any)`head${\"gap\"}tail`; }",
             "returned",
         ),
         (
             "arrow.ts",
-            "const arrow = () => { return `head${\"gap\"}tail`; };",
+            "const arrow = () => { return (null as any)`head${\"gap\"}tail`; };",
             "arrow",
         ),
         (
             "class.ts",
-            "class Holder { method() { return `head${\"gap\"}tail`; } }",
+            "class Holder { method() { return (null as any)`head${\"gap\"}tail`; } }",
             "Holder",
         ),
     ] {
@@ -693,7 +701,7 @@ fn module_local_declaration_groups_inherit_one_typed_peer_nonclaim() {
         concat!(
             "export {}; ",
             "function shared(value: string): string; ",
-            "function shared(value: string) { return `head${\"value\"}tail`; }",
+            "function shared(value: string) { return (null as any)`head${\"value\"}tail`; }",
         ),
     );
     let analysis = CapabilityAnalysis::derive(
@@ -733,7 +741,7 @@ fn global_declaration_groups_inherit_nested_declaration_model_nonclaims() {
     let implementation = program_file(
         1,
         "gap.ts",
-        "function shared(value: string) { return `head${\"value\"}tail`; }",
+        "function shared(value: string) { return (null as any)`head${\"value\"}tail`; }",
     );
     let files = [declared, implementation];
     let analysis = CapabilityAnalysis::derive(

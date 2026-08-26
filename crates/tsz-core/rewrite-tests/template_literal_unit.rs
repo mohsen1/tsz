@@ -1,9 +1,8 @@
 use super::*;
-use crate::source::FileId;
 
 fn cooked(raw: &str) -> Option<String> {
-    ScannedTemplateLiteral::terminated(Span::new(FileId(0), 0, raw.len()), raw)
-        .syntax_literal()
+    scan_no_substitution_template(raw)
+        .ok()
         .map(|literal| literal.cooked)
 }
 
@@ -80,10 +79,9 @@ fn shared_decoder_keeps_template_specific_diagnostic_spans_and_messages() {
     ];
 
     for (raw, code, start, length, message) in cases {
-        let scanned = ScannedTemplateLiteral::terminated(Span::new(FileId(0), 0, raw.len()), raw);
-        let diagnostic = scanned
-            .escape_diagnostic()
-            .unwrap_or_else(|| panic!("expected an escape diagnostic for {raw}"));
+        let Err(CookError::Diagnostic(diagnostic)) = scan_no_substitution_template(raw) else {
+            panic!("expected an escape diagnostic for {raw}");
+        };
         assert_eq!(
             (
                 diagnostic.code,

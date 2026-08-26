@@ -50,6 +50,7 @@ pub(crate) enum SourceSyntaxFact {
     JavaScriptJSDocCast(NodeId, JavaScriptJSDocCastKind),
     LiteralBoundary(AuthoredLiteralKind, LiteralSyntaxBoundary),
     ModuleExport,
+    TemplateExpression,
     TemplateExpressionIdentifier,
     UnsignedRightShiftAssignmentRecovery,
     UnsignedRightShiftOperandRecovery,
@@ -85,7 +86,6 @@ pub(crate) struct AuthoredLiteralFact {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AuthoredLiteralKind {
-    Template,
     RegularExpression,
     NumericRecovery,
     NumericSeparator,
@@ -1220,6 +1220,18 @@ pub struct Expression {
 }
 
 #[derive(Debug, Clone)]
+pub struct TemplateExpression {
+    pub head: String,
+    pub spans: Vec<TemplateSpan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TemplateSpan {
+    pub expression: Expression,
+    pub literal: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum ExpressionKind {
     Identifier {
         name: String,
@@ -1228,6 +1240,7 @@ pub enum ExpressionKind {
     },
     This,
     Literal(Literal),
+    Template(TemplateExpression),
     RegularExpression(RegularExpressionLiteral),
     Object(Vec<ObjectProperty>),
     Array(Vec<Expression>),
