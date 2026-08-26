@@ -380,22 +380,34 @@ impl Checker<'_> {
         overload: &ClassMember,
         implementation: &ClassMember,
     ) -> bool {
-        let overload_scope = self.program.files[file.0 as usize]
-            .bindings
-            .scope_for_node
-            .get(&overload.id)
-            .copied();
-        let implementation_scope = self.program.files[file.0 as usize]
-            .bindings
-            .scope_for_node
-            .get(&implementation.id)
-            .copied();
-        let (Some(overload_scope), Some(implementation_scope)) =
-            (overload_scope, implementation_scope)
+        let Completion::Complete(overload_signature) =
+            self.class_member_overload_signature(file, overload, self.store.builtins.any)
         else {
             return false;
         };
-        let (overload_parameters, overload_return) = match &overload.kind {
+        let Completion::Complete(implementation_signature) =
+            self.class_member_overload_signature(file, implementation, self.store.builtins.void)
+        else {
+            return false;
+        };
+        self.signatures_are_compatibly_modeled(&implementation_signature, &overload_signature)
+    }
+
+    fn class_member_overload_signature(
+        &mut self,
+        file: FileId,
+        member: &ClassMember,
+        missing_method_return: TypeId,
+    ) -> Completion<Signature> {
+        let Some(scope) = self.program.files[file.0 as usize]
+            .bindings
+            .scope_for_node
+            .get(&member.id)
+            .copied()
+        else {
+            return Completion::Deferred;
+        };
+        let (parameters, return_type) = match &member.kind {
             ClassMemberKind::Constructor { parameters, .. } => {
                 (parameters.as_slice(), self.store.builtins.void)
             }
@@ -405,62 +417,24 @@ impl Checker<'_> {
                 ..
             } => (
                 parameters.as_slice(),
-                return_type
-                    .as_ref()
-                    .map_or(self.store.builtins.any, |node| {
-                        self.resolve_type_node(file, overload_scope, node, &HashMap::new())
-                    }),
+                return_type.as_ref().map_or(missing_method_return, |node| {
+                    self.resolve_type_node(file, scope, node, &HashMap::new())
+                }),
             ),
-            ClassMemberKind::Property { .. } => return false,
+            ClassMemberKind::Property { .. } => return Completion::Deferred,
         };
-        let (implementation_parameters, implementation_return) = match &implementation.kind {
-            ClassMemberKind::Constructor { parameters, .. } => {
-                (parameters.as_slice(), self.store.builtins.void)
-            }
-            ClassMemberKind::Method {
-                parameters,
-                return_type,
-                ..
-            } => (
-                parameters.as_slice(),
-                return_type
-                    .as_ref()
-                    .map_or(self.store.builtins.void, |node| {
-                        self.resolve_type_node(file, implementation_scope, node, &HashMap::new())
-                    }),
-            ),
-            ClassMemberKind::Property { .. } => return false,
-        };
-        let Completion::Complete(overload_parameters) = self.anonymous_signature_parameters(
+        let parameters = completed!(self.anonymous_signature_parameters(
             file,
-            overload_scope,
-            overload_parameters,
+            scope,
+            parameters,
             &HashMap::new(),
-        ) else {
-            return false;
-        };
-        let Completion::Complete(implementation_parameters) = self.anonymous_signature_parameters(
-            file,
-            implementation_scope,
-            implementation_parameters,
-            &HashMap::new(),
-        ) else {
-            return false;
-        };
-        self.signatures_are_compatibly_modeled(
-            &Signature {
-                generic_declaration: None,
-                untyped_javascript: false,
-                parameters: implementation_parameters,
-                return_type: implementation_return,
-            },
-            &Signature {
-                generic_declaration: None,
-                untyped_javascript: false,
-                parameters: overload_parameters,
-                return_type: overload_return,
-            },
-        )
+        ));
+        Completion::Complete(Signature {
+            generic_declaration: None,
+            untyped_javascript: false,
+            parameters,
+            return_type,
+        })
     }
 
     fn signatures_are_compatibly_modeled(
@@ -659,7 +633,7 @@ impl Checker<'_> {
                 }
             }
             resolved.push(ParameterType {
-                name: parameter.name.clone(),
+                name: Some(parameter.name.clone()),
                 ty,
                 optional: parameter.optional || parameter.initializer.is_some(),
                 rest: parameter.rest,
@@ -819,12 +793,13 @@ impl Checker<'_> {
         }
         if let Some(annotation) = &parameter.annotation {
             let type_parameters = self.enclosing_function_type_parameters(file, scope);
-            return Completion::Complete(self.resolve_type_node(
-                file,
-                scope,
-                annotation,
-                &type_parameters,
-            ));
+            let mut ty = self.resolve_type_node(file, scope, annotation, &type_parameters);
+            if parameter.optional && self.options.effective_strict_null_checks() {
+                ty = self
+                    .store
+                    .union([ty, self.store.builtins.undefined], UnionPolicy::Canonical);
+            }
+            return Completion::Complete(ty);
         }
         parameter.initializer.as_ref().map_or(
             Completion::Complete(self.store.builtins.any),
@@ -881,7 +856,7 @@ impl Checker<'_> {
                 self.store.builtins.any
             };
             resolved.push(ParameterType {
-                name: parameter.name.clone(),
+                name: Some(parameter.name.clone()),
                 ty,
                 optional: parameter.optional || parameter.initializer.is_some(),
                 rest: parameter.rest,
@@ -913,7 +888,7 @@ impl Checker<'_> {
                 self.store.builtins.any
             };
             parameters.push(ParameterType {
-                name: parameter.name.clone(),
+                name: Some(parameter.name.clone()),
                 ty,
                 optional: parameter.optional || parameter.initializer.is_some(),
                 rest: parameter.rest,
@@ -984,11 +959,7 @@ impl Checker<'_> {
         let mut type_parameters = HashMap::new();
         let mut seen = HashSet::new();
         for (index, parameter) in declaration.type_parameters.iter().enumerate() {
-            let ty = self.store.intern(TypeKind::TypeParameter {
-                declaration: id,
-                index: index as u32,
-                name: parameter.name.clone(),
-            });
+            let ty = self.store.type_parameter(id, index as u32, &parameter.name);
             if seen.insert(parameter.name.as_str()) {
                 type_parameters.insert(parameter.name.clone(), ty);
             }

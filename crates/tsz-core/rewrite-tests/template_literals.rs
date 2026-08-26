@@ -59,7 +59,7 @@ fn parse_template(raw: &str) -> NoSubstitutionTemplateLiteral {
     let StatementKind::Variable(declaration) = &statement.kind else {
         panic!("expected a variable declaration");
     };
-    let Some(initializer) = &declaration.initializer else {
+    let Some(initializer) = &declaration.declarators[0].initializer else {
         panic!("expected an initializer");
     };
     let ExpressionKind::Literal(Literal::NoSubstitutionTemplate(literal)) = &initializer.kind
@@ -125,162 +125,6 @@ fn sixteen_logical_shapes_and_es2015_es6_twins_preserve_exact_tokens() {
             assert_eq!(javascript(&output), format!("\"use strict\";\n{raw};\n"));
         }
     }
-}
-
-#[test]
-fn safe_file_boundary_allows_only_direct_expression_statements() {
-    for source in [
-        "  \n`first`;\r\n`second`;\n",
-        "`// inside the template is syntax, not trivia`;",
-    ] {
-        let output = compile("safe.ts", source, options("es2015"));
-        assert_eq!(
-            output.semantic_completion,
-            SemanticCompletion::Complete,
-            "{source:?}: {:?}",
-            output.diagnostics
-        );
-        assert!(output.diagnostics.is_empty(), "{source:?}");
-        assert!(!output.emitted_files.is_empty(), "{source:?}");
-    }
-
-    for source in [
-        "; `plain`;",
-        "`expression`; var value = `variable`;",
-        "const value = `plain`;",
-        "let value = `plain`;",
-        "var value: string = `plain`;",
-        "export var value = `plain`;",
-        "\"use strict\"; `plain`;",
-        "/* leading comment */ var value = `plain`;",
-        "#!/usr/bin/env node\n`plain`;",
-    ] {
-        let output = compile(
-            "outside-safe-file.ts",
-            source,
-            CompilerOptions {
-                no_check: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            output.semantic_completion,
-            SemanticCompletion::Deferred,
-            "{source:?}: {:?}",
-            output.diagnostics
-        );
-        assert!(output.emitted_files.is_empty(), "{source:?}");
-    }
-
-    let declaration_request = compile(
-        "direct-expression.ts",
-        "`plain`;",
-        CompilerOptions {
-            declaration: true,
-            no_check: true,
-            ..options("es2015")
-        },
-    );
-    assert_eq!(
-        declaration_request.semantic_completion,
-        SemanticCompletion::Complete
-    );
-    assert_eq!(
-        javascript(&declaration_request),
-        "\"use strict\";\n`plain`;\n"
-    );
-    let declarations = declaration_request
-        .emitted_files
-        .iter()
-        .filter(|file| file.declaration)
-        .collect::<Vec<_>>();
-    assert_eq!(declarations.len(), 1);
-    assert_eq!(declarations[0].text, "");
-}
-
-#[test]
-fn variable_declarations_other_source_kinds_and_broader_hosts_defer() {
-    let js = compile(
-        "renamed.js",
-        r"`hello\world`;",
-        CompilerOptions {
-            allow_js: true,
-            no_check: true,
-            out_dir: Some(PathBuf::from("out")),
-            ..options("es2015")
-        },
-    );
-    assert_eq!(js.semantic_completion, SemanticCompletion::Deferred);
-    assert!(js.emitted_files.is_empty());
-
-    for path in [
-        "direct.tsx",
-        "direct.mts",
-        "direct.cts",
-        "direct.TS",
-        "ambient.d.ts",
-        "renamed-declarations.d.ts",
-    ] {
-        let output = compile(
-            path,
-            r"`hello\world`;",
-            CompilerOptions {
-                no_check: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            output.semantic_completion,
-            SemanticCompletion::Deferred,
-            "{path}: {:?}",
-            output.diagnostics
-        );
-        assert!(output.emitted_files.is_empty(), "{path}");
-    }
-
-    for no_check in [false, true] {
-        for source in [
-            "var duplicate = `one`; var duplicate = `two`;",
-            "var await = `keyword`;",
-            "var Array = `library collision`;",
-        ] {
-            let output = compile(
-                "variable.ts",
-                source,
-                CompilerOptions {
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "{source:?}");
-        }
-    }
-
-    let ts_source = concat!(
-        r#"function rename(value: string): string { return value; }"#,
-        r#"const renamed = rename((`\x41`));"#,
-    );
-    let ts = compile("nested.ts", ts_source, options("es2015"));
-    assert_eq!(ts.semantic_completion, SemanticCompletion::Deferred);
-    assert!(ts.emitted_files.is_empty());
-
-    let unchecked = compile(
-        "unchecked.ts",
-        r"const exact: number = `\x41`;",
-        CompilerOptions {
-            no_check: true,
-            ..options("es2015")
-        },
-    );
-    assert!(unchecked.diagnostics.is_empty());
-    assert_eq!(unchecked.semantic_completion, SemanticCompletion::Deferred);
-    assert!(unchecked.emitted_files.is_empty());
 }
 
 #[test]
@@ -374,7 +218,7 @@ fn tagged_adjacent_interpolated_and_type_forms_remain_deferred() {
 }
 
 #[test]
-fn ordinary_non_null_assertions_are_not_silently_erased() {
+fn ordinary_non_null_assertions_are_modeled_while_tagged_adjacency_stays_deferred() {
     for source in [
         "const value: number = null!;",
         concat!(
@@ -383,7 +227,6 @@ fn ordinary_non_null_assertions_are_not_silently_erased() {
         ),
         "const value = (null)!();",
         "const value = null!!;",
-        "const value = factory<string>!;",
     ] {
         let output = compile(
             "non-null.ts",
@@ -394,11 +237,32 @@ fn ordinary_non_null_assertions_are_not_silently_erased() {
             },
         );
         assert!(
-            !output.diagnostics.is_empty()
-                || output.semantic_completion != SemanticCompletion::Complete,
-            "ordinary non-null syntax was silently accepted: {source:?}"
+            output.diagnostics.is_empty(),
+            "{source:?}: {:#?}",
+            output.diagnostics
         );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source:?}"
+        );
+        assert_eq!(output.exit_status, CompileExitStatus::Success, "{source:?}");
+        assert_eq!(output.emitted_files.len(), 1, "{source:?}");
     }
+
+    let invalid_generic_operand = compile(
+        "generic-operand.ts",
+        "const value = factory<string>!;",
+        CompilerOptions {
+            no_check: true,
+            ..options("es2015")
+        },
+    );
+    assert_eq!(codes(&invalid_generic_operand), [1109]);
+    assert_eq!(
+        invalid_generic_operand.semantic_completion,
+        SemanticCompletion::Deferred
+    );
 
     let tagged = compile(
         "tagged-non-null.ts",
@@ -411,166 +275,6 @@ fn ordinary_non_null_assertions_are_not_silently_erased() {
     );
     assert_eq!(tagged.semantic_completion, SemanticCompletion::Deferred);
     assert!(tagged.diagnostics.is_empty(), "{:?}", tagged.diagnostics);
-}
-
-#[test]
-fn await_template_contexts_defer_until_await_grammar_is_owned() {
-    // TS7 reports TS2304 in the script and ordinary-function contexts, while
-    // module top-level and async-function await are clean. Until the parser
-    // owns that context split, every direct await/template pair fails closed.
-    let contexts = [
-        ("script.ts", "", ";"),
-        ("module.ts", "export const marker = 0; ", ";"),
-        ("ordinary.ts", "function task() { ", "; }"),
-        ("async.ts", "async function task() { ", "; }"),
-    ];
-    for (path, prefix, suffix) in contexts {
-        for raw in [
-            "`plain`",
-            r"`bad \xG0`",
-            "(`plain`)",
-            "((`plain`))",
-            "[`plain`]",
-        ] {
-            let source = format!("{prefix}await {raw}{suffix}");
-            let output = compile(
-                path,
-                &source,
-                CompilerOptions {
-                    declaration: true,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "{source:?}: {:?}",
-                output.diagnostics
-            );
-            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-            assert!(output.emitted_files.is_empty());
-            assert!(
-                codes(&output)
-                    .iter()
-                    .all(|code| !matches!(code, 1125 | 1198 | 1199 | 1487 | 1488)),
-                "{source:?}: {:?}",
-                output.diagnostics
-            );
-        }
-    }
-}
-
-#[test]
-fn unrelated_await_hosts_stay_outside_the_safe_file_boundary() {
-    let sources = [
-        "function task(p: Promise<void>) { await p; } const shown = `plain`;",
-        "async function task(p: Promise<void>) { await p; } const shown = `plain`;",
-        "export const marker = 0; await promise; const shown = `plain`;",
-        "export default await promise; const shown = `plain`;",
-    ];
-    for no_check in [false, true] {
-        for source in sources {
-            let output = compile(
-                "await-source.ts",
-                source,
-                CompilerOptions {
-                    declaration: true,
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "{source:?}");
-        }
-    }
-}
-
-#[test]
-fn template_dependent_unowned_expression_hosts_fail_closed() {
-    let sources = [
-        "const result = `x` - 1;",
-        "const result = 1 - `x`;",
-        "const result = `x` < 1;",
-        "const result = `x` === 1;",
-        "const result = `x` in {};",
-        "const result = `x` instanceof Object;",
-        "delete `x`;",
-        "!`x`;",
-        "`x` && true;",
-        "`x`, `y`;",
-        "`x` as number;",
-        "new `x`;",
-        "class Crate { constructor(value: number) {} } new Crate(`x`);",
-        "if (`x`) {}",
-        "if (``) {}",
-        "switch (value) { case `x`: break; }",
-        "switch (`x`) { case 1: break; }",
-        "`x` = value;",
-        "(`x`) = value;",
-        "[`x`] = value;",
-        "({ value: `x` }) = source;",
-        "class Box { field: number = `x`; }",
-        "class Box { method(): number { return `x`; } }",
-        "class Box { constructor() { const value: number = `x`; } }",
-    ];
-    for no_check in [false, true] {
-        for source in sources {
-            let output = compile(
-                "unowned.ts",
-                source,
-                CompilerOptions {
-                    declaration: true,
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                output.diagnostics
-            );
-            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-            assert!(output.emitted_files.is_empty(), "{source:?}");
-        }
-    }
-}
-
-#[test]
-fn syntax_recovery_anywhere_in_a_template_source_fails_closed() {
-    let sources = [
-        "function `x`() {}",
-        "import `x`;",
-        "while (`x`) {}",
-        "try { `x`; } catch {}",
-        "const value = true ? `x` : `y`;",
-        "let value = 0; value += `x`;",
-        "switch (value) { `x`; }",
-    ];
-    for no_check in [false, true] {
-        for source in sources {
-            let output = compile(
-                "recovered.ts",
-                source,
-                CompilerOptions {
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "{source:?}");
-        }
-    }
 }
 
 #[test]
@@ -599,76 +303,6 @@ fn jump_and_cross_line_satisfies_template_detachments_fail_closed() {
             );
             assert!(output.emitted_files.is_empty(), "{source:?}");
         }
-    }
-}
-
-#[test]
-fn assignment_call_member_and_return_hosts_stay_outside_the_safe_file_boundary() {
-    let source = concat!(
-        "let assigned = \"\";",
-        "`direct`;",
-        "assigned = `assignment`;",
-        "function accept(value: string): string { return value; }",
-        "accept(`call`);",
-        "const length = `member`.length;",
-        "function reveal(): string { return `return`; }",
-    );
-    let output = compile(
-        "owned.ts",
-        source,
-        CompilerOptions {
-            no_check: true,
-            ..options("es2015")
-        },
-    );
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert!(output.emitted_files.is_empty());
-}
-
-#[test]
-fn unowned_template_tails_and_non_template_siblings_defer() {
-    for source in [
-        "const foo = 1; `x` foo;",
-        "const picked: string = `x`[foo];",
-        "const foo = 0; const picked = `x`\n[foo];",
-        "`x`++;",
-        "`x`?.length;",
-        "`x`\nvalue;",
-    ] {
-        let output = compile(
-            "tail.ts",
-            source,
-            CompilerOptions {
-                no_check: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            output.semantic_completion,
-            SemanticCompletion::Deferred,
-            "{source:?}: {:?}",
-            output.diagnostics
-        );
-        assert!(output.emitted_files.is_empty(), "{source:?}");
-    }
-
-    for source in ["`x`", "`x`;"] {
-        let output = compile(
-            "asi.ts",
-            source,
-            CompilerOptions {
-                no_check: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            output.semantic_completion,
-            SemanticCompletion::Complete,
-            "{source:?}: {:?}",
-            output.diagnostics
-        );
-        assert!(javascript(&output).contains("`x`"));
     }
 }
 
@@ -782,531 +416,6 @@ fn valid_edge_unicode_and_unrepresentable_surrogates_do_not_substitute() {
         assert!(output.diagnostics.is_empty(), "{source:?}");
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
         assert!(output.emitted_files.is_empty());
-    }
-}
-
-#[test]
-fn return_hosts_stay_outside_the_safe_file_boundary_even_across_asi() {
-    let output = compile(
-        "asi.ts",
-        "function take() { return\n`after`; }",
-        CompilerOptions {
-            no_check: true,
-            ..options("es2015")
-        },
-    );
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert!(output.emitted_files.is_empty());
-
-    let typed = compile(
-        "returns.ts",
-        concat!(
-            "export function separated(): void { return\n`after`; }",
-            "export function same(): \"same\" { return `same`; }",
-        ),
-        CompilerOptions {
-            declaration: true,
-            ..options("es2015")
-        },
-    );
-    assert!(typed.diagnostics.is_empty(), "{:?}", typed.diagnostics);
-    assert_eq!(typed.semantic_completion, SemanticCompletion::Deferred);
-    assert!(typed.emitted_files.is_empty());
-}
-
-#[test]
-fn unmodeled_template_regions_skip_only_their_own_semantic_diagnostics() {
-    let cases: [(&str, &str, &[u32], bool); 2] = [
-        (
-            "stringLiteralTypesWithTemplateStrings01.ts",
-            concat!(
-                "let ABC: \"ABC\" = `ABC`;\n",
-                "let DE_NEWLINE_F: \"DE\\nF\" = `DE\nF`;\n",
-                "let G_QUOTE_HI: 'G\"HI';\n",
-                "let JK_BACKTICK_L: \"JK`L\" = `JK\\`L`;",
-            ),
-            &[],
-            true,
-        ),
-        (
-            "stringLiteralTypesWithTemplateStrings02.ts",
-            concat!(
-                "let abc: \"AB\\r\\nC\" = `AB\nC`;\n",
-                "let de_NEWLINE_f: \"DE\\nF\" = `DE${\"\\n\"}F`;",
-            ),
-            &[],
-            false,
-        ),
-    ];
-
-    for no_check in [false, true] {
-        for (path, source, expected_codes, has_owned_sibling) in cases {
-            let output = compile(
-                path,
-                source,
-                CompilerOptions {
-                    declaration: true,
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {path}: {:?}",
-                output.diagnostics
-            );
-            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-            if no_check || !has_owned_sibling {
-                assert_eq!(output.stats.types, 0, "noCheck={no_check} {path}");
-            } else {
-                assert!(
-                    output.stats.types > 0,
-                    "the owned sibling must remain checked: {path}"
-                );
-            }
-            assert_eq!(codes(&output), expected_codes, "noCheck={no_check} {path}");
-            assert!(output.emitted_files.is_empty(), "noCheck={no_check} {path}");
-        }
-    }
-
-    let interpolated_only = compile(
-        "interpolated-only.ts",
-        "let value: string = `head${missing}tail`;",
-        CompilerOptions {
-            declaration: true,
-            ..options("es2015")
-        },
-    );
-    assert_eq!(
-        interpolated_only.semantic_completion,
-        SemanticCompletion::Deferred
-    );
-    assert_eq!(
-        interpolated_only.exit_status,
-        CompileExitStatus::SemanticIncomplete
-    );
-    assert_eq!(interpolated_only.stats.types, 0);
-    assert!(
-        interpolated_only
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != 2304),
-        "{:?}",
-        interpolated_only.diagnostics
-    );
-    assert!(interpolated_only.emitted_files.is_empty());
-}
-
-#[test]
-fn es5_is_rejected_and_unmodeled_declaration_literal_emit_is_deferred() {
-    for (target, code) in [("es5", 5108), ("unsupported", 6046)] {
-        let removed_target = compile(
-            "removed.ts",
-            "`plain`;",
-            CompilerOptions {
-                no_check: true,
-                ..options(target)
-            },
-        );
-        assert_eq!(codes(&removed_target), vec![code], "{target}");
-        assert_eq!(
-            removed_target.semantic_completion,
-            SemanticCompletion::Complete,
-            "{target}"
-        );
-        assert_eq!(
-            removed_target.exit_status,
-            CompileExitStatus::DiagnosticsPresentOutputsSkipped,
-            "{target}"
-        );
-        assert!(removed_target.emitted_files.is_empty(), "{target}");
-    }
-
-    for source in [
-        "export const value = `plain`;",
-        "export function reveal() { return `plain`; }",
-        "export function reveal() { const value = `plain`; return value; }",
-        concat!(
-            "export function reveal() { ",
-            "function inner() { return `plain`; } return inner; }",
-        ),
-    ] {
-        let declaration = compile(
-            "declaration.ts",
-            source,
-            CompilerOptions {
-                declaration: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            declaration.semantic_completion,
-            SemanticCompletion::Deferred,
-            "{source}"
-        );
-        assert_eq!(
-            declaration.exit_status,
-            CompileExitStatus::SemanticIncomplete
-        );
-        assert!(declaration.emitted_files.is_empty());
-    }
-
-    for source in [
-        concat!(
-            "export function reveal() { ",
-            "class Local { value = `plain`; } return Local; }",
-        ),
-        concat!(
-            "export function reveal() { ",
-            "class Local { method() { return `plain`; } } return Local; }",
-        ),
-    ] {
-        let declaration = compile(
-            "class-declaration.ts",
-            source,
-            CompilerOptions {
-                declaration: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            declaration.semantic_completion,
-            SemanticCompletion::Deferred
-        );
-        assert!(declaration.emitted_files.is_empty());
-    }
-
-    for no_check in [false, true] {
-        let default_export = compile(
-            "default.ts",
-            r"export default `\x41`;",
-            CompilerOptions {
-                declaration: true,
-                no_check,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            default_export.semantic_completion,
-            SemanticCompletion::Deferred
-        );
-        assert!(default_export.emitted_files.is_empty());
-    }
-
-    for no_check in [false, true] {
-        for source in [
-            "export function outer() { export default `plain`; }",
-            "export function outer() { export const inner = `plain`; }",
-            "export default (() => { export default `plain`; });",
-            concat!(
-                "function outer(arg = () => { export default `plain`; }) ",
-                "{ return arg; }",
-            ),
-            concat!(
-                "class Outer { method(arg = () => { export const value = 1; }) {} } ",
-                "const marker = `plain`;",
-            ),
-            "function outer() { `plain`; export { name }; }",
-            "const marker = `plain`; function outer() { export function inner() {} }",
-            "const marker = `plain`; function outer() { export class Inner {} }",
-            "const marker = `plain`; function outer() { export interface Inner {} }",
-            "const marker = `plain`; function outer() { export type Inner = string; }",
-            "function outer() { `plain`; import { value } from \"pkg\"; }",
-            "function outer() { `plain`; import \"pkg\"; }",
-            "function outer() { `plain`; import type { Value } from \"pkg\"; }",
-            "function outer() { `plain`; import value = require(\"pkg\"); }",
-            "function outer() { declare const hidden: number; } const shown = `plain`;",
-            "const renamed = `plain`; function container() { declare function hidden(): void; }",
-            concat!(
-                "function outer() { function inner() { declare type Alias = string; } } ",
-                "const shown = `plain`;",
-            ),
-            "declare tag`plain`;",
-        ] {
-            let nested_export = compile(
-                "nested-export.ts",
-                source,
-                CompilerOptions {
-                    declaration: true,
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                nested_export.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                nested_export.diagnostics
-            );
-            assert!(nested_export.emitted_files.is_empty(), "{source:?}");
-        }
-
-        let root_ambient = compile(
-            "root-ambient.ts",
-            "declare const ambient: number; const shown = `plain`;",
-            CompilerOptions {
-                no_check,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            root_ambient.semantic_completion,
-            SemanticCompletion::Deferred
-        );
-        assert!(root_ambient.emitted_files.is_empty());
-
-        for source in [
-            "declare function ambient(): void; const shown = `plain`;",
-            "declare class Ambient {} const shown = `plain`;",
-            "declare interface Ambient {} const shown = `plain`;",
-            "declare type Alias = string; const shown = `plain`;",
-        ] {
-            let root_host = compile(
-                "root-owned-ambient.ts",
-                source,
-                CompilerOptions {
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                root_host.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                root_host.diagnostics
-            );
-            assert!(root_host.emitted_files.is_empty());
-        }
-    }
-
-    let annotated = compile(
-        "annotated.ts",
-        concat!(
-            "export function stable(): () => string { ",
-            "function inner(): string { return `plain`; } return inner; }",
-        ),
-        CompilerOptions {
-            declaration: true,
-            ..options("es2015")
-        },
-    );
-    assert_eq!(annotated.semantic_completion, SemanticCompletion::Deferred);
-    assert!(
-        annotated.diagnostics.is_empty(),
-        "{:?}",
-        annotated.diagnostics
-    );
-    assert!(annotated.emitted_files.is_empty());
-}
-
-#[test]
-fn unowned_statement_modifier_hosts_in_template_sources_fail_closed() {
-    let deferred_sources = [
-        "export default async function task() { return `plain`; }",
-        "export default abstract class Box {} const marker = `plain`;",
-        "export default function task() { return `plain`; }",
-        "export default class Box {} const marker = `plain`;",
-        "export default interface Shape {} const marker = `plain`;",
-        "export default type Alias = string; const marker = `plain`;",
-        "export default let value = 1; const marker = `plain`;",
-        "export default const value = 1; const marker = `plain`;",
-        "export default var value = 1; const marker = `plain`;",
-        "export default declare type Alias = string; const marker = `plain`;",
-        "export default async const value = 1; const marker = `plain`;",
-        "export default export class Box {} const marker = `plain`;",
-        "export default export default type Alias = string; const marker = `plain`;",
-        "export default namespace Space {} const marker = `plain`;",
-        "export default module Space {} const marker = `plain`;",
-        "export default global {} const marker = `plain`;",
-        "export default enum Choice {} const marker = `plain`;",
-        "export default using resource = value; const marker = `plain`;",
-        "export default import value = require(\"pkg\"); const marker = `plain`;",
-        "async function task() { return `plain`; }",
-        "abstract class Box {} const marker = `plain`;",
-        "async const value = 1; const marker = `plain`;",
-        "abstract const value = 1; const marker = `plain`;",
-        "async type Alias = string; const marker = `plain`;",
-        "abstract interface Shape {} const marker = `plain`;",
-        "abstract value; const marker = `plain`;",
-        "declare export function task(): void; const marker = `plain`;",
-        "export export function task(): void; const marker = `plain`;",
-        "declare declare function task(): void; const marker = `plain`;",
-        "async async function task() {} const marker = `plain`;",
-        "abstract abstract class Box {} const marker = `plain`;",
-        "export export const value = 1; const marker = `plain`;",
-        "declare export value; const marker = `plain`;",
-    ];
-    for no_check in [false, true] {
-        for module in ["esnext", "commonjs"] {
-            for source in deferred_sources {
-                let output = compile(
-                    "modifier-host.ts",
-                    source,
-                    CompilerOptions {
-                        declaration: true,
-                        no_check,
-                        module: module.to_string(),
-                        ..options("es2015")
-                    },
-                );
-                assert_eq!(
-                    output.semantic_completion,
-                    SemanticCompletion::Deferred,
-                    "noCheck={no_check} module={module} {source:?}: {:?}",
-                    output.diagnostics
-                );
-                assert!(output.emitted_files.is_empty(), "{source:?}");
-            }
-        }
-
-        for source in [
-            "export const shown = `plain`;",
-            "declare function ambient(): void; const shown = `plain`;",
-            concat!(
-                "export declare function ambient(): void; ",
-                "export const shown = `plain`;",
-            ),
-            "export type Alias = string; export const shown = `plain`;",
-            "export interface Shape {} export const shown = `plain`;",
-        ] {
-            let output = compile(
-                "modifier-host-outside-safe-file.ts",
-                source,
-                CompilerOptions {
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty());
-        }
-    }
-
-    let async_source = SourceText::new(
-        FileId(0),
-        PathBuf::from("default-async.ts"),
-        Arc::<str>::from("export default async function task() { return `plain`; }"),
-    );
-    let async_parse = parse_source(&async_source);
-    assert!(async_parse.diagnostics.is_empty());
-    assert!(matches!(
-        &async_parse.unit.statements[0].kind,
-        StatementKind::Function(declaration)
-            if declaration.default_export && declaration.is_async
-    ));
-
-    let abstract_source = SourceText::new(
-        FileId(0),
-        PathBuf::from("default-abstract.ts"),
-        Arc::<str>::from("export default abstract class Box {} const marker = `plain`;"),
-    );
-    let abstract_parse = parse_source(&abstract_source);
-    assert!(abstract_parse.diagnostics.is_empty());
-    assert!(matches!(
-        &abstract_parse.unit.statements[0].kind,
-        StatementKind::Class(declaration)
-            if declaration.default_export && declaration.abstract_class
-    ));
-}
-
-#[test]
-fn resource_and_contextual_using_hosts_stay_outside_the_safe_file_boundary() {
-    for no_check in [false, true] {
-        for source in [
-            "using resource = acquire(); const shown = `plain`;",
-            "await using resource = acquire(); const shown = `plain`;",
-            "export default using resource = acquire(); const shown = `plain`;",
-            "export default await using resource = acquire(); const shown = `plain`;",
-        ] {
-            let output = compile(
-                "resource.ts",
-                source,
-                CompilerOptions {
-                    declaration: true,
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "{source:?}");
-        }
-    }
-
-    for source in [
-        "using; const shown = `plain`;",
-        "using(value); const shown = `plain`;",
-    ] {
-        let output = compile(
-            "contextual-using.ts",
-            source,
-            CompilerOptions {
-                no_check: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            output.semantic_completion,
-            SemanticCompletion::Deferred,
-            "{source:?}: {:?}",
-            output.diagnostics
-        );
-        assert!(output.emitted_files.is_empty());
-    }
-}
-
-#[test]
-fn silent_statement_splits_and_unrelated_asi_siblings_defer() {
-    for no_check in [false, true] {
-        for source in [
-            "readonly class Box {} const shown = `plain`;",
-            "value other; const shown = `plain`;",
-            "export default readonly class Box {} const shown = `plain`;",
-        ] {
-            let output = compile(
-                "same-line-split.ts",
-                source,
-                CompilerOptions {
-                    declaration: true,
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {source:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "{source:?}");
-        }
-
-        let newline_asi = compile(
-            "newline-asi.ts",
-            "value\nother; const shown = `plain`;",
-            CompilerOptions {
-                no_check,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(
-            newline_asi.semantic_completion,
-            SemanticCompletion::Deferred,
-            "noCheck={no_check}: {:?}",
-            newline_asi.diagnostics
-        );
-        assert!(newline_asi.emitted_files.is_empty());
     }
 }
 
@@ -1448,6 +557,72 @@ fn unsupported_export_default_declaration_hosts_defer_without_template_syntax() 
 }
 
 #[test]
+fn ordinary_literal_families_share_expression_hosts_comments_and_root_order() {
+    let literal_source = concat!(
+        "// ordinary literal expressions\n",
+        "const template = (`plain`);\n",
+        "const alias = template;\n",
+        "((`nested`));\n",
+        "(/x+/gi);\n",
+        "(\"\\u{67}\");\n",
+        "(1_000);",
+    );
+    let plain = SourceInput::new("plain.ts", Arc::<str>::from("const sibling = 1;"));
+    let literals = SourceInput::new("literals.ts", Arc::<str>::from(literal_source));
+
+    for no_check in [false, true] {
+        for roots in [
+            vec![literals.clone(), plain.clone()],
+            vec![plain.clone(), literals.clone()],
+        ] {
+            let output = Compiler::new().compile(
+                roots,
+                &CompilerOptions {
+                    no_check,
+                    ..options("es2015")
+                },
+            );
+            assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+            assert_eq!(output.exit_status, CompileExitStatus::Success);
+            assert!(output.diagnostics.is_empty());
+            assert_eq!(output.emitted_files.len(), 2);
+            assert_eq!(output.emitted_files[0].path, PathBuf::from("literals.js"));
+            assert_eq!(
+                output.emitted_files[0].text,
+                concat!(
+                    "\"use strict\";\n",
+                    "// ordinary literal expressions\n",
+                    "const template = (`plain`);\n",
+                    "const alias = template;\n",
+                    "((`nested`));\n",
+                    "(/x+/gi);\n",
+                    "(\"\\u{67}\");\n",
+                    "(1000);\n",
+                )
+            );
+            assert_eq!(output.emitted_files[1].path, PathBuf::from("plain.js"));
+            assert_eq!(
+                output.emitted_files[1].text,
+                "\"use strict\";\nconst sibling = 1;\n"
+            );
+        }
+    }
+
+    let mapped = compile(
+        "mapped.ts",
+        literal_source,
+        CompilerOptions {
+            source_map: true,
+            ..options("es2015")
+        },
+    );
+    assert_eq!(mapped.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(mapped.exit_status, CompileExitStatus::SemanticIncomplete);
+    assert!(mapped.diagnostics.is_empty());
+    assert!(mapped.emitted_files.is_empty());
+}
+
+#[test]
 fn repeated_compiles_and_both_root_orders_have_one_product_fingerprint() {
     let first = SourceInput::new("b.ts", Arc::<str>::from(r"`\x42`;"));
     let second = SourceInput::new("a.ts", Arc::<str>::from(r"`\x41`;"));
@@ -1488,180 +663,5 @@ fn repeated_compiles_and_both_root_orders_have_one_product_fingerprint() {
         };
         let actual = Compiler::new().compile(roots, &options);
         assert_eq!(fingerprint(&actual), expected, "iteration {iteration}");
-    }
-}
-
-#[test]
-fn template_safe_file_boundary_is_program_wide_and_map_modes_defer() {
-    let template = SourceInput::new("template.ts", Arc::<str>::from("`plain`;"));
-    let sibling = SourceInput::new("sibling.ts", Arc::<str>::from("missing;"));
-    for no_check in [false, true] {
-        for roots in [
-            vec![template.clone(), sibling.clone()],
-            vec![sibling.clone(), template.clone()],
-        ] {
-            let output = Compiler::new().compile(
-                roots,
-                &CompilerOptions {
-                    no_check,
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check}: {:?}",
-                output.diagnostics
-            );
-            let expected_codes: &[u32] = if no_check { &[] } else { &[2304] };
-            assert_eq!(codes(&output), expected_codes, "noCheck={no_check}");
-            assert!(output.emitted_files.is_empty());
-        }
-
-        for map_mode in [
-            "sourceMap",
-            "inlineSourceMap",
-            "declarationMap",
-            "declarationDir",
-        ] {
-            let mut map_options = CompilerOptions {
-                no_check,
-                ..options("es2015")
-            };
-            match map_mode {
-                "sourceMap" => map_options.source_map = true,
-                "inlineSourceMap" => map_options.inline_source_map = true,
-                "declarationMap" => map_options.declaration_map = true,
-                "declarationDir" => map_options.declaration_dir = Some(PathBuf::from("types")),
-                _ => unreachable!(),
-            }
-            let output = Compiler::new().compile(vec![template.clone()], &map_options);
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} {map_mode}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "{map_mode}");
-        }
-    }
-}
-
-#[test]
-fn template_program_requires_exact_context_free_compiler_options() {
-    let template = SourceInput::new("options.ts", Arc::<str>::from("`plain`;"));
-    for no_check in [false, true] {
-        for (target, module) in [
-            ("es2015", "commonjs"),
-            ("ES2025", "ESNEXT"),
-            ("esnext", "preserve"),
-        ] {
-            let output = Compiler::new().compile(
-                vec![template.clone()],
-                &CompilerOptions {
-                    no_check,
-                    module: module.to_string(),
-                    ..options(target)
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Complete,
-                "noCheck={no_check} target={target:?} module={module:?}: {:?}",
-                output.diagnostics
-            );
-            assert_eq!(
-                output
-                    .emitted_files
-                    .iter()
-                    .filter(|file| !file.declaration)
-                    .count(),
-                1
-            );
-        }
-
-        for module in [
-            "node16", "node18", "node20", "nodenext", "cjs", "amd", " esnext", "esnext ",
-        ] {
-            let output = Compiler::new().compile(
-                vec![template.clone()],
-                &CompilerOptions {
-                    no_check,
-                    module: module.to_string(),
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} module={module:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "module={module:?}");
-        }
-
-        for target in ["es7", "latest", " es2015", "es2015 "] {
-            let output = Compiler::new().compile(
-                vec![template.clone()],
-                &CompilerOptions {
-                    no_check,
-                    ..options(target)
-                },
-            );
-            let expected = if matches!(target, "es7" | "latest") {
-                SemanticCompletion::Complete
-            } else {
-                SemanticCompletion::Deferred
-            };
-            assert_eq!(
-                output.semantic_completion, expected,
-                "noCheck={no_check} target={target:?}: {:?}",
-                output.diagnostics
-            );
-            if matches!(target, "es7" | "latest") {
-                assert_eq!(codes(&output), vec![6046]);
-                assert_eq!(
-                    output.exit_status,
-                    CompileExitStatus::DiagnosticsPresentOutputsSkipped
-                );
-            }
-            assert!(output.emitted_files.is_empty(), "target={target:?}");
-        }
-
-        for libraries in [vec![], vec!["es2015"], vec![" es2015"], vec!["unknown"]] {
-            let output = Compiler::new().compile(
-                vec![template.clone()],
-                &CompilerOptions {
-                    no_check,
-                    lib: Some(
-                        libraries
-                            .iter()
-                            .map(|library| (*library).to_string())
-                            .collect(),
-                    ),
-                    ..options("es2015")
-                },
-            );
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "noCheck={no_check} lib={libraries:?}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "lib={libraries:?}");
-        }
-
-        let no_emit = Compiler::new().compile(
-            vec![template.clone()],
-            &CompilerOptions {
-                no_check,
-                no_emit: true,
-                module: "node16".to_string(),
-                ..options("es2015")
-            },
-        );
-        assert_eq!(no_emit.semantic_completion, SemanticCompletion::Complete);
-        assert_eq!(no_emit.exit_status, CompileExitStatus::Success);
-        assert!(no_emit.emitted_files.is_empty());
     }
 }

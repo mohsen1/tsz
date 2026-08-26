@@ -59,18 +59,21 @@ fn assert_complete(output: &CompileOutput) {
 
 fn assert_incomplete(source: &str, no_check: bool, no_emit: bool) {
     let output = compile("case.ts", source, options("es2020", no_check, no_emit));
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        output.semantic_completion,
+        SemanticCompletion::Deferred,
+        "{source:?}: noCheck={no_check} noEmit={no_emit}"
+    );
     assert_eq!(
         output.stats.semantic_completion,
         SemanticCompletion::Deferred
     );
     assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert_eq!(
-        output.stats.types, 0,
+    assert!(
+        output.emitted_files.is_empty(),
         "{source:?}: {:?}",
-        output.diagnostics
+        output.emitted_files
     );
-    assert!(output.emitted_files.is_empty(), "{source:?}");
 }
 
 #[test]
@@ -258,7 +261,6 @@ fn property_type_and_trivia_member_hosts_fail_closed_before_semantics_or_emit() 
         "1_0value;",
         "1_0?.toString();",
         "1_0n;",
-        "// leading\n1_0;",
     ];
     for source in sources {
         for no_check in [false, true] {
@@ -273,7 +275,6 @@ fn property_type_and_trivia_member_hosts_fail_closed_before_semantics_or_emit() 
     assert!(service.quick_info("service.ts", 7).is_none());
     let output = service.compile();
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert_eq!(output.stats.types, 0);
 
     for source in ["const obj = { 1_0: 1 };", "const n = 1_0n;"] {
         let mut service = LanguageService::new(options("es2020", false, false));
@@ -281,7 +282,6 @@ fn property_type_and_trivia_member_hosts_fail_closed_before_semantics_or_emit() 
         assert!(service.quick_info("service.ts", 6).is_none(), "{source}");
         let output = service.compile();
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.stats.types, 0);
     }
 
     for roots in [
@@ -300,7 +300,9 @@ fn property_type_and_trivia_member_hosts_fail_closed_before_semantics_or_emit() 
             output.stats.types > 0,
             "the safe sibling remains independently checkable"
         );
-        assert!(output.emitted_files.is_empty());
+        assert_eq!(output.emitted_files.len(), 1);
+        assert_eq!(output.emitted_files[0].path, PathBuf::from("safe.js"));
+        assert_eq!(output.emitted_files[0].text, "\"use strict\";\n1000;\n");
     }
 }
 

@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 
 use crate::source::{NodeId, Span};
 use crate::syntax::{
-    ClassMember, ClassMemberKind, Expression, ExpressionKind, Parameter, ParameterNameKind,
-    ParserRecoveryFact, ParserRecoveryKind, Statement, StatementKind, SwitchClauseKind, TokenKind,
+    ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionEdge,
+    ExpressionKind, FunctionLikeBody, NestedStatement, ParameterNameKind, ParserRecoveryFact,
+    ParserRecoveryKind, Statement, StatementKind, TokenKind, walk_statement_list,
 };
 
 use super::{SemanticGap, SyntaxGap};
@@ -16,10 +17,9 @@ pub(super) enum FileBoundary {
     ClassProperty,
 }
 
-/// Computes immutable statement ownership for flow-sensitive type-of-reference
-/// work that the checker does not own yet. A region begins at an unsupported
-/// narrowing entry and covers the executable suffix of the same container.
-/// Function-like bodies are inventoried as fresh containers.
+/// Immutable ownership inventory for capability decisions. Statement-list
+/// state is folded in source order; each function, class, member, and
+/// function-like expression starts a fresh executable container.
 #[derive(Default)]
 pub(super) struct SemanticNodeInventory {
     pub(super) flow_regions: BTreeSet<NodeId>,
@@ -53,8 +53,32 @@ pub(super) fn semantic_node_inventory(
         javascript_jsdoc_casts,
         out: SemanticNodeInventory::default(),
     };
-    collector.visit_statement_list(statements, false);
+    walk_statement_list(&mut collector, &FlowContext::ROOT, statements);
     collector.out
+}
+
+#[derive(Clone, Copy)]
+struct FlowContext {
+    active: bool,
+    owners: (NodeId, NodeId),
+}
+
+impl FlowContext {
+    const ROOT: Self = Self::fresh(NodeId(0), false);
+
+    const fn owner(self, owner: NodeId) -> Self {
+        Self {
+            owners: (owner, owner),
+            ..self
+        }
+    }
+
+    const fn fresh(owner: NodeId, active: bool) -> Self {
+        Self {
+            active,
+            owners: (owner, owner),
+        }
+    }
 }
 
 struct FlowRegionCollector<'a> {
@@ -63,318 +87,232 @@ struct FlowRegionCollector<'a> {
     out: SemanticNodeInventory,
 }
 
-impl FlowRegionCollector<'_> {
-    /// Returns whether the containing executable suffix is flow-dependent
-    /// after this list. Callers use that result to close nested joins over the
-    /// remainder of their own container.
-    fn visit_statement_list(&mut self, statements: &[Statement], mut active: bool) -> bool {
-        for statement in statements {
-            active = self.visit_statement(statement, active);
-        }
-        active
-    }
+impl<'ast> DescendantAdapter<'ast> for FlowRegionCollector<'_> {
+    type Context = FlowContext;
 
-    fn visit_statement(&mut self, statement: &Statement, active: bool) -> bool {
-        let entry = self.statement_starts_flow_region(statement);
-        let local_active = active || entry;
-        if local_active && statement_is_executable_region_member(statement) {
-            self.out.flow_regions.insert(statement.id);
-        }
-        let owners = (statement.id, statement.id);
-
-        match &statement.kind {
-            StatementKind::Import(declaration) => {
-                if declaration.type_only
-                    || declaration.bindings.iter().any(|binding| binding.type_only)
-                {
-                    self.out.boundaries.insert(FileBoundary::Declaration);
-                }
-                local_active
-            }
-            StatementKind::TypeAlias(_) | StatementKind::Interface(_) => {
-                self.out.boundaries.insert(FileBoundary::Declaration);
-                local_active
-            }
-            StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => local_active,
-            StatementKind::Export(declaration) => {
-                if declaration.type_only
-                    || declaration
-                        .specifiers
-                        .iter()
-                        .any(|specifier| specifier.type_only)
-                {
-                    self.out.boundaries.insert(FileBoundary::Declaration);
-                }
-                if let Some(expression) = &declaration.assignment {
-                    self.visit_expression(expression, owners);
-                }
-                local_active
-            }
-            StatementKind::Variable(declaration) => {
-                if declaration.has_leading_jsdoc {
-                    self.out.javascript_jsdoc_values.insert(statement.id);
-                }
-                if let Some(initializer) = &declaration.initializer {
-                    self.visit_expression(initializer, owners);
-                }
-                local_active
-            }
-            StatementKind::Function(declaration) => {
-                if declaration
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.name_kind == ParameterNameKind::This)
-                {
-                    self.out
-                        .function_like_gaps
-                        .push((statement.id, SemanticGap::ExplicitThisParameter));
-                }
-                if declaration.has_leading_jsdoc {
-                    self.out
-                        .function_like_gaps
-                        .push((statement.id, SemanticGap::JavaScriptJSDocSignature));
-                }
-                self.visit_parameter_initializers(&declaration.parameters, owners);
-                let recovered = self.record_recovery(
-                    statement.id,
-                    statement.span,
-                    first_statement_start(&declaration.body, statement.span.end),
+    fn context(
+        &mut self,
+        context: &FlowContext,
+        container: DescendantContainer<'ast>,
+    ) -> FlowContext {
+        match container {
+            DescendantContainer::Statement(statement) => FlowContext {
+                active: context.active || self.statement_starts_flow_region(statement),
+                ..context.owner(statement.id)
+            },
+            DescendantContainer::Function(statement, declaration) => self.function_context(
+                statement.id,
+                statement.span,
+                &declaration.body,
+                declaration.has_leading_jsdoc,
+                &declaration.parameters,
+            ),
+            DescendantContainer::Class(statement, declaration) => {
+                self.out.boundaries.extend(
+                    (declaration.abstract_class
+                        || declaration
+                            .members
+                            .iter()
+                            .any(|member| !member.emit_products_supported))
+                    .then_some(FileBoundary::ClassProduct),
                 );
-                self.visit_statement_list(&declaration.body, recovered);
-                local_active
+                self.out.boundaries.extend(
+                    declaration
+                        .members
+                        .iter()
+                        .any(|member| matches!(member.kind, ClassMemberKind::Property { .. }))
+                        .then_some(FileBoundary::ClassProperty),
+                );
+                FlowContext::fresh(statement.id, false)
             }
-            StatementKind::Class(declaration) => {
-                if declaration.abstract_class {
-                    self.out.boundaries.insert(FileBoundary::ClassProduct);
-                }
-                for member in &declaration.members {
-                    self.visit_class_member(member);
-                }
-                local_active
-            }
-            StatementKind::If(if_statement) => {
-                self.visit_expression(&if_statement.condition, owners);
-                let then_active = self.visit_statement(&if_statement.then_statement, local_active);
-                let else_active = if_statement
-                    .else_statement
-                    .as_deref()
-                    .is_some_and(|statement| self.visit_statement(statement, local_active));
-                local_active || then_active || else_active
-            }
-            StatementKind::Switch(switch_statement) => {
-                self.visit_expression(&switch_statement.expression, owners);
-                let mut clause_active = local_active;
-                for clause in &switch_statement.clauses {
-                    if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        self.visit_expression(expression, owners);
+            DescendantContainer::ClassMember(member) => {
+                let (parameters, body, has_body) = match &member.kind {
+                    ClassMemberKind::Constructor {
+                        parameters,
+                        body,
+                        has_body,
+                        ..
                     }
-                    clause_active = self.visit_statement_list(&clause.statements, clause_active);
-                }
-                local_active || clause_active
-            }
-            StatementKind::Return(expression) => {
-                if let Some(expression) = expression {
-                    self.visit_expression(expression, owners);
-                }
-                local_active
-            }
-            StatementKind::Block(statements) => self.visit_statement_list(statements, local_active),
-            StatementKind::Expression(expression) => {
-                self.visit_expression(expression, owners);
-                local_active
-            }
-        }
-    }
-
-    fn visit_class_member(&mut self, member: &ClassMember) {
-        if !member.emit_products_supported {
-            self.out.boundaries.insert(FileBoundary::ClassProduct);
-        }
-        let owners = (member.id, member.id);
-        match &member.kind {
-            ClassMemberKind::Constructor {
-                parameters,
-                body,
-                has_body,
-                ..
-            }
-            | ClassMemberKind::Method {
-                parameters,
-                body,
-                has_body,
-                ..
-            } => {
+                    | ClassMemberKind::Method {
+                        parameters,
+                        body,
+                        has_body,
+                        ..
+                    } => (parameters.as_slice(), body.as_slice(), *has_body),
+                    ClassMemberKind::Property { .. } => unreachable!(),
+                };
                 if !has_body {
                     self.out.boundaries.insert(FileBoundary::CommonJsClass);
                 }
-                self.visit_parameter_initializers(parameters, owners);
-                let recovered = self.record_recovery(
-                    member.id,
-                    member.span,
-                    first_statement_start(body, member.span.end),
-                );
-                self.visit_statement_list(body, recovered);
+                self.function_context(member.id, member.span, body, false, parameters)
             }
-            ClassMemberKind::Property { initializer, .. } => {
-                self.out.boundaries.insert(FileBoundary::ClassProperty);
-                if let Some(initializer) = initializer {
-                    self.visit_expression(initializer, owners);
-                }
+            DescendantContainer::FunctionLike(expression, function) => {
+                let body_start = self.record_function_like(expression, function);
+                FlowContext::fresh(
+                    expression.id,
+                    self.record_recovery(expression.id, expression.span, body_start),
+                )
             }
         }
     }
 
-    fn visit_parameter_initializers(&mut self, parameters: &[Parameter], owners: (NodeId, NodeId)) {
-        for parameter in parameters {
-            if let Some(initializer) = &parameter.initializer {
-                self.visit_expression(initializer, owners);
+    fn nested_statement(
+        &mut self,
+        context: &FlowContext,
+        statement: &'ast Statement,
+        _next_statement: Option<&'ast Statement>,
+    ) -> NestedStatement {
+        self.out.flow_regions.extend(
+            (context.active && statement_is_executable_region_member(statement))
+                .then_some(statement.id),
+        );
+        let declaration_boundary = match &statement.kind {
+            StatementKind::Import(item) => {
+                item.type_only || item.bindings.iter().any(|binding| binding.type_only)
             }
+            StatementKind::Export(item) => {
+                item.type_only || item.specifiers.iter().any(|specifier| specifier.type_only)
+            }
+            StatementKind::TypeAlias(_) | StatementKind::Interface(_) => true,
+            _ => false,
+        };
+        self.out
+            .boundaries
+            .extend(declaration_boundary.then_some(FileBoundary::Declaration));
+        self.out.javascript_jsdoc_values.extend(
+            matches!(&statement.kind, StatementKind::Variable(item) if item.has_leading_jsdoc)
+                .then_some(statement.id),
+        );
+        NestedStatement::Descend
+    }
+
+    fn expression_edge(
+        &mut self,
+        context: &FlowContext,
+        edge: ExpressionEdge<'ast>,
+    ) -> FlowContext {
+        match edge {
+            ExpressionEdge::AssignmentRight(expression) => FlowContext {
+                owners: (expression.id, context.owners.1),
+                ..*context
+            },
+            ExpressionEdge::PropertyInitializer(member) => FlowContext::fresh(member.id, false),
         }
     }
 
-    fn visit_expression(&mut self, expression: &Expression, owners: (NodeId, NodeId)) {
+    fn fold_context(&mut self, context: &FlowContext, nested: &FlowContext) -> FlowContext {
+        FlowContext {
+            active: context.active || nested.active,
+            ..*context
+        }
+    }
+
+    fn expression(&mut self, context: &FlowContext, expression: &'ast Expression) {
         if self.javascript_jsdoc_casts.contains(&expression.id) {
-            self.out.javascript_jsdoc_values.insert(owners.0);
-            self.out.javascript_jsdoc_checks.insert(owners.1);
+            self.out.javascript_jsdoc_values.insert(context.owners.0);
+            self.out.javascript_jsdoc_checks.insert(context.owners.1);
         }
-        match &expression.kind {
-            ExpressionKind::Identifier { .. }
-            | ExpressionKind::This
-            | ExpressionKind::Literal(_)
-            | ExpressionKind::RegularExpression(_)
-            | ExpressionKind::Missing => {}
-            ExpressionKind::Object(properties) => {
-                for property in properties {
-                    self.visit_expression(&property.value, owners);
+        self.out.javascript_jsdoc_values.extend(
+            matches!(
+                expression.kind,
+                ExpressionKind::Assignment {
+                    has_leading_jsdoc: true,
+                    ..
                 }
-            }
-            ExpressionKind::Array(elements) => {
-                for element in elements {
-                    self.visit_expression(element, owners);
-                }
-            }
-            ExpressionKind::Call {
-                callee, arguments, ..
-            }
-            | ExpressionKind::New {
-                callee, arguments, ..
-            } => {
-                self.visit_expression(callee, owners);
-                for argument in arguments {
-                    self.visit_expression(argument, owners);
-                }
-            }
-            ExpressionKind::Member { object, .. }
-            | ExpressionKind::Unary {
-                operand: object, ..
-            }
-            | ExpressionKind::Parenthesized(object) => self.visit_expression(object, owners),
-            ExpressionKind::ElementAccess { object, index } => {
-                self.visit_expression(object, owners);
-                self.visit_expression(index, owners);
-            }
-            ExpressionKind::FunctionLike(function) => {
-                self.out.function_likes.insert(expression.id);
-                let owners = (expression.id, expression.id);
-                if function.has_leading_jsdoc {
-                    self.out
-                        .function_like_gaps
-                        .push((expression.id, SemanticGap::JavaScriptJSDocSignature));
-                }
-                let object_method = function.syntax.is_object_method();
-                if object_method {
-                    self.out.object_method_owners.insert(expression.id);
-                }
-                if let Some((_, body)) = function.syntax.function()
-                    && let Some(body_span) = function.body_span
-                {
-                    let products = FunctionExpressionProducts {
-                        owner: expression.id,
-                        span: expression.span,
-                        body_span,
-                        inline_body_supported: inline_body_supported(body),
-                    };
-                    if object_method {
-                        self.out.object_methods.push(products);
-                    } else {
-                        self.out.function_expressions.push(products);
-                    }
-                }
-                if matches!(
-                    function.syntax.function(),
-                    Some((Some(name), _))
-                        if name.token_kind != TokenKind::Identifier
-                ) {
-                    self.out
-                        .function_like_gaps
-                        .push((expression.id, SemanticGap::FunctionExpressionBindingName));
-                }
-                if !function.type_parameters.is_empty() {
-                    self.out
-                        .function_like_gaps
-                        .push((expression.id, SemanticGap::FunctionLikeTypeParameters));
-                }
-                if function
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.name_kind == ParameterNameKind::This)
-                {
-                    self.out
-                        .function_like_gaps
-                        .push((expression.id, SemanticGap::ExplicitThisParameter));
-                }
-                if function
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.name_kind == ParameterNameKind::BindingPattern)
-                {
-                    self.out
-                        .function_like_binding_patterns
-                        .insert(expression.id);
-                }
-                let body_start = match function.syntax.body() {
-                    crate::syntax::FunctionLikeBody::Expression(body) => body.span.start,
-                    crate::syntax::FunctionLikeBody::Statements(body) => {
-                        first_statement_start(body, expression.span.end)
-                    }
-                };
-                self.out.function_like_signatures.push(Span {
-                    file: expression.span.file,
-                    start: expression.span.start,
-                    end: body_start,
-                });
-                let recovered = self.record_recovery(expression.id, expression.span, body_start);
-                self.visit_parameter_initializers(&function.parameters, owners);
-                match function.syntax.body() {
-                    crate::syntax::FunctionLikeBody::Expression(body) => {
-                        self.visit_expression(body, owners)
-                    }
-                    crate::syntax::FunctionLikeBody::Statements(body) => {
-                        self.visit_statement_list(body, recovered);
-                    }
-                }
-            }
-            ExpressionKind::Binary { left, right, .. } => {
-                self.visit_expression(left, owners);
-                self.visit_expression(right, owners);
-            }
-            ExpressionKind::Assignment {
-                left,
-                right,
-                has_leading_jsdoc,
-            } => {
-                if *has_leading_jsdoc {
-                    self.out.javascript_jsdoc_values.insert(expression.id);
-                }
-                self.visit_expression(left, owners);
-                self.visit_expression(right, (expression.id, owners.1));
-            }
-            ExpressionKind::As { expression, .. } => self.visit_expression(expression, owners),
-        }
+            )
+            .then_some(expression.id),
+        );
     }
+}
+
+impl FlowRegionCollector<'_> {
+    fn function_context(
+        &mut self,
+        owner: NodeId,
+        span: Span,
+        body: &[Statement],
+        jsdoc: bool,
+        parameters: &[crate::syntax::Parameter],
+    ) -> FlowContext {
+        self.record_signature_gaps(owner, jsdoc, parameters);
+        FlowContext::fresh(
+            owner,
+            self.record_recovery(owner, span, first_statement_start(body, span.end)),
+        )
+    }
+
+    fn record_signature_gaps(
+        &mut self,
+        owner: NodeId,
+        has_leading_jsdoc: bool,
+        parameters: &[crate::syntax::Parameter],
+    ) {
+        self.out
+            .function_like_gaps
+            .extend(has_leading_jsdoc.then_some((owner, SemanticGap::JavaScriptJSDocSignature)));
+        self.out.function_like_gaps.extend(
+            parameters
+                .iter()
+                .any(|parameter| parameter.name_kind == ParameterNameKind::This)
+                .then_some((owner, SemanticGap::ExplicitThisParameter)),
+        );
+    }
+
+    fn record_function_like(
+        &mut self,
+        expression: &Expression,
+        function: &crate::syntax::FunctionLikeExpression,
+    ) -> u32 {
+        let owner = expression.id;
+        self.out.function_likes.insert(owner);
+        self.record_signature_gaps(owner, function.has_leading_jsdoc, &function.parameters);
+        let object_method = function.syntax.is_object_method();
+        self.out
+            .object_method_owners
+            .extend(object_method.then_some(owner));
+        if let Some((_, body)) = function.syntax.function()
+            && let Some(body_span) = function.body_span
+        {
+            let products = FunctionExpressionProducts {
+                owner,
+                span: expression.span,
+                body_span,
+                inline_body_supported: inline_body_supported(body),
+            };
+            (if object_method {
+                &mut self.out.object_methods
+            } else {
+                &mut self.out.function_expressions
+            })
+            .push(products);
+        }
+        self.out.function_like_gaps.extend(
+            matches!(function.syntax.function(), Some((Some(name), _)) if name.token_kind != TokenKind::Identifier)
+                .then_some((owner, SemanticGap::FunctionExpressionBindingName)),
+        );
+        self.out.function_like_gaps.extend(
+            (!function.type_parameters.is_empty())
+                .then_some((owner, SemanticGap::FunctionLikeTypeParameters)),
+        );
+        self.out.function_like_binding_patterns.extend(
+            function
+                .parameters
+                .iter()
+                .any(|parameter| parameter.name_kind == ParameterNameKind::BindingPattern)
+                .then_some(owner),
+        );
+        let body_start = match function.syntax.body() {
+            FunctionLikeBody::Expression(body) => body.span.start,
+            FunctionLikeBody::Statements(body) => first_statement_start(body, expression.span.end),
+        };
+        self.out.function_like_signatures.push(Span {
+            file: expression.span.file,
+            start: expression.span.start,
+            end: body_start,
+        });
+        body_start
+    }
+
     fn record_recovery(&mut self, owner: NodeId, span: Span, body_start: u32) -> bool {
         let gap = self
             .recoveries
@@ -400,20 +338,7 @@ impl FlowRegionCollector<'_> {
             StatementKind::If(statement) => &statement.condition,
             StatementKind::Switch(statement) if statement.recovered_discriminant => return true,
             StatementKind::Switch(statement) => &statement.expression,
-            StatementKind::Import(_)
-            | StatementKind::Export(_)
-            | StatementKind::Variable(_)
-            | StatementKind::Function(_)
-            | StatementKind::Class(_)
-            | StatementKind::TypeAlias(_)
-            | StatementKind::Interface(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Block(_)
-            | StatementKind::Expression(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => return false,
+            _ => return false,
         };
         self.recoveries.iter().any(|recovery| {
             recovery.owner.statement == statement.id
@@ -448,16 +373,6 @@ const fn statement_is_executable_region_member(statement: &Statement) -> bool {
         | StatementKind::Interface(_)
         | StatementKind::Empty => false,
         StatementKind::Export(declaration) => declaration.assignment.is_some(),
-        StatementKind::Variable(_)
-        | StatementKind::Function(_)
-        | StatementKind::Class(_)
-        | StatementKind::If(_)
-        | StatementKind::Switch(_)
-        | StatementKind::Break(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Return(_)
-        | StatementKind::Block(_)
-        | StatementKind::Expression(_)
-        | StatementKind::Unknown => true,
+        _ => true,
     }
 }

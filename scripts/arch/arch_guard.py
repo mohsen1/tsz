@@ -83,7 +83,6 @@ REWRITE_COMPILER_INCLUDE_PATTERNS = (
     "crates/tsz-core/src/**/*.rs",
 )
 REWRITE_COMPILER_EXCLUDE_PATHS = (
-    "crates/tsz-core/src/emit/test_support.rs",
     "crates/tsz-core/src/program/capabilities/tests.rs",
 )
 
@@ -317,7 +316,7 @@ def _rewrite_compiler_size_manifest(root: Path) -> RewriteCompilerSizeManifest:
         )
     if exclude != REWRITE_COMPILER_EXCLUDE_PATHS:
         raise ValueError(
-            "size manifest exclude list must contain exactly the two test-only "
+            "size manifest exclude list must contain exactly the test-only "
             "Rust sources under the compiler src roots"
         )
     return RewriteCompilerSizeManifest(

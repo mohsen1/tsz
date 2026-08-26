@@ -402,44 +402,6 @@ fn tsserver_semantic_diagnostics_fail_without_fabricating_a_diagnostic_body() {
 }
 
 #[test]
-fn legacy_server_compiles_array_files_and_carries_semantic_completion() {
-    let requests = [
-        json!({
-            "id": 1,
-            "type": "check",
-            "files": [{
-                "path": "case.ts",
-                "content": "const text:string=''; const size:number=text.length;"
-            }],
-            "options": {"strict": true}
-        }),
-        json!({
-            "id": 2,
-            "type": "check",
-            "files": [{"path": "case.ts", "content": "const value:number=1;"}],
-            "options": {"strict": true}
-        }),
-    ];
-    let mut input = Vec::new();
-    for request in requests {
-        serde_json::to_writer(&mut input, &request).unwrap();
-        input.push(b'\n');
-    }
-    let mut output = Vec::new();
-    tsz_cli::tsserver::run_legacy_server(Cursor::new(input), &mut output).unwrap();
-    let responses = String::from_utf8(output)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .collect::<Vec<_>>();
-
-    assert_eq!(responses[0]["codes"], json!([]));
-    assert_eq!(responses[0]["semantic_completion"], "deferred");
-    assert_eq!(responses[1]["codes"], json!([]));
-    assert_eq!(responses[1]["semantic_completion"], "complete");
-}
-
-#[test]
 fn tsserver_quickinfo_frames_exact_object_shapes_and_rejects_unsupported_inference() {
     let requests = [
         json!({

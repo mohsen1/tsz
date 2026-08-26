@@ -2,9 +2,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::source::{DeclId, NodeId, Span};
 use crate::syntax::{
-    BinaryOperator, Expression, ExpressionKind, ExpressionRoot, ExpressionTraversal, IfStatement,
-    Literal, SourceUnit, Statement, StatementKind, StringLiteral, SwitchClauseKind, UnaryOperator,
-    contains_matching_expression, for_each_statement_in, parse_number_literal,
+    BinaryOperator, DescendantContainer, Expression, ExpressionKind, ExpressionRoot,
+    ExpressionTraversal, IfStatement, Literal, SourceUnit, Statement, StatementKind, StringLiteral,
+    SwitchClauseKind, UnaryOperator, contains_matching_expression, for_each_statement_in,
+    parse_number_literal,
 };
 
 use super::{BoundFile, Meaning, ScopeId, flow_assignment_root, simple_assignment_target};
@@ -19,13 +20,23 @@ pub(super) struct PendingFlowReference {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum PendingFlowAssignmentSource {
-    Reference(NodeId),
+pub(crate) enum FlowAssignmentSource<T = (NodeId, DeclId)> {
+    Reference(T),
     Literal(Literal),
-    DirectCall(NodeId, NodeId),
+    DirectCall(T, T),
+    LogicalOrConstruct([T; 2]),
+    Join(Box<[FlowAssignmentSource<T>; 2]>),
 }
 
-impl PendingFlowAssignmentSource {
+pub(super) type PendingFlowAssignmentSource = FlowAssignmentSource<NodeId>;
+
+impl FlowAssignmentSource<NodeId> {
+    fn reference(expression: &Expression) -> Option<NodeId> {
+        let node = expression.peel_parentheses();
+        matches!(&node.kind, ExpressionKind::Identifier { entity_name, .. } if *entity_name)
+            .then_some(node.id)
+    }
+
     pub(super) fn from_expression(expression: &Expression) -> Option<Self> {
         let expression = expression.peel_parentheses();
         match &expression.kind {
@@ -41,11 +52,31 @@ impl PendingFlowAssignmentSource {
                 let [argument] = arguments.as_slice() else {
                     return None;
                 };
-                let reference = |expression| match Self::from_expression(expression)? {
-                    Self::Reference(expression) => Some(expression),
-                    _ => None,
+                Some(Self::DirectCall(
+                    Self::reference(callee)?,
+                    Self::reference(argument)?,
+                ))
+            }
+            ExpressionKind::Binary {
+                left,
+                operator: BinaryOperator::LogicalOr,
+                right,
+                ..
+            } => {
+                let callee = match &right.peel_parentheses().kind {
+                    ExpressionKind::New {
+                        callee,
+                        type_arguments,
+                        type_argument_list_close: None,
+                        arguments,
+                        ..
+                    } if type_arguments.is_empty() && arguments.is_empty() => callee,
+                    _ => return None,
                 };
-                Some(Self::DirectCall(reference(callee)?, reference(argument)?))
+                Some(Self::LogicalOrConstruct([
+                    Self::reference(left)?,
+                    Self::reference(callee)?,
+                ]))
             }
             _ => None,
         }
@@ -207,17 +238,6 @@ pub(crate) enum UnsupportedFlowKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum FlowAssignmentSource {
-    Reference {
-        expression: NodeId,
-        declaration: DeclId,
-    },
-    Literal(Literal),
-    DirectCall((NodeId, DeclId), (NodeId, DeclId)),
-    Join(Box<[FlowAssignmentSource; 2]>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum BoundFlowNode {
     Start,
     Narrowing {
@@ -284,6 +304,7 @@ impl BoundFlowGraph {
             captured: Vec::new(),
         };
         for_each_statement_in(&unit.statements, &mut |statement| {
+            let _ = builder.add_straight_line_assignment(statement);
             builder.add_switch(statement);
             builder.add_if(statement);
         });
@@ -415,28 +436,34 @@ fn resolve_assignment_source(
     source: &PendingFlowAssignmentSource,
     target: DeclId,
 ) -> Option<Option<FlowAssignmentSource>> {
+    let reference = |expression| {
+        references
+            .expression(expression)
+            .map(|reference| (reference.expression, reference.declaration))
+    };
     match source {
         PendingFlowAssignmentSource::Reference(expression) => {
-            let reference = references.expression(*expression)?;
-            let source = FlowAssignmentSource::Reference {
-                expression: *expression,
-                declaration: reference.declaration,
-            };
-            Some((reference.declaration != target).then_some(source))
+            let (expression, declaration) = reference(*expression)?;
+            let source = FlowAssignmentSource::Reference((expression, declaration));
+            Some((declaration != target).then_some(source))
         }
         PendingFlowAssignmentSource::Literal(literal) => {
             Some(Some(FlowAssignmentSource::Literal(literal.clone())))
         }
         PendingFlowAssignmentSource::DirectCall(callee, argument) => {
-            let callee = references.expression(*callee)?;
-            let argument = references.expression(*argument)?;
-            (callee.declaration != target && argument.declaration != target).then_some({
-                Some(FlowAssignmentSource::DirectCall(
-                    (callee.expression, callee.declaration),
-                    (argument.expression, argument.declaration),
-                ))
-            })
+            let callee = reference(*callee)?;
+            let argument = reference(*argument)?;
+            (callee.1 != target && argument.1 != target)
+                .then_some(Some(FlowAssignmentSource::DirectCall(callee, argument)))
         }
+        PendingFlowAssignmentSource::LogicalOrConstruct([left, callee]) => {
+            let left = reference(*left)?;
+            let callee = reference(*callee)?;
+            (left.1 == target && callee.1 != target).then_some(Some(
+                FlowAssignmentSource::LogicalOrConstruct([left, callee]),
+            ))
+        }
+        PendingFlowAssignmentSource::Join(_) => None,
     }
 }
 
@@ -568,6 +595,41 @@ enum IfFlowEffects {
 }
 
 impl FlowBuilder<'_> {
+    fn add_straight_line_assignment(&mut self, statement: &Statement) -> Option<()> {
+        let StatementKind::Expression(expression) = &statement.kind else {
+            return None;
+        };
+        let ExpressionKind::Assignment { left, .. } = &expression.peel_parentheses().kind else {
+            return None;
+        };
+        let target = flow_assignment_root(left)?.id;
+        let container = self.container(statement.id);
+        let mutation = self
+            .mutations
+            .in_container_span(container, statement.span)
+            .iter()
+            .find(|mutation| {
+                mutation.target == target && mutation.control.is_none() && mutation.path.is_root()
+            })
+            .cloned()?;
+        let antecedent = self.antecedent(mutation.target);
+        let declaration = mutation.declaration;
+        self.graph.references.remove(&mutation.target);
+        let node = match mutation.source {
+            Some(Some(source)) if !matches!(source, FlowAssignmentSource::Join(_)) => {
+                self.push(BoundFlowNode::Assignment {
+                    antecedent,
+                    subject: declaration,
+                    source,
+                })
+            }
+            Some(None) => antecedent,
+            _ => self.unsupported(antecedent, declaration, UnsupportedFlowKind::Mutation),
+        };
+        self.assign_after(mutation.span.end, container, declaration, node, None);
+        Some(())
+    }
+
     fn add_switch(&mut self, statement: &Statement) {
         let StatementKind::Switch(switch) = &statement.kind else {
             return;
@@ -1077,27 +1139,18 @@ impl FlowBuilder<'_> {
 
     fn literal_subject(&self, expression: &Expression) -> Option<LiteralSubject> {
         let expression = expression.peel_parentheses();
-        let (object, property, supported) = match &expression.kind {
-            ExpressionKind::Identifier { .. } => (expression, None, true),
-            ExpressionKind::Member { object, name, .. } => (
-                object.peel_parentheses(),
-                Some(name.clone()),
-                matches!(
-                    object.peel_parentheses().kind,
-                    ExpressionKind::Identifier { .. }
-                ),
-            ),
-            ExpressionKind::ElementAccess { object, index } => (
-                object.peel_parentheses(),
-                literal_value(index),
-                matches!(
-                    object.peel_parentheses().kind,
-                    ExpressionKind::Identifier { .. }
-                ) && literal_value(index).is_some(),
-            ),
+        let (reference, path) = self.predicate_subject(expression)?;
+        let direct = path.complete && path.known_prefix.len() <= 1;
+        let (property, supported) = match &expression.kind {
+            ExpressionKind::Identifier { .. } => (None, true),
+            ExpressionKind::Member { name, .. } => (Some(name.clone()), direct),
+            ExpressionKind::ElementAccess { index, .. } => {
+                let property = literal_value(index);
+                let supported = direct && property.is_some();
+                (property, supported)
+            }
             _ => return None,
         };
-        let reference = self.root_reference(object)?;
         Some(LiteralSubject {
             expression: reference.expression,
             declaration: reference.declaration,
@@ -1106,44 +1159,27 @@ impl FlowBuilder<'_> {
         })
     }
 
-    fn root_reference(&self, expression: &Expression) -> Option<ResolvedReference> {
-        let expression = expression.peel_parentheses();
-        match &expression.kind {
-            ExpressionKind::Identifier { .. } => self.references.expression(expression.id),
-            ExpressionKind::Member { object, .. }
-            | ExpressionKind::ElementAccess { object, .. } => self.root_reference(object),
-            _ => None,
-        }
-    }
-
     fn predicate_subject(
         &self,
-        expression: &Expression,
+        mut expression: &Expression,
     ) -> Option<(ResolvedReference, FlowDemandPath)> {
-        let expression = expression.peel_parentheses();
-        match &expression.kind {
-            ExpressionKind::Identifier { .. } => Some((
-                self.references.expression(expression.id)?,
-                FlowDemandPath::root(),
-            )),
-            ExpressionKind::Member { object, name, .. } => {
-                let (subject, mut path) = self.predicate_subject(object)?;
-                if path.complete {
-                    path.known_prefix.push(FlowPathSegment(name.clone()));
+        let mut path = FlowDemandPath::root();
+        loop {
+            expression = expression.peel_parentheses();
+            match &expression.kind {
+                ExpressionKind::Identifier { .. } => {
+                    return Some((self.references.expression(expression.id)?, path));
                 }
-                Some((subject, path))
-            }
-            ExpressionKind::ElementAccess { object, index } => {
-                let (subject, mut path) = self.predicate_subject(object)?;
-                if path.complete {
-                    match flow_path_key(index) {
-                        Some(name) => path.known_prefix.push(FlowPathSegment(name)),
-                        None => path.complete = false,
-                    }
+                ExpressionKind::Member { object, name, .. } => {
+                    path = path.member(name);
+                    expression = object;
                 }
-                Some((subject, path))
+                ExpressionKind::ElementAccess { object, index } => {
+                    path = path.element(index);
+                    expression = object;
+                }
+                _ => return None,
             }
-            _ => None,
         }
     }
 
@@ -1451,95 +1487,56 @@ fn flow_narrowing(mode: &SwitchMode, include: bool, labels: &[String]) -> Option
 }
 
 fn statement_is_flow_neutral(statement: &Statement, path_writes: bool) -> bool {
-    match &statement.kind {
-        StatementKind::Import(_)
-        | StatementKind::Function(_)
-        | StatementKind::Class(_)
-        | StatementKind::TypeAlias(_)
-        | StatementKind::Interface(_)
-        | StatementKind::Break(_)
-        | StatementKind::Empty => true,
-        StatementKind::Export(declaration) => declaration
-            .assignment
-            .as_ref()
-            .is_none_or(|value| expression_is_flow_neutral(value, path_writes)),
-        StatementKind::Variable(declaration) => declaration
-            .initializer
-            .as_ref()
-            .is_none_or(|value| expression_is_flow_neutral(value, path_writes)),
-        StatementKind::Return(expression) => expression
-            .as_ref()
-            .is_none_or(|value| expression_is_flow_neutral(value, path_writes)),
-        StatementKind::Expression(expression) => {
-            expression_is_flow_neutral(expression, path_writes)
-        }
-        StatementKind::Block(statements) => statements
-            .iter()
-            .all(|statement| statement_is_flow_neutral(statement, path_writes)),
-        StatementKind::If(statement) if path_writes => {
-            expression_is_flow_neutral(&statement.condition, path_writes)
-                && statement_is_flow_neutral(&statement.then_statement, path_writes)
-                && statement
-                    .else_statement
-                    .as_deref()
-                    .is_none_or(|arm| statement_is_flow_neutral(arm, path_writes))
-        }
-        StatementKind::If(_)
-        | StatementKind::Switch(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Unknown => false,
-    }
+    let mut neutral = true;
+    statement.for_each_statement_where(
+        &mut |container| matches!(container, DescendantContainer::Statement(_)),
+        &mut |statement| {
+            neutral &= match &statement.kind {
+                StatementKind::If(_) => path_writes,
+                StatementKind::Switch(_) | StatementKind::Continue(_) | StatementKind::Unknown => {
+                    false
+                }
+                _ => true,
+            };
+        },
+    );
+    neutral && expressions_are_flow_neutral(statement, path_writes)
 }
 
-fn expression_is_flow_neutral(expression: &Expression, path_writes: bool) -> bool {
-    match &expression.kind {
-        ExpressionKind::Identifier { .. }
-        | ExpressionKind::This
-        | ExpressionKind::Literal(_)
-        | ExpressionKind::RegularExpression(_)
-        | ExpressionKind::FunctionLike(_) => true,
-        ExpressionKind::Object(properties) => properties
-            .iter()
-            .all(|property| expression_is_flow_neutral(&property.value, path_writes)),
-        ExpressionKind::Array(elements) => elements
-            .iter()
-            .all(|element| expression_is_flow_neutral(element, path_writes)),
-        ExpressionKind::Call {
-            callee, arguments, ..
-        }
-        | ExpressionKind::New {
-            callee, arguments, ..
-        } => {
-            !matches!(
-                &callee.peel_parentheses_and_assertions().kind,
-                ExpressionKind::FunctionLike(_)
-            ) && expression_is_flow_neutral(callee, path_writes)
-                && arguments
-                    .iter()
-                    .all(|argument| expression_is_flow_neutral(argument, path_writes))
-        }
-        ExpressionKind::Member { object, .. }
-        | ExpressionKind::Unary {
-            operand: object, ..
-        }
-        | ExpressionKind::As {
-            expression: object, ..
-        }
-        | ExpressionKind::Parenthesized(object) => expression_is_flow_neutral(object, path_writes),
-        ExpressionKind::ElementAccess { object, index }
-        | ExpressionKind::Binary {
-            left: object,
-            right: index,
-            ..
-        } => {
-            expression_is_flow_neutral(object, path_writes)
-                && expression_is_flow_neutral(index, path_writes)
-        }
-        ExpressionKind::Assignment { left, right, .. } => {
-            (simple_assignment_target(left).is_some()
-                || path_writes && flow_assignment_root(left).is_some())
-                && expression_is_flow_neutral(right, path_writes)
-        }
-        ExpressionKind::Missing => false,
-    }
+fn expressions_are_flow_neutral(statement: &Statement, path_writes: bool) -> bool {
+    let mut ignored = FxHashSet::default();
+    !contains_matching_expression(
+        ExpressionRoot::Statement(statement),
+        ExpressionTraversal::Executed,
+        |expression| {
+            if ignored.contains(&expression.id) {
+                return false;
+            }
+            match &expression.kind {
+                ExpressionKind::Call { callee, .. } | ExpressionKind::New { callee, .. } => {
+                    matches!(
+                        &callee.peel_parentheses_and_assertions().kind,
+                        ExpressionKind::FunctionLike(_)
+                    )
+                }
+                ExpressionKind::Assignment { left, .. } => {
+                    let supported = simple_assignment_target(left).is_some()
+                        || path_writes && flow_assignment_root(left).is_some();
+                    if supported {
+                        contains_matching_expression(
+                            ExpressionRoot::Expression(left),
+                            ExpressionTraversal::All,
+                            |expression| {
+                                ignored.insert(expression.id);
+                                false
+                            },
+                        );
+                    }
+                    !supported
+                }
+                ExpressionKind::Missing => true,
+                _ => false,
+            }
+        },
+    )
 }

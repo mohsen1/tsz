@@ -247,6 +247,18 @@ fn missing_name_at(path: &str, start: u32, name: &str) -> DiagnosticFingerprint 
     )
 }
 
+fn implicit_any_variable(path: &str, source: &str, name: &str) -> DiagnosticFingerprint {
+    (
+        path.to_string(),
+        7005,
+        source.find(name).expect("ambient variable declaration") as u32,
+        name.len() as u32,
+        DiagnosticCategory::Error,
+        format!("Variable '{name}' implicitly has an 'any' type."),
+        Vec::new(),
+    )
+}
+
 #[test]
 fn recovered_type_tail_defers_only_its_dependency_closed_owner() {
     let cases = [
@@ -845,7 +857,7 @@ fn malformed_parameter_binding_heads_keep_identifier_recovery() {
 }
 
 #[test]
-fn recovered_variable_lists_publish_every_authored_binding_identity() {
+fn ambient_variable_lists_report_each_authored_name_through_wrapped_uses() {
     let cases = [
         (
             "direct-list.ts",
@@ -854,6 +866,7 @@ fn recovered_variable_lists_publish_every_authored_binding_identity() {
                 "invoke(left, right);\n",
                 "const kept: MissingDirectSibling = 1;\n",
             ),
+            ["invoke", "left", "right"],
             "MissingDirectSibling",
         ),
         (
@@ -866,23 +879,29 @@ fn recovered_variable_lists_publish_every_authored_binding_identity() {
                 "}\n",
                 "const kept: MissingWrappedSibling = 1;\n",
             ),
+            ["dispatch", "first", "second"],
             "MissingWrappedSibling",
         ),
     ];
 
-    for (path, source, independent) in cases {
+    for (path, source, ambient_names, independent) in cases {
         let mut service = LanguageService::new(options());
         service.open(path, Arc::<str>::from(source));
 
         let result = service.semantic_diagnostics(path);
         assert_eq!(
             result.semantic_completion,
-            SemanticCompletion::Deferred,
+            SemanticCompletion::Complete,
             "{path}"
         );
         assert_eq!(
             semantic_fingerprint(&result),
-            vec![missing_name(path, source, independent)],
+            vec![
+                implicit_any_variable(path, source, ambient_names[0]),
+                implicit_any_variable(path, source, ambient_names[1]),
+                implicit_any_variable(path, source, ambient_names[2]),
+                missing_name(path, source, independent),
+            ],
             "{path}: {:#?}",
             result.diagnostics,
         );
@@ -890,7 +909,7 @@ fn recovered_variable_lists_publish_every_authored_binding_identity() {
 }
 
 #[test]
-fn recovered_variable_list_scanner_skips_initializer_commas() {
+fn variable_list_scanner_skips_initializer_commas_with_complete_diagnostics() {
     let path = "initializer-list.ts";
     let source = concat!(
         "let invoke: any, first = invoke(1, nestedOnly), last = 'owned';\n",
@@ -902,7 +921,7 @@ fn recovered_variable_list_scanner_skips_initializer_commas() {
     service.open(path, Arc::<str>::from(source));
 
     let result = service.semantic_diagnostics(path);
-    assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(result.semantic_completion, SemanticCompletion::Complete);
     assert_eq!(
         semantic_fingerprint(&result),
         vec![
@@ -924,7 +943,7 @@ fn recovered_variable_list_scanner_skips_initializer_commas() {
 }
 
 #[test]
-fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
+fn recovery_fragments_defer_while_concrete_object_methods_keep_identifier_diagnostics() {
     let cases = [
         (
             "loop-fragment.ts",
@@ -933,6 +952,7 @@ fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
                 "MissingBodySibling; };\nMissingOutside;\n",
             ),
             vec!["MissingOutside"],
+            SemanticCompletion::Deferred,
         ),
         (
             "destructuring-fragment.ts",
@@ -941,6 +961,7 @@ fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
                 "MissingBodySibling; };\nMissingOutside;\n",
             ),
             vec!["MissingBodySibling", "MissingOutside"],
+            SemanticCompletion::Deferred,
         ),
         (
             "satisfies-fragment.ts",
@@ -949,6 +970,7 @@ fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
                 "MissingOutside;\n",
             ),
             vec!["MissingOwnedBody", "MissingOutside"],
+            SemanticCompletion::Deferred,
         ),
         (
             "object-member-fragment.ts",
@@ -956,7 +978,8 @@ fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
                 "const value = { kept: function () { MissingOwnedBody; }, method() { MissingTail; } };\n",
                 "MissingOutside;\n",
             ),
-            vec!["MissingOwnedBody", "MissingOutside"],
+            vec!["MissingOwnedBody", "MissingTail", "MissingOutside"],
+            SemanticCompletion::Complete,
         ),
         (
             "object-spread-fragment.ts",
@@ -965,6 +988,7 @@ fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
                 "MissingOutside;\n",
             ),
             vec!["MissingOwnedBody", "MissingOutside"],
+            SemanticCompletion::Deferred,
         ),
         (
             "arrow-spread-fragment.ts",
@@ -973,18 +997,15 @@ fn naked_recovery_fragments_do_not_publish_identifier_diagnostics() {
                 "MissingOutside;\n",
             ),
             vec!["MissingOwnedBody", "MissingOutside"],
+            SemanticCompletion::Deferred,
         ),
     ];
 
-    for (path, source, expected) in cases {
+    for (path, source, expected, completion) in cases {
         let mut service = LanguageService::new(options());
         service.open(path, Arc::<str>::from(source));
         let result = service.semantic_diagnostics(path);
-        assert_eq!(
-            result.semantic_completion,
-            SemanticCompletion::Deferred,
-            "{path}"
-        );
+        assert_eq!(result.semantic_completion, completion, "{path}");
         assert_eq!(
             semantic_fingerprint(&result),
             expected
@@ -1044,7 +1065,7 @@ fn explicit_this_call_signature_does_not_count_as_a_runtime_parameter() {
 }
 
 #[test]
-fn recovered_variable_list_producers_defer_cross_file_consumers_in_path_order_variants() {
+fn variable_list_producers_complete_cross_file_consumers_in_path_order_variants() {
     let producer = "let renamed: any, payload = [1, 2];\n";
     let consumer = "renamed(payload); const kept: MissingListConsumer = 1;\n";
     let safe = "const kept: MissingListSafe = 1;\n";
@@ -1061,7 +1082,7 @@ fn recovered_variable_list_producers_defer_cross_file_consumers_in_path_order_va
         let producer_result = service.semantic_diagnostics(producer_path);
         assert_eq!(
             producer_result.semantic_completion,
-            SemanticCompletion::Deferred
+            SemanticCompletion::Complete
         );
         assert!(
             semantic_fingerprint(&producer_result).is_empty(),
@@ -1072,7 +1093,7 @@ fn recovered_variable_list_producers_defer_cross_file_consumers_in_path_order_va
         let consumer_result = service.semantic_diagnostics(consumer_path);
         assert_eq!(
             consumer_result.semantic_completion,
-            SemanticCompletion::Deferred
+            SemanticCompletion::Complete
         );
         assert_eq!(
             semantic_fingerprint(&consumer_result),
@@ -1096,7 +1117,7 @@ fn recovered_variable_list_producers_defer_cross_file_consumers_in_path_order_va
 }
 
 #[test]
-fn ordinary_variable_declaration_keeps_a_real_missing_name_definitive() {
+fn ordinary_ambient_variable_reports_implicit_any_and_keeps_missing_name_definitive() {
     let path = "ordinary-variable.ts";
     let source = "declare var owned; owned; missingReal;\n";
     let mut service = LanguageService::new(options());
@@ -1106,9 +1127,89 @@ fn ordinary_variable_declaration_keeps_a_real_missing_name_definitive() {
     assert_eq!(result.semantic_completion, SemanticCompletion::Complete);
     assert_eq!(
         semantic_fingerprint(&result),
-        vec![missing_name(path, source, "missingReal")],
+        vec![
+            implicit_any_variable(path, source, "owned"),
+            missing_name(path, source, "missingReal"),
+        ],
         "{:#?}",
         result.diagnostics,
+    );
+}
+
+#[test]
+fn ambient_variable_implicit_any_respects_annotations_and_effective_options() {
+    let annotated_path = "annotated-ambient-list.ts";
+    let annotated_source = concat!(
+        "declare var alpha: string, beta: number;\n",
+        "function wrapped() { alpha; beta; }\n",
+        "const kept: MissingAnnotatedSibling = 1;\n",
+    );
+    let mut annotated_service = LanguageService::new(options());
+    annotated_service.open(annotated_path, Arc::<str>::from(annotated_source));
+    let annotated_result = annotated_service.semantic_diagnostics(annotated_path);
+    assert_eq!(
+        annotated_result.semantic_completion,
+        SemanticCompletion::Complete
+    );
+    assert_eq!(
+        semantic_fingerprint(&annotated_result),
+        vec![missing_name(
+            annotated_path,
+            annotated_source,
+            "MissingAnnotatedSibling",
+        )],
+        "{:#?}",
+        annotated_result.diagnostics,
+    );
+
+    let opted_out_path = "ambient-list-no-implicit-any-false.ts";
+    let opted_out_source = concat!(
+        "declare let looseFirst, looseSecond;\n",
+        "function wrapped() { looseFirst; looseSecond; }\n",
+        "const kept: MissingOptOutSibling = 1;\n",
+    );
+    let opted_out_options = CompilerOptions {
+        no_implicit_any: Some(false),
+        ..options()
+    };
+    let mut opted_out_service = LanguageService::new(opted_out_options);
+    opted_out_service.open(opted_out_path, Arc::<str>::from(opted_out_source));
+    let opted_out_result = opted_out_service.semantic_diagnostics(opted_out_path);
+    assert_eq!(
+        opted_out_result.semantic_completion,
+        SemanticCompletion::Complete
+    );
+    assert_eq!(
+        semantic_fingerprint(&opted_out_result),
+        vec![missing_name(
+            opted_out_path,
+            opted_out_source,
+            "MissingOptOutSibling",
+        )],
+        "{:#?}",
+        opted_out_result.diagnostics,
+    );
+
+    let no_check_path = "ambient-list-no-check.ts";
+    let no_check_source = concat!(
+        "declare var skippedFirst, skippedSecond;\n",
+        "skippedFirst; skippedSecond; MissingNoCheckSibling;\n",
+    );
+    let no_check_options = CompilerOptions {
+        no_check: true,
+        ..options()
+    };
+    let mut no_check_service = LanguageService::new(no_check_options);
+    no_check_service.open(no_check_path, Arc::<str>::from(no_check_source));
+    let no_check_result = no_check_service.semantic_diagnostics(no_check_path);
+    assert_eq!(
+        no_check_result.semantic_completion,
+        SemanticCompletion::Complete
+    );
+    assert!(
+        semantic_fingerprint(&no_check_result).is_empty(),
+        "{:#?}",
+        no_check_result.diagnostics,
     );
 }
 
@@ -1156,6 +1257,59 @@ fn opaque_member_and_loop_syntax_keep_their_recovery_local() {
         "{:#?}",
         result.diagnostics,
     );
+}
+
+#[test]
+fn jsx_recovery_fragments_defer_without_hiding_adjacent_missing_names() {
+    let declarations = concat!(
+        "declare namespace JSX {\n",
+        "  interface Element {}\n",
+        "  interface IntrinsicElements { [name: string]: any }\n",
+        "}\n",
+        "declare var React: any;\n",
+    );
+    let cases = [
+        (
+            "direct-jsx-recovery.tsx",
+            format!(
+                "{declarations}<section>Be cautious of &quot;-tail!</section>;\nconst kept: MissingTsxSibling = 1;\n"
+            ),
+            "MissingTsxSibling",
+        ),
+        (
+            "wrapped-jsx-recovery.tsx",
+            format!(
+                "{declarations}function wrapped() {{\n  <article>Nested renamed text &amp; tail</article>;\n  const kept: MissingNestedSibling = 1;\n}}\n"
+            ),
+            "MissingNestedSibling",
+        ),
+    ];
+    for (path, source, missing) in &cases {
+        let mut service = LanguageService::new(options());
+        service.open(*path, Arc::<str>::from(source.clone()));
+        let result = service.semantic_diagnostics(path);
+        assert_eq!(result.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(
+            semantic_fingerprint(&result),
+            vec![missing_name(path, source, missing)],
+            "{path}: {:#?}",
+            result.diagnostics,
+        );
+    }
+
+    for path in ["ordinary-missing.ts", "ordinary-missing.tsx"] {
+        let source = "const kept: MissingOrdinarySibling = 1;\n";
+        let mut service = LanguageService::new(options());
+        service.open(path, Arc::<str>::from(source));
+        let result = service.semantic_diagnostics(path);
+        assert_eq!(result.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            semantic_fingerprint(&result),
+            vec![missing_name(path, source, "MissingOrdinarySibling")],
+            "{path}: {:#?}",
+            result.diagnostics,
+        );
+    }
 }
 
 #[test]

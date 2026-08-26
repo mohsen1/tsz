@@ -1,6 +1,6 @@
 use super::super::{
     AuthoredLiteralKind, Expression, ExpressionKind, Literal, NumberLiteral, NumericRecoveryKind,
-    Statement, Token, TokenKind, statements_form_numeric_recovery_safe_file,
+    Token, TokenKind,
 };
 use super::Parser;
 use crate::diagnostics::Diagnostic;
@@ -55,14 +55,8 @@ impl Parser<'_> {
     }
 
     pub(super) fn finish_numeric_separator_source(&mut self) {
-        if !self.numeric_separator_spans.is_empty()
-            && (self.has_unmodeled_numeric_separator
-                || !self.diagnostics.is_empty()
-                || !self.comments.is_empty()
-                || self.has_unmodeled_trivia
-                || self.has_unmodeled_top_level_syntax)
-        {
-            self.observe_literal_source_context(AuthoredLiteralKind::NumericSeparator);
+        if !self.numeric_separator_spans.is_empty() && self.has_unmodeled_numeric_separator {
+            self.observe_literal_validation_gap(AuthoredLiteralKind::NumericSeparator);
         }
     }
 
@@ -84,6 +78,19 @@ impl Parser<'_> {
         let next_token_requires_separator = self.kind() == TokenKind::Identifier
             || self.kind() == TokenKind::NumericLiteral
                 && self.text(self.current().span).starts_with('.');
+        if recovery_kind == Some(NumericRecoveryKind::MissingExponentDigits)
+            && next_token_requires_separator
+            && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
+        {
+            self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericRecovery);
+            let recovery_extent = self.recovery_extent_from_current(expression.span);
+            self.retain_parser_recovery(
+                super::super::ParserRecoveryKind::Expression,
+                expression.span,
+                recovery_extent,
+            );
+            return false;
+        }
         if self.statement_nesting_depth != 0
             || !recovery_can_terminate_before_next_token
             || !next_token_requires_separator
@@ -97,28 +104,24 @@ impl Parser<'_> {
             "';' expected.".to_string(),
             1005,
         );
-        self.numeric_parser_diagnostics.push(diagnostic.clone());
         self.diagnostics.push(diagnostic);
+        self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericRecovery);
+        let recovery_extent = self.recovery_extent_from_current(expression.span);
+        self.retain_parser_recovery(
+            super::super::ParserRecoveryKind::Expression,
+            expression.span,
+            recovery_extent,
+        );
         true
     }
 
-    pub(super) fn finish_numeric_recovery_source(&mut self, statements: &[Statement]) {
-        if self.numeric_literals.is_empty() {
-            return;
-        }
-        let owned = match self.numeric_literals.as_slice() {
-            [literal] => {
-                literal.syntax_literal().validation_supported()
-                    && literal.owns_diagnostics(&self.diagnostics, &self.numeric_parser_diagnostics)
-                    && self.comments.is_empty()
-                    && !self.has_unmodeled_trivia
-                    && !self.has_unmodeled_top_level_syntax
-                    && statements_form_numeric_recovery_safe_file(self.source, statements, 1)
-            }
-            _ => false,
-        };
-        if !owned {
-            self.observe_literal_source_context(AuthoredLiteralKind::NumericRecovery);
+    pub(super) fn finish_numeric_recovery_source(&mut self) {
+        if self
+            .numeric_literals
+            .iter()
+            .any(|literal| !literal.syntax_literal().validation_supported())
+        {
+            self.observe_literal_validation_gap(AuthoredLiteralKind::NumericRecovery);
         }
     }
 }

@@ -963,7 +963,7 @@ fn compile_config_remove_comments_reaches_printer() {
 }
 
 #[test]
-fn compile_config_use_define_for_class_fields_false_reaches_printer() {
+fn compile_config_use_define_for_class_fields_false_defers_only_affected_javascript() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -972,29 +972,23 @@ fn compile_config_use_define_for_class_fields_false_reaches_printer() {
         r#"{
           "compilerOptions": {
             "target": "es2022",
-            "module": "commonjs",
+            "module": "esnext",
             "useDefineForClassFields": false,
-            "skipLibCheck": true,
+            "declaration": true,
+            "noCheck": true,
+            "rootDir": ".",
             "outDir": "dist"
           },
-          "files": ["main.ts"]
+          "files": ["class-field.ts", "stable.ts"]
         }"#,
     );
     write_file(
-        &base.join("main.ts"),
-        r#"class Base {
-  set x(value: number) {
-    console.log("setter", value);
-  }
-}
-
-class Derived extends Base {
-  // @ts-ignore Deliberately comparing emit semantics for accessor/property override.
-  x = 1;
-}
-
-new Derived();
-"#,
+        &base.join("class-field.ts"),
+        "export class DeferredField { value: number = 1; }\n",
+    );
+    write_file(
+        &base.join("stable.ts"),
+        "export const stable: number = 1;\n",
     );
 
     let args = default_args();
@@ -1004,19 +998,31 @@ new Derived();
         "Expected no diagnostics, got: {:?}",
         result.diagnostics
     );
-
-    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read JS output");
-    assert!(
-        js.contains("constructor()"),
-        "Expected useDefineForClassFields=false from config to lower the field into the constructor: {js}"
+    assert_eq!(
+        result.semantic_completion,
+        tsz::SemanticCompletion::Deferred
+    );
+    assert_eq!(
+        result.exit_status,
+        tsz::CompileExitStatus::SemanticIncomplete
     );
     assert!(
-        js.contains("this.x = 1;"),
-        "Expected legacy assignment semantics for class field: {js}"
+        base.join("dist/class-field.d.ts").is_file(),
+        "Declaration emit remains claimed for the affected file"
     );
     assert!(
-        !js.contains("\n    x = 1;"),
-        "Expected native class field syntax to be suppressed: {js}"
+        !base.join("dist/class-field.js").exists(),
+        "Assignment-semantics class-field lowering is not yet claimed"
+    );
+    assert!(
+        base.join("dist/stable.js").is_file() && base.join("dist/stable.d.ts").is_file(),
+        "The independent sibling must retain both emit products"
+    );
+    assert_eq!(
+        result.emitted_files.len(),
+        3,
+        "Only the affected JavaScript product is withheld: {:?}",
+        result.emitted_files,
     );
 }
 
@@ -1766,4 +1772,3 @@ fn compile_bundler_dts_value_import_reports_ts2846_not_ts2307() {
         result.diagnostics
     );
 }
-

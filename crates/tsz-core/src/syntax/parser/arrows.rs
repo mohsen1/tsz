@@ -8,8 +8,17 @@ pub(super) enum ParenthesizedArrowToken {
 }
 
 impl Parser<'_> {
-    pub(super) fn parse_arrow_body(&mut self) -> (ArrowBody, Option<crate::source::Span>) {
-        if self.at(TokenKind::LeftBrace) {
+    pub(super) fn parse_arrow_body(
+        &mut self,
+        await_context: bool,
+    ) -> (ArrowBody, Option<crate::source::Span>) {
+        let previous_yield_context = self.in_yield_context;
+        let previous_await_context = self.in_await_context;
+        let previous_await_binding_reserved = self.await_binding_reserved;
+        self.in_yield_context = false;
+        self.in_await_context = await_context;
+        self.await_binding_reserved = await_context;
+        let body = if self.at(TokenKind::LeftBrace) {
             let (statements, span) = self.parse_block();
             (ArrowBody::Block(statements), span)
         } else {
@@ -17,15 +26,20 @@ impl Parser<'_> {
                 ArrowBody::Expression(Box::new(self.parse_expression())),
                 None,
             )
-        }
+        };
+        self.in_yield_context = previous_yield_context;
+        self.in_await_context = previous_await_context;
+        self.await_binding_reserved = previous_await_binding_reserved;
+        body
     }
 
     pub(super) fn parse_recovered_arrow_body(
         &mut self,
         has_arrow: bool,
+        await_context: bool,
     ) -> (ArrowBody, Option<crate::source::Span>) {
         if self.at(TokenKind::LeftBrace) || has_arrow {
-            return self.parse_arrow_body();
+            return self.parse_arrow_body(await_context);
         }
         let token = *self.current();
         let expression = if token.kind.is_identifier() {

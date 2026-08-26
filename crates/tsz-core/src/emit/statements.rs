@@ -67,9 +67,11 @@ impl Printer<'_> {
                 self.write_indent();
                 self.output.push_str("}\n");
             }
-            StatementKind::Break(jump) => self.write_jump_statement("break", jump.label.as_deref()),
+            StatementKind::Break(jump) => {
+                self.write_jump_statement("break", jump.label.as_deref(), jump.label_span)
+            }
             StatementKind::Continue(jump) => {
-                self.write_jump_statement("continue", jump.label.as_deref())
+                self.write_jump_statement("continue", jump.label.as_deref(), jump.label_span)
             }
             StatementKind::Block(statements) => {
                 self.write_indent();
@@ -90,7 +92,7 @@ impl Printer<'_> {
         self.write_comments_after_node(statement.span, true);
     }
 
-    fn javascript_statement_is_emitted(&self, statement: &Statement) -> bool {
+    pub(super) fn javascript_statement_is_emitted(&self, statement: &Statement) -> bool {
         match &statement.kind {
             StatementKind::Import(declaration) => self.javascript_import_is_emitted(declaration),
             StatementKind::Export(declaration) => self.javascript_export_is_emitted(declaration),
@@ -121,14 +123,7 @@ impl Printer<'_> {
     }
 
     fn javascript_export_is_emitted(&self, declaration: &ExportDeclaration) -> bool {
-        let has_runtime_product = !declaration.type_only
-            && (declaration.export_all
-                || declaration.assignment.is_some()
-                || declaration
-                    .specifiers
-                    .iter()
-                    .any(|specifier| !specifier.type_only));
-        if !has_runtime_product {
+        if !export_has_runtime_product(declaration) {
             return false;
         }
         match self.module_format {
@@ -147,30 +142,44 @@ impl Printer<'_> {
     }
 
     fn write_javascript_if(&mut self, control_flow: &crate::syntax::IfStatement) {
+        let mut control_flow = control_flow;
         self.write_indent();
-        self.output.push_str("if");
-        self.indent += 1;
-        let condition_start = control_flow.condition.span.start;
-        self.write_gap(Kind(TokenKind::If, condition_start), true, Gap::Space);
-        self.output.push('(');
-        self.write_gap(
-            Kind(TokenKind::LeftParen, condition_start),
-            true,
-            Gap::Indent,
-        );
-        self.write_expression(&control_flow.condition, PREC_LOWEST);
-        self.write_gap(End(control_flow.condition.span.end), true, Gap::Indent);
-        self.output.push(')');
-        self.write_body_gap(TokenKind::RightParen, &control_flow.then_statement);
-        self.indent = self.indent.saturating_sub(1);
-        self.write_control_flow_body(&control_flow.then_statement);
-        if let Some(else_statement) = &control_flow.else_statement {
+        loop {
+            self.output.push_str("if");
+            self.indent += 1;
+            let condition_start = control_flow.condition.span.start;
+            self.write_gap(Kind(TokenKind::If, condition_start), true, Gap::Space);
+            self.output.push('(');
+            self.write_gap(
+                Kind(TokenKind::LeftParen, condition_start),
+                true,
+                Gap::Indent,
+            );
+            self.write_expression(&control_flow.condition, PREC_LOWEST);
+            self.write_gap(End(control_flow.condition.span.end), true, Gap::Indent);
+            self.output.push(')');
+            self.write_body_gap(TokenKind::RightParen, &control_flow.then_statement);
+            self.indent = self.indent.saturating_sub(1);
+            self.write_control_flow_body(&control_flow.then_statement);
+            let Some(else_statement) = &control_flow.else_statement else {
+                break;
+            };
             let then_end = control_flow.then_statement.span.end;
             self.write_gap(End(then_end), true, Gap::Newline);
             self.write_indent();
             self.output.push_str("else");
-            self.write_body_gap(TokenKind::Else, else_statement);
-            self.write_control_flow_body(else_statement);
+            if let StatementKind::If(nested) = &else_statement.kind {
+                self.write_gap(
+                    Kind(TokenKind::Else, else_statement.span.start),
+                    true,
+                    Gap::Space,
+                );
+                control_flow = nested;
+            } else {
+                self.write_body_gap(TokenKind::Else, else_statement);
+                self.write_control_flow_body(else_statement);
+                break;
+            }
         }
         self.write_newline();
     }
@@ -194,11 +203,20 @@ impl Printer<'_> {
         }
     }
 
-    fn write_jump_statement(&mut self, keyword: &str, label: Option<&str>) {
+    fn write_jump_statement(
+        &mut self,
+        keyword: &str,
+        label: Option<&str>,
+        label_span: Option<crate::source::Span>,
+    ) {
         self.write_indent();
         self.output.push_str(keyword);
         if let Some(label) = label {
-            self.write_parts(&[" ", label]);
+            self.output.push(' ');
+            self.write_authored_identifier(
+                label,
+                label_span.expect("an authored jump label must retain its span"),
+            );
         }
         self.output.push_str(";\n");
     }
@@ -211,7 +229,12 @@ impl Printer<'_> {
                 self.output.push_str("default ");
             }
         }
-        self.write_parts(&["class ", &declaration.name]);
+        self.output.push_str("class ");
+        if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
+            self.output.push_str(&declaration.name);
+        } else {
+            self.write_authored_identifier(&declaration.name, declaration.name_span);
+        }
         if let Some(base) = &declaration.extends {
             self.output.push_str(" extends ");
             self.write_heritage_type(base);
@@ -236,7 +259,12 @@ impl Printer<'_> {
         self.write_indent();
         self.output.push_str("}\n");
         if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
-            self.write_commonjs_export(&declaration.name);
+            let export_name = if declaration.default_export {
+                "default"
+            } else {
+                &declaration.name
+            };
+            self.write_commonjs_export(export_name, &declaration.name, None);
         }
     }
 
@@ -280,7 +308,7 @@ impl Printer<'_> {
                 self.output.push('\n');
             }
             ClassMemberKind::Property { initializer, .. } => {
-                self.write_property_name(&member.name, member.name_span);
+                self.write_property_name(&member.name, member.name_span, member.name_kind);
                 if let Some(initializer) = initializer {
                     self.output.push_str(" = ");
                     self.write_expression(initializer, super::PREC_ASSIGNMENT);
@@ -303,7 +331,7 @@ impl Printer<'_> {
                         AccessorKind::Set => "set ",
                     });
                 }
-                self.write_property_name(&member.name, member.name_span);
+                self.write_property_name(&member.name, member.name_span, member.name_kind);
                 self.write_runtime_parameters(parameters, true);
                 self.output.push(' ');
                 self.write_braced_statements(*body_span, body);
@@ -325,15 +353,18 @@ impl Printer<'_> {
                 body_span.is_some_and(|span| self.write_comments_before_close(span.end));
             self.indent = self.indent.saturating_sub(1);
             if self.output.len() == boundary {
-                self.output.push_str(" }");
-            } else {
-                if ended_on_line {
+                if body_span.is_some_and(|span| !self.body_span_is_single_line(span)) {
+                    self.output.push('\n');
                     self.write_indent();
-                } else if !self.output.chars().last().is_some_and(char::is_whitespace) {
+                } else {
                     self.output.push(' ');
                 }
-                self.output.push('}');
+            } else if ended_on_line {
+                self.write_indent();
+            } else if !self.output.chars().last().is_some_and(char::is_whitespace) {
+                self.output.push(' ');
             }
+            self.output.push('}');
             return;
         }
         self.output.push_str("{\n");
@@ -349,4 +380,13 @@ impl Printer<'_> {
         self.write_indent();
         self.output.push('}');
     }
+}
+
+pub(super) fn export_has_runtime_product(declaration: &ExportDeclaration) -> bool {
+    let has_runtime_specifier = declaration
+        .specifiers
+        .iter()
+        .any(|specifier| !specifier.type_only);
+    !declaration.type_only
+        && (declaration.export_all || declaration.assignment.is_some() || has_runtime_specifier)
 }

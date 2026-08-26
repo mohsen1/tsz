@@ -7,6 +7,23 @@ use crate::syntax::{Expression, ExpressionKind};
 use super::{Checker, DeclarationModel};
 
 impl Checker<'_> {
+    pub(super) fn resolve_this_type(&mut self, file: FileId, span: crate::source::Span) -> TypeId {
+        let Some(declaration) = self.program.files[file.0 as usize]
+            .bindings
+            .this_type_declaration(span)
+        else {
+            self.push_diagnostic(
+                file,
+                span,
+                "A 'this' type is available only in a non-static member of a class or interface."
+                    .to_string(),
+                2526,
+            );
+            return self.store.builtins.error;
+        };
+        self.store.type_parameter(declaration, u32::MAX, "this")
+    }
+
     pub(super) fn infer_identifier(
         &mut self,
         file: FileId,
@@ -87,18 +104,11 @@ impl Checker<'_> {
                     .iter()
                     .enumerate()
                     .map(|(index, parameter)| {
-                        self.store.intern(TypeKind::TypeParameter {
-                            declaration: identity,
-                            index: index as u32,
-                            name: parameter.name.clone(),
-                        })
+                        self.store
+                            .type_parameter(identity, index as u32, &parameter.name)
                     })
                     .collect();
-                self.store
-                    .intern(TypeKind::Deferred(DeferredType::Reference {
-                        declaration,
-                        arguments,
-                    }))
+                self.store.symbolic_reference(declaration, arguments)
             }
             Some(LexicalThisOwner::ClassConstructor(declaration)) => self
                 .store

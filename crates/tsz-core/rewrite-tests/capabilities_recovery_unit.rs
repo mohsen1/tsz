@@ -29,7 +29,21 @@ fn recovered_generator_declarator_keeps_its_exact_typed_owner() {
         "}, kept = 1;",
     );
     let file = program_file(0, "generator-declarator.ts", source);
-    let owner = statement_starting_at(&file, source, "items =");
+    let [statement] = file.syntax.statements.as_slice() else {
+        panic!(
+            "one variable statement expected: {:#?}",
+            file.syntax.statements
+        )
+    };
+    let StatementKind::Variable(variable) = &statement.kind else {
+        panic!("variable statement expected: {statement:#?}")
+    };
+    let items = variable
+        .declarators
+        .iter()
+        .find(|declaration| declaration.name == "items")
+        .expect("items declarator");
+    let owner = statement.id;
     let scope = CapabilityScope::node(file.source.id, owner);
     let analysis = CapabilityAnalysis::derive(
         std::slice::from_ref(&file),
@@ -64,16 +78,11 @@ fn recovered_generator_declarator_keeps_its_exact_typed_owner() {
             .claim(CapabilityTarget::DeclarationModel, scope)
             .is_claimed()
     );
-    let mut function_owner = None;
-    for_each_statement_in(&file.syntax.statements, &mut |statement| {
-        if statement.id == owner
-            && let StatementKind::Expression(expression) = &statement.kind
-            && let ExpressionKind::Assignment { right, .. } = &expression.kind
-            && matches!(right.kind, ExpressionKind::FunctionLike(_))
-        {
-            function_owner = Some(right.id);
-        }
-    });
+    let function_owner = items
+        .initializer
+        .as_ref()
+        .filter(|initializer| matches!(initializer.kind, ExpressionKind::FunctionLike(_)))
+        .map(|initializer| initializer.id);
     let function_scope = CapabilityScope::node(
         file.source.id,
         function_owner.expect("represented generator expression"),
@@ -94,4 +103,46 @@ fn recovered_generator_declarator_keeps_its_exact_typed_owner() {
             && reason.deletion
                 == DeletionCondition::DeepestSemanticOwner(SyntaxGap::GeneratorFunctionLike)
     }));
+}
+
+#[test]
+fn jsx_text_and_entity_fragments_share_the_opening_expression_recovery_owner() {
+    let source = concat!(
+        "<section>Be cautious of &quot;-tail!</section>;\n",
+        "const kept: MissingSibling = 1;\n",
+    );
+    let file = program_file(0, "jsx-recovery.tsx", source);
+    let opening = file
+        .syntax
+        .parser_recovery_facts()
+        .iter()
+        .find(|recovery| recovery.authored_span.start == 0)
+        .expect("opening JSX recovery");
+    assert_eq!(opening.kind, ParserRecoveryKind::Expression);
+    assert_eq!(
+        opening.recovery_extent,
+        Span::new(file.source.id, 0, source.lines().next().unwrap().len()),
+    );
+
+    let nodes = recovery_nodes(
+        &file,
+        opening.owner,
+        opening.authored_span,
+        opening.recovery_extent,
+    );
+    for marker in ["cautious", "of", "quot", "tail"] {
+        let start = source.find(marker).expect("JSX fragment") as u32;
+        let statement = file
+            .syntax
+            .statements
+            .iter()
+            .find(|statement| statement.span.start <= start && start < statement.span.end)
+            .expect("represented JSX fragment");
+        assert_eq!(
+            nodes.owners.get(&statement.id),
+            Some(&RecoveryStatementRole::RepresentationalFragment),
+            "{marker}: {:#?}",
+            file.syntax.statements,
+        );
+    }
 }

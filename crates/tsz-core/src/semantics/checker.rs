@@ -7,6 +7,7 @@ mod call_model;
 mod capabilities;
 mod class_model;
 mod class_property_initialization;
+mod contextual_grammar;
 mod declaration_value;
 mod element_access;
 mod entry;
@@ -28,20 +29,23 @@ mod string_literal;
 mod type_member_grammar;
 mod unary_expression;
 
-pub use entry::{CheckResult, check_program};
+pub use entry::{CheckResult, check_program, summarize_program};
+pub(crate) use entry::{
+    DeclarationDisplayParts, DeclarationDisplaySummaries, DeclarationDisplaySummary,
+};
 use model_collection::DeclarationModel;
-use relation_diagnostic::{ContextualType, RelationDiagnosticStyle};
+use relation_diagnostic::ContextualType;
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::diagnostics::Diagnostic;
 use crate::program::{CapabilityAnalysis, CompilerOptions, Program};
 use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
-    Expression, ExpressionKind, FunctionDeclaration, KeywordType, TypeNode, TypeNodeKind,
-    UnaryOperator, VariableDeclaration, VariableKind,
+    AssignmentOperator, Expression, ExpressionKind, FunctionDeclaration, TypeNode, TypeNodeKind,
+    UnaryOperator,
 };
 
-use super::relation::{RelationContext, RelationMode};
+use super::relation::RelationContext;
 use super::types::{
     Completion, DeferredType, DeferredUnaryOperator, ElementAccessMode, IndexKeyKind,
     IndexSignature, LiteralProvenance, ObjectShape, Property, TypeId, TypeKind, TypeStore,
@@ -164,80 +168,6 @@ impl<'a> Checker<'a> {
             .map(|declaration| declaration.id)
     }
 
-    fn check_variable(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        owner: NodeId,
-        declaration: &VariableDeclaration,
-    ) {
-        let (annotation, annotation_is_complete) =
-            declaration
-                .annotation
-                .as_ref()
-                .map_or((None, true), |annotation| {
-                    let ty = self.resolve_type_node(file, scope, annotation, &HashMap::new());
-                    let is_complete = self.complete_required_type_nodes.contains(&annotation.span);
-                    (Some(ty), is_complete)
-                });
-        let extended_unicode_string = self.extended_unicode_variable_type(declaration);
-        self.completion.begin_capture();
-        let initializer = declaration.initializer.as_ref().map(|initializer| {
-            if let Some(completion) = extended_unicode_string.clone() {
-                match self.require_completion(completion) {
-                    Completion::Complete(ty) => ty,
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => {
-                        self.store.deferred_utf16_string_literal()
-                    }
-                }
-            } else {
-                self.infer_expression(file, scope, initializer, annotation)
-            }
-        });
-        let initializer_completion = self.completion.finish_capture();
-        if let (Some(source), Some(target), Some(initializer)) =
-            (initializer, annotation, declaration.initializer.as_ref())
-        {
-            let target_order = declaration.annotation.as_ref().and_then(|annotation| {
-                self.property_order_for_type_node_root(file, scope, annotation)
-            });
-            self.report_relation(
-                source,
-                target,
-                declaration.name_span,
-                Some(initializer),
-                target_order,
-                RelationMode::Assignment,
-                RelationDiagnosticStyle::Type,
-            );
-        }
-        if let Some(id) =
-            self.find_declaration(file, owner, DeclarationKind::Variable, &declaration.name)
-        {
-            let initializer = initializer.map(|inferred| {
-                if declaration.declaration_kind == VariableKind::Const {
-                    inferred
-                } else {
-                    self.widen(inferred)
-                }
-            });
-            let value = annotation
-                .or(initializer)
-                .unwrap_or(self.store.builtins.any);
-            if annotation_is_complete
-                && (annotation.is_some() || initializer_completion.is_complete())
-                && self.is_cacheable_type(value)
-                && self.semantic_declaration_is_claimed(id)
-                && self.program.javascript_assignments.root(id).is_none()
-            {
-                self.value_queries
-                    .insert(id, declaration_value::ValueQueryState::Ready(value));
-            } else {
-                self.value_queries.remove(&id);
-            }
-        }
-    }
-
     fn check_function(&mut self, file: FileId, owner: NodeId, declaration: &FunctionDeclaration) {
         let Some(id) =
             self.find_declaration(file, owner, DeclarationKind::Function, &declaration.name)
@@ -298,21 +228,11 @@ impl<'a> Checker<'a> {
             type_parameters
         };
         match &node.kind {
-            TypeNodeKind::Keyword(keyword) => match keyword {
-                KeywordType::Any => self.store.builtins.any,
-                KeywordType::Unknown => self.store.builtins.unknown,
-                KeywordType::Never => self.store.builtins.never,
-                KeywordType::Void => self.store.builtins.void,
-                KeywordType::Undefined => self.store.builtins.undefined,
-                KeywordType::Null => self.store.builtins.null,
-                KeywordType::Boolean => self.store.builtins.boolean,
-                KeywordType::Number => self.store.builtins.number,
-                KeywordType::String => self.store.builtins.string,
-                KeywordType::BigInt => self.store.builtins.bigint,
-                KeywordType::Object => self.store.builtins.object,
-                KeywordType::Symbol => self.store.builtins.symbol,
-                KeywordType::UniqueSymbol => self.store.deferred_unique_symbol(),
-            },
+            TypeNodeKind::Keyword(keyword) => self
+                .store
+                .builtins
+                .keyword(*keyword)
+                .unwrap_or_else(|| self.store.deferred_unique_symbol()),
             TypeNodeKind::Literal(literal) => {
                 self.literal_type(literal, LiteralProvenance::Regular)
             }
@@ -423,12 +343,12 @@ impl<'a> Checker<'a> {
                 {
                     return self.store.intern(TypeKind::Array(arguments[0]));
                 }
-                self.store
-                    .intern(TypeKind::Deferred(DeferredType::Reference {
-                        declaration,
-                        arguments,
-                    }))
+                if self.program.standard_library.is_map_type(declaration) && arguments.len() == 2 {
+                    return self.library_reference(declaration, arguments);
+                }
+                self.store.symbolic_reference(declaration, arguments)
             }
+            TypeNodeKind::This => self.resolve_this_type(file, node.span),
             TypeNodeKind::TypeQuery {
                 name,
                 name_span,
@@ -445,14 +365,14 @@ impl<'a> Checker<'a> {
                     if let Some(constraint) = constraint {
                         let _ = self.resolve_type_node(file, scope, constraint, type_parameters);
                     }
-                    self.store.intern(TypeKind::TypeParameter {
-                        declaration: DeclId {
+                    self.store.type_parameter(
+                        DeclId {
                             file,
                             local: name_span.start | (1 << 31),
                         },
-                        index: 0,
-                        name: name.clone(),
-                    })
+                        0,
+                        name,
+                    )
                 }
             }
             TypeNodeKind::Predicate {
@@ -514,14 +434,14 @@ impl<'a> Checker<'a> {
                 ..
             } => {
                 let constraint = self.resolve_type_node(file, scope, constraint, type_parameters);
-                let parameter_type = self.store.intern(TypeKind::TypeParameter {
-                    declaration: DeclId {
+                let parameter_type = self.store.type_parameter(
+                    DeclId {
                         file,
                         local: parameter_span.start | (1 << 31),
                     },
-                    index: 0,
-                    name: parameter.clone(),
-                });
+                    0,
+                    parameter,
+                );
                 let mut mapped_parameters = type_parameters.clone();
                 mapped_parameters.insert(parameter.clone(), parameter_type);
                 let name_type = name_type.as_ref().map(|name_type| {
@@ -552,6 +472,22 @@ impl<'a> Checker<'a> {
             }
             TypeNodeKind::Missing => self.store.builtins.error,
         }
+    }
+
+    pub(super) fn library_reference(
+        &mut self,
+        declaration: DeclId,
+        arguments: Vec<TypeId>,
+    ) -> TypeId {
+        let library_declaration = self
+            .program
+            .standard_library_declaration(declaration)
+            .expect("a canonical reference needs its program-owned library declaration");
+        self.store.intern(TypeKind::LibraryReference {
+            declaration,
+            name: library_declaration.name.clone(),
+            arguments,
+        })
     }
 
     fn infer_expression(
@@ -675,6 +611,7 @@ impl<'a> Checker<'a> {
                 callee,
                 type_arguments,
                 arguments,
+                ..
             } => {
                 let callee_type = self.infer_expression(file, scope, callee, None);
                 let type_arguments = type_arguments
@@ -685,18 +622,19 @@ impl<'a> Checker<'a> {
                     .first()
                     .zip(arguments.last())
                     .map_or(callee.span, |(first, last)| first.span.merge(last.span));
+                let mut argument_types = Vec::with_capacity(arguments.len());
                 for argument in arguments {
-                    let _ = self.infer_expression_contextual(
+                    argument_types.push(self.infer_expression_contextual(
                         file,
                         scope,
                         argument,
                         ContextualType::Deferred,
-                    );
+                    ));
                 }
                 let query = self.deferred_construct_type(
                     callee_type,
                     type_arguments,
-                    arguments.len(),
+                    argument_types,
                     argument_span,
                 );
                 let completion = self.force_type(query, 0);
@@ -735,31 +673,51 @@ impl<'a> Checker<'a> {
                     }
                     UnaryOperator::TypeOf => self.store.builtins.string,
                     UnaryOperator::Void => self.store.builtins.undefined,
-                    UnaryOperator::Await => {
-                        self.store.intern(TypeKind::Deferred(DeferredType::Unary {
-                            operator: DeferredUnaryOperator::Await,
-                            operand,
-                        }))
-                    }
+                    UnaryOperator::Await => self
+                        .store
+                        .deferred_unary(DeferredUnaryOperator::Await, operand),
                     UnaryOperator::Plus | UnaryOperator::Minus | UnaryOperator::BitwiseNot => {
-                        self.store.intern(TypeKind::Deferred(DeferredType::Unary {
-                            operator: match operator {
+                        self.store.deferred_unary(
+                            match operator {
                                 UnaryOperator::Plus => DeferredUnaryOperator::Plus,
                                 UnaryOperator::Minus => DeferredUnaryOperator::Minus,
                                 UnaryOperator::BitwiseNot => DeferredUnaryOperator::BitwiseNot,
                                 _ => unreachable!(),
                             },
                             operand,
-                        }))
+                        )
                     }
                 }
             }
-            ExpressionKind::Assignment { left, right, .. } => {
-                self.infer_assignment(file, scope, left, right)
-            }
+            ExpressionKind::Assignment {
+                left,
+                operator,
+                operator_span,
+                right,
+                ..
+            } => match operator {
+                AssignmentOperator::Assign => self.infer_assignment(file, scope, left, right),
+                AssignmentOperator::AddAssign => self.infer_compound_add_assignment(
+                    file,
+                    scope,
+                    expression.span,
+                    *operator_span,
+                    left,
+                    right,
+                ),
+            },
             ExpressionKind::As { expression, ty } => {
                 self.infer_expression(file, scope, expression, None);
                 self.resolve_type_node(file, scope, ty, &HashMap::new())
+            }
+            ExpressionKind::NonNull(inner) => {
+                let inferred = self.infer_expression_contextual(file, scope, inner, expected);
+                if self.options.effective_strict_null_checks() {
+                    self.store
+                        .deferred_unary(DeferredUnaryOperator::NonNull, inferred)
+                } else {
+                    inferred
+                }
             }
             ExpressionKind::Parenthesized(inner) => {
                 self.infer_expression_contextual(file, scope, inner, expected)
@@ -815,6 +773,7 @@ impl<'a> Checker<'a> {
                 declaration,
                 &arguments,
                 reference_instantiation.unwrap_or(Completion::Deferred),
+                depth + 1,
             ),
             DeferredType::Value(declaration) => self.declaration_value_type(declaration),
             query @ DeferredType::FlowReference { .. } => self.force_flow(query, depth + 1),
@@ -825,8 +784,8 @@ impl<'a> Checker<'a> {
             DeferredType::Construct {
                 callee,
                 type_arguments,
-                argument_count,
-            } => self.evaluate_construct(callee, &type_arguments, argument_count, depth + 1),
+                arguments,
+            } => self.evaluate_construct(callee, &type_arguments, &arguments, depth + 1),
             DeferredType::Property { object, name } => {
                 self.evaluate_property(ty, object, &name, depth + 1)
             }
@@ -921,6 +880,7 @@ impl<'a> Checker<'a> {
         &mut self,
         declaration: DeclId,
         arguments: &[TypeId],
+        depth: usize,
     ) -> Completion<TypeId> {
         if !self.semantic_declaration_is_claimed(declaration) {
             return Completion::Deferred;
@@ -933,8 +893,21 @@ impl<'a> Checker<'a> {
             if self
                 .program
                 .standard_library
-                .is_string_record_type(declaration)
+                .is_property_key_type(declaration)
+                && arguments.is_empty()
             {
+                return self.property_key_type();
+            }
+            if self
+                .program
+                .standard_library
+                .is_homogeneous_record_type(declaration)
+            {
+                if completed!(self.record_key_constraint_check(declaration, arguments, depth,))
+                    .is_err()
+                {
+                    return Completion::Complete(self.store.builtins.error);
+                }
                 let [key, value] = arguments else {
                     return Completion::Deferred;
                 };
@@ -948,6 +921,9 @@ impl<'a> Checker<'a> {
                         ..ObjectShape::default()
                     }));
                 }
+                return Completion::Complete(
+                    self.library_reference(declaration, arguments.to_vec()),
+                );
             }
             return Completion::Deferred;
         }
@@ -963,61 +939,15 @@ impl<'a> Checker<'a> {
         {
             return Completion::Deferred;
         }
-        let reference_parameters = match model {
-            DeclarationModel::TypeAlias {
-                declaration: alias, ..
-            } => Some(alias.type_parameters.as_slice()),
-            DeclarationModel::Interface {
-                declaration: interface,
-                ..
-            } => Some(interface.type_parameters.as_slice()),
-            DeclarationModel::Class {
-                declaration: class, ..
-            } => Some(class.type_parameters.as_slice()),
-            DeclarationModel::Variable { .. }
-            | DeclarationModel::Parameter { .. }
-            | DeclarationModel::Function { .. }
-            | DeclarationModel::JavaScriptProperty(..) => None,
-        };
+        let reference_parameters = model.type_parameters().map(|(parameters, _)| parameters);
         if reference_parameters.is_some_and(|parameters| {
             arguments.len() != parameters.len() || !object_shape::plain_type_parameters(parameters)
         }) {
-            // Defaults, constraints, and generic arity diagnostics are not
-            // yet instantiated by the reference owner. Dropping any of those
-            // facts before substitution can poison an exact or generative
-            // recursive cache entry.
+            // Unmodeled arity, defaults, or constraints cannot enter a
+            // definitive exact/generative reference cache.
             return Completion::Deferred;
         }
-        match model {
-            DeclarationModel::TypeAlias {
-                declaration: alias,
-                scope,
-            } => self.evaluate_type_alias_reference(declaration, alias, scope, arguments),
-            DeclarationModel::Interface {
-                declaration: interface,
-                scope,
-            } => {
-                let parameters =
-                    self.substitution(declaration, &interface.type_parameters, arguments);
-                match self.resolve_interface_shape(declaration, interface, scope, &parameters) {
-                    Completion::Complete(shape) => {
-                        Completion::Complete(self.store.object_shape(shape))
-                    }
-                    Completion::Deferred => Completion::Deferred,
-                    Completion::Cycle => Completion::Cycle,
-                    Completion::Limit => Completion::Limit,
-                }
-            }
-            DeclarationModel::Class {
-                identity,
-                declaration: class,
-                scope,
-            } => self.evaluate_class_instance(identity, class, scope, arguments),
-            DeclarationModel::Variable { .. }
-            | DeclarationModel::Parameter { .. }
-            | DeclarationModel::Function { .. }
-            | DeclarationModel::JavaScriptProperty(..) => Completion::Deferred,
-        }
+        self.evaluate_reference_model(declaration, model, arguments)
     }
 
     fn substitution(
@@ -1031,11 +961,8 @@ impl<'a> Checker<'a> {
             .enumerate()
             .map(|(index, parameter)| {
                 let ty = arguments.get(index).copied().unwrap_or_else(|| {
-                    self.store.intern(TypeKind::TypeParameter {
-                        declaration,
-                        index: index as u32,
-                        name: parameter.name.clone(),
-                    })
+                    self.store
+                        .type_parameter(declaration, index as u32, &parameter.name)
                 });
                 (parameter.name.clone(), ty)
             })
@@ -1108,6 +1035,18 @@ impl<'a> Checker<'a> {
     }
 
     fn push_diagnostic(&mut self, file: FileId, span: Span, message: String, code: u32) {
+        // A contextual grammar failure means this authored token is not a
+        // semantic name reference. TypeScript reports the owning contextual
+        // diagnostic, not an additional missing-name error for the same span.
+        if code == 2304
+            && self.program.files[file.0 as usize]
+                .syntax
+                .contextual_grammar_facts()
+                .iter()
+                .any(|fact| fact.span == span)
+        {
+            return;
+        }
         self.push_diagnostic_with_identity(
             file,
             span,
@@ -1169,6 +1108,13 @@ impl RelationContext for Checker<'_> {
         arguments: &[TypeId],
     ) -> bool {
         Checker::generative_relation_frame_supported(self, declaration, arguments)
+    }
+
+    fn library_reference_arguments_are_covariant(&self, declaration: DeclId) -> bool {
+        self.program.standard_library.is_map_type(declaration)
+            && !self
+                .program
+                .standard_library_type_has_authored_declarations(declaration)
     }
 
     fn strict_null_checks(&self) -> bool {

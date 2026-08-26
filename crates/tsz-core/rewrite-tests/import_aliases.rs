@@ -64,6 +64,71 @@ fn renamed_regular_and_type_only_imports_work_inside_wrapped_type_queries() {
 }
 
 #[test]
+fn named_type_imports_resolve_exported_aliases_without_losing_local_identity() {
+    let declaration = source("keys.ts", "export type PropertyKeyAlias = string | symbol;");
+    let usage = source(
+        "use.ts",
+        concat!(
+            "import type { PropertyKeyAlias as RenamedKey } from './keys';\n",
+            "export type Wrapped<T extends Record<RenamedKey, unknown>> = T;",
+        ),
+    );
+
+    for roots in [
+        vec![declaration.clone(), usage.clone()],
+        vec![usage.clone(), declaration.clone()],
+    ] {
+        assert_complete(&Compiler::new().compile(roots, &options()));
+    }
+
+    let mut service = LanguageService::new(options());
+    service.open("keys.ts", declaration.text);
+    service.open("use.ts", usage.text.clone());
+    let import = usage.text.find("RenamedKey").unwrap() as u32;
+    let reference = usage.text.rfind("RenamedKey").unwrap() as u32;
+    let definition = service
+        .definition_and_bound_span("use.ts", reference + 1)
+        .expect("imported type-alias definition");
+    assert_eq!(definition.definitions.len(), 1);
+    assert_eq!(definition.definitions[0].file_name, "use.ts");
+    assert_eq!(definition.definitions[0].text_span.start, import);
+}
+
+#[test]
+fn imported_generic_type_aliases_are_structural_and_unexported_targets_fail_closed() {
+    for import in [
+        "import type { Box as Wrapped } from './model';",
+        "import { Box as Wrapped } from './model';",
+    ] {
+        let output = Compiler::new().compile(
+            vec![
+                source("model.ts", "export type Box<T> = { value: T };"),
+                source(
+                    "use.ts",
+                    &format!("{import}\nconst value: Wrapped<number> = {{ value: 1 }};"),
+                ),
+            ],
+            &options(),
+        );
+        assert_complete(&output);
+    }
+
+    let hidden = Compiler::new().compile(
+        vec![
+            source("model.ts", "type Hidden = string;"),
+            source(
+                "use.ts",
+                "import type { Hidden } from './model';\nlet value: Hidden;",
+            ),
+        ],
+        &options(),
+    );
+    assert!(hidden.diagnostics.is_empty(), "{:?}", hidden.diagnostics);
+    assert_eq!(hidden.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(hidden.exit_status, CompileExitStatus::SemanticIncomplete);
+}
+
+#[test]
 fn import_specifier_selects_the_target_and_unowned_value_targets_fail_closed() {
     let class_target = source("class-target.ts", "export class Selected {}");
     let type_target = source("type-target.ts", "export type Selected = string;");

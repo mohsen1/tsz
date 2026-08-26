@@ -1,13 +1,13 @@
 use crate::bind::ScopeId;
 use crate::program::SemanticCompletion;
-use crate::semantics::relation::RelationContext;
+use crate::semantics::relation::{RelationContext, RelationMode};
 use crate::semantics::types::{
     Completion, DeferredBinaryOperator, DeferredLogicalOperator, DeferredType, TypeId, TypeKind,
 };
 use crate::source::{FileId, Span};
 use crate::syntax::{BinaryOperator, Expression, ExpressionKind};
 
-use super::Checker;
+use super::{Checker, relation_diagnostic::RelationDiagnosticStyle};
 
 pub(super) struct BinaryEvaluation {
     pub(super) value: Option<TypeId>,
@@ -17,7 +17,7 @@ pub(super) struct BinaryEvaluation {
 
 #[derive(Default)]
 struct BinaryDiagnostics {
-    boolean_bitwise: bool,
+    boolean_bitwise_suggestion: Option<&'static str>,
     invalid_left: bool,
     invalid_right: bool,
     incompatible: Option<(TypeId, TypeId)>,
@@ -47,7 +47,10 @@ binary_operator_schema! {
     Divide => Divide, "/";
     Remainder => Remainder, "%";
     BitwiseAnd => BitwiseAnd, "&";
+    BitwiseXor => BitwiseXor, "^";
     BitwiseOr => BitwiseOr, "|";
+    LeftShift => LeftShift, "<<";
+    SignedRightShift => SignedRightShift, ">>";
     UnsignedRightShift => UnsignedRightShift, ">>>";
 }
 
@@ -107,6 +110,40 @@ impl Checker<'_> {
         }
         self.store.builtins.boolean
     }
+
+    pub(super) fn infer_compound_add_assignment(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        expression_span: Span,
+        operator_span: Span,
+        left: &Expression,
+        right: &Expression,
+    ) -> TypeId {
+        let target = self.infer_assignment_target(file, scope, left);
+        let left_type = target.unwrap_or(self.store.builtins.error);
+        let right_type = self.infer_expression(file, scope, right, None);
+        let source = self.infer_binary_expression(
+            file,
+            DeferredBinaryOperator::Add,
+            left_type,
+            right_type,
+            [left.span, right.span, operator_span, expression_span],
+        );
+        if let Some(target) = target {
+            self.report_relation(
+                source,
+                target,
+                left.span,
+                Some(right),
+                self.expression_order_origins.get(&(file, left.id)).cloned(),
+                RelationMode::Assignment,
+                RelationDiagnosticStyle::Type,
+            );
+        }
+        source
+    }
+
     fn infer_binary_expression(
         &mut self,
         file: FileId,
@@ -175,15 +212,18 @@ impl Checker<'_> {
                 diagnostics: BinaryDiagnostics::default(),
             };
         }
+        let boolean_operands =
+            has_flag(left_flags, BOOLEAN_LIKE) && has_flag(right_flags, BOOLEAN_LIKE);
         let mut diagnostics = BinaryDiagnostics {
-            boolean_bitwise: matches!(
-                operator,
-                DeferredBinaryOperator::BitwiseAnd | DeferredBinaryOperator::BitwiseOr
-            ) && has_flag(left_flags, BOOLEAN_LIKE)
-                && has_flag(right_flags, BOOLEAN_LIKE),
+            boolean_bitwise_suggestion: match operator {
+                DeferredBinaryOperator::BitwiseAnd if boolean_operands => Some("&&"),
+                DeferredBinaryOperator::BitwiseXor if boolean_operands => Some("!=="),
+                DeferredBinaryOperator::BitwiseOr if boolean_operands => Some("||"),
+                _ => None,
+            },
             ..BinaryDiagnostics::default()
         };
-        let mut value = if diagnostics.boolean_bitwise {
+        let mut value = if diagnostics.boolean_bitwise_suggestion.is_some() {
             Some(self.store.builtins.number)
         } else if operator == DeferredBinaryOperator::Add {
             if ((has_flag(left_flags | right_flags, STRING_LIKE))
@@ -258,12 +298,7 @@ impl Checker<'_> {
         [left_span, right_span, operator_span, expression_span]: [Span; 4],
         diagnostics: &BinaryDiagnostics,
     ) {
-        if diagnostics.boolean_bitwise {
-            let suggested = if operator == DeferredBinaryOperator::BitwiseAnd {
-                "&&"
-            } else {
-                "||"
-            };
+        if let Some(suggested) = diagnostics.boolean_bitwise_suggestion {
             self.push_diagnostic(file, operator_span, format!("The '{}' operator is not allowed for boolean types. Consider using '{}' instead.", operator_text(operator), suggested), 2447);
             return;
         }

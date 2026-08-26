@@ -68,6 +68,278 @@ fn explicit_arguments_override_closed_defaults_exactly() {
 }
 
 #[test]
+fn explicit_arguments_do_not_materialize_structural_defaults() {
+    let cases = [
+        "type Wrapper<Value=Record<string,unknown>>=Value;\
+         type Applied<Item>=Wrapper<Item>;\
+         declare const value:Applied<number>;const numberValue:number=value;",
+        "type Container<Payload={fallback:string}>={payload:Payload};\
+         type Nested<Model>={inner:Container<Model>};\
+         declare const nested:Nested<boolean>;\
+         const flag:boolean=nested.inner.payload;",
+        "interface Box<Contents={fallback:string}>{contents:Contents}\
+         declare const box:Box<number>;const contents:number=box.contents;",
+        "declare class Crate<Entry={fallback:string}>{entry:Entry}\
+         declare const crate:Crate<boolean>;const entry:boolean=crate.entry;",
+    ];
+
+    for source in cases {
+        assert_complete(&compile(source));
+    }
+}
+
+#[test]
+fn explicit_constrained_references_complete_only_after_proving_the_arguments() {
+    let complete = [
+        "type EventKey=string|symbol;interface Emitter<Events extends Record<EventKey,unknown>>{all:Map<keyof Events,unknown>}declare const emitter:Emitter<{ready:number}>;",
+        "type EventKey=string|symbol;interface Channel<Model extends Record<EventKey,unknown>>{all:Map<keyof Model,unknown>}declare function identity<Events extends Record<EventKey,unknown>>(value:Channel<Events>):Channel<Events>;",
+        "type EventKey=string|symbol;interface Box<Value extends Record<EventKey,unknown>>{value:Value}declare function wrap<Model extends {renamed:number}>(value:Box<Model>):Box<Model>;",
+    ];
+    for source in complete {
+        assert_complete(&compile(source));
+    }
+
+    for source in [
+        "type EventKey=string|symbol;interface Emitter<Events extends Record<EventKey,unknown>>{all:Map<keyof Events,unknown>}declare const emitter:Emitter<number>;",
+        "type EventKey=string|symbol;interface Emitter<Events extends Record<EventKey,unknown>>{all:Map<keyof Events,unknown>}declare function identity<Events>(value:Emitter<Events>):Emitter<Events>;",
+        "interface Box<Value extends Record<string,boolean>>{value:Value}declare const box:Box<{ready:number}>;",
+        "interface Text<Value extends string>{value:Value}declare const text:Text<number>;",
+    ] {
+        let output = compile(source);
+        assert_eq!(output.diagnostics, [], "{source}: {:?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{source}: {:?}",
+            output.stats
+        );
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+}
+
+#[test]
+fn constrained_reference_applications_are_cold_warm_and_root_order_stable() {
+    let compiler = Compiler::new();
+    let declaration = SourceInput::new(
+        "channel.ts",
+        Arc::<str>::from(
+            "type Key=string|symbol;interface Channel<Model extends Record<Key,unknown>>{all:Map<keyof Model,unknown>}",
+        ),
+    );
+    let consumer = SourceInput::new(
+        "consumer.ts",
+        Arc::<str>::from("declare const channel:Channel<{renamed:number}>;"),
+    );
+    let run = |files| compiler.compile(files, &options());
+    let cold = run(vec![declaration.clone(), consumer.clone()]);
+    let warm = run(vec![declaration.clone(), consumer.clone()]);
+    let reversed = run(vec![consumer, declaration]);
+    for output in [&cold, &warm, &reversed] {
+        assert_complete(output);
+    }
+    assert_eq!(cold.stats.types, warm.stats.types);
+    assert_eq!(cold.stats.types, reversed.stats.types);
+}
+
+#[test]
+fn declaration_owned_symbolic_keyof_remains_safe_inside_object_shapes() {
+    // When `keyof` keeps a declaration-owned type parameter symbolic, its
+    // result is still wholly within PropertyKey. Object-shape construction can
+    // therefore retain the symbolic child without materializing the operand.
+    for source in [
+        "interface Emitter<Events>{all:Map<keyof Events,unknown>}declare function identity<Events>(emitter:Emitter<Events>):Emitter<Events>;",
+        "interface Registry<Model>{all:Map<(keyof Model),unknown>}declare function preserve<Model>(registry:Registry<Model>):Registry<Model>;",
+        "type Registry<Subject>=Map<keyof Subject,unknown>;interface Holder<Subject>{all:Registry<Subject>}declare function preserve<Subject>(holder:Holder<Subject>):Holder<Subject>;",
+        "interface Registry<State>{all:Map<keyof State,unknown>}interface Wrapped<State>{nested:{registry:Registry<State>}}declare function preserve<State>(value:Wrapped<State>):Wrapped<State>;",
+    ] {
+        let output = compile(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source}: {:?}",
+            output.stats
+        );
+        assert_eq!(output.exit_status, CompileExitStatus::Success, "{source}");
+    }
+}
+
+#[test]
+fn canonical_record_key_failures_use_authored_argument_spans_and_relation_reasons() {
+    let cases: [(&str, &str, &str, &[&str]); 8] = [
+        ("type Invalid<Key>=Record<Key,unknown>;", "Key", "Key", &[]),
+        (
+            "type Invalid=Record<boolean,unknown>;",
+            "boolean",
+            "boolean",
+            &[],
+        ),
+        ("type Invalid=Record<{},unknown>;", "{}", "{}", &[]),
+        (
+            "type Invalid=Record<unknown,any>;",
+            "unknown",
+            "unknown",
+            &[],
+        ),
+        (
+            "type Invalid=Record<string|boolean,unknown>;",
+            "string|boolean",
+            "string | boolean",
+            &["Type 'boolean' is not assignable to type 'string | number | symbol'."],
+        ),
+        (
+            "type RenamedKey=boolean;type Invalid=Record<RenamedKey,unknown>;",
+            "RenamedKey",
+            "boolean",
+            &[],
+        ),
+        ("type Nested={entry:Record<{},unknown>};", "{}", "{}", &[]),
+        (
+            "type Invalid<Key extends boolean>=Record<Key,unknown>;",
+            "Key",
+            "Key",
+            &["Type 'boolean' is not assignable to type 'string | number | symbol'."],
+        ),
+    ];
+    for (source, needle, source_name, related) in cases {
+        let output = compile(source);
+        let [diagnostic] = output.diagnostics.as_slice() else {
+            panic!("{source}: {:#?}", output.diagnostics);
+        };
+        assert_eq!(diagnostic.file, "case.ts", "{source}");
+        assert_eq!(diagnostic.code, 2344, "{source}");
+        assert_eq!(
+            diagnostic.start,
+            source.rfind(needle).unwrap() as u32,
+            "{source}"
+        );
+        assert_eq!(diagnostic.length, needle.len() as u32, "{source}");
+        assert_eq!(
+            diagnostic.message_text,
+            format!(
+                "Type '{source_name}' does not satisfy the constraint 'string | number | symbol'."
+            ),
+            "{source}"
+        );
+        assert_eq!(
+            diagnostic
+                .related_information
+                .iter()
+                .map(|information| (
+                    information.message_text.as_str(),
+                    information.code,
+                    information.depth,
+                ))
+                .collect::<Vec<_>>(),
+            related
+                .iter()
+                .enumerate()
+                .map(|(depth, message)| (*message, 2344, depth as u32 + 1))
+                .collect::<Vec<_>>(),
+            "{source}"
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source}"
+        );
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsSkipped,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn record_key_constraint_controls_preserve_valid_nocheck_and_unowned_boundaries() {
+    for source in [
+        "type Valid<Key extends string|symbol>=Record<Key,unknown>;",
+        "type Valid=Record<string|number|symbol,unknown>;",
+        "type Valid=Record<PropertyKey,unknown>;",
+    ] {
+        assert_complete(&compile(source));
+    }
+
+    let no_check = compile("// @ts-nocheck\ntype Invalid<Key>=Record<Key,unknown>;");
+    assert_complete(&no_check);
+
+    let deferred = compile(concat!(
+        "type DeferredExtract=Record<Extract<string,'ready'>,unknown>;",
+        "type DeferredConditional<Key>=Record<Key extends string?Key:never,unknown>;",
+    ));
+    assert_eq!(deferred.diagnostics, []);
+    assert_eq!(deferred.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(deferred.exit_status, CompileExitStatus::SemanticIncomplete);
+}
+
+#[test]
+fn record_key_constraint_failures_are_cold_warm_and_root_order_stable() {
+    let compiler = Compiler::new();
+    let declarations = SourceInput::new(
+        "models.ts",
+        Arc::<str>::from("type RenamedInvalidKey=boolean;"),
+    );
+    let consumer = SourceInput::new(
+        "consumer.ts",
+        Arc::<str>::from("type Invalid=Record<RenamedInvalidKey,unknown>;"),
+    );
+    let run = |files| compiler.compile(files, &options());
+    let cold = run(vec![declarations.clone(), consumer.clone()]);
+    let warm = run(vec![declarations.clone(), consumer.clone()]);
+    let reversed = run(vec![consumer, declarations]);
+    for output in [&cold, &warm, &reversed] {
+        let [diagnostic] = output.diagnostics.as_slice() else {
+            panic!("{:#?}", output.diagnostics);
+        };
+        assert_eq!(diagnostic.file, "consumer.ts");
+        assert_eq!(diagnostic.start, 20);
+        assert_eq!(diagnostic.length, 17);
+        assert_eq!(diagnostic.code, 2344);
+        assert_eq!(
+            diagnostic.message_text,
+            "Type 'boolean' does not satisfy the constraint 'string | number | symbol'."
+        );
+        assert!(diagnostic.related_information.is_empty());
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsSkipped
+        );
+    }
+    assert_eq!(cold.stats.types, warm.stats.types);
+    assert_eq!(cold.stats.types, reversed.stats.types);
+}
+
+#[test]
+fn symbolic_keyof_object_shapes_are_cold_warm_and_root_order_stable() {
+    let compiler = Compiler::new();
+    let declarations = SourceInput::new(
+        "models.ts",
+        Arc::<str>::from(
+            "type Registry<Model>=Map<keyof Model,unknown>;interface Wrapped<Model>{nested:{registry:Registry<Model>}}",
+        ),
+    );
+    let consumer = SourceInput::new(
+        "consumer.ts",
+        Arc::<str>::from("declare function preserve<Model>(value:Wrapped<Model>):Wrapped<Model>;"),
+    );
+    let run = |files| compiler.compile(files, &options());
+    let cold = run(vec![declarations.clone(), consumer.clone()]);
+    let warm = run(vec![declarations.clone(), consumer.clone()]);
+    let reversed = run(vec![consumer, declarations]);
+    for output in [&cold, &warm, &reversed] {
+        assert_complete(output);
+    }
+    assert_eq!(cold.stats.types, warm.stats.types);
+    assert_eq!(cold.stats.types, reversed.stats.types);
+}
+
+#[test]
 fn aliases_and_class_references_preserve_closed_defaults() {
     let output = compile(
         "declare class TableClass<Subject=any>{_field:Subject}\
@@ -90,6 +362,13 @@ fn missing_arity_constraints_and_nonclosed_defaults_stay_incomplete() {
         "interface Broken<First=string,Second>{first:First;second:Second}declare const broken:Broken;broken.first;",
         "interface Box<Value=Box>{value:Value}declare const box:Box;box.value;",
         "interface Box<Value=1n>{value:Value}declare const box:Box;box.value;",
+        "type Wrapper<Value=Record<string,unknown>>=Value;declare const value:Wrapper;value;",
+        "type Pair<First,Second=Record<string,unknown>>={first:First;second:Second};\
+         declare const pair:Pair<number>;pair.second;",
+        "type Bound<Value extends string=string>=Value;\
+         declare const value:Bound<number>;value;",
+        "type Projection<Value=Record<string,unknown>>=Value[keyof Value];\
+         declare const value:Projection<string>;value;",
     ];
 
     for source in cases {

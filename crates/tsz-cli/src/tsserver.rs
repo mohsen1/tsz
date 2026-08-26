@@ -632,6 +632,7 @@ fn compiler_options(value: &Value) -> CompilerOptions {
         strict_null_checks: boolean("strictNullChecks"),
         strict_property_initialization: boolean("strictPropertyInitialization"),
         no_implicit_any: boolean("noImplicitAny"),
+        use_define_for_class_fields: boolean("useDefineForClassFields"),
         no_unused_locals: boolean("noUnusedLocals").unwrap_or(false),
         no_unused_parameters: boolean("noUnusedParameters").unwrap_or(false),
         no_lib: boolean("noLib").unwrap_or(false),
@@ -702,86 +703,4 @@ fn byte_to_utf16_offset(text: &str, offset: u32) -> u32 {
         .unwrap_or(usize::MAX)
         .min(text.len());
     text[..end].encode_utf16().count() as u32
-}
-
-pub fn run_legacy_server(input: impl Read, mut output: impl Write) -> Result<()> {
-    let mut service = LanguageService::new(CompilerOptions {
-        no_emit: true,
-        ..CompilerOptions::default()
-    });
-    for line in BufReader::new(input).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let request: Value = serde_json::from_str(&line)?;
-        let id = request.get("id").cloned().unwrap_or(Value::Null);
-        let kind = request.get("type").and_then(Value::as_str).unwrap_or("");
-        let response = match kind {
-            "check" => legacy_check_response(&mut service, &request, id),
-            "status" => json!({
-                "id": id,
-                "memory_bytes": 0,
-                "checks": 0,
-                "cache_entries": 0,
-            }),
-            "recycle" => {
-                service.reset();
-                json!({"id": id, "ok": true})
-            }
-            "shutdown" => {
-                writeln!(output, "{}", json!({"id": id, "ok": true}))?;
-                output.flush()?;
-                return Ok(());
-            }
-            _ => json!({"id": id, "error": format!("unsupported request type: {kind}")}),
-        };
-        writeln!(output, "{response}")?;
-        output.flush()?;
-    }
-    Ok(())
-}
-
-fn legacy_check_response(service: &mut LanguageService, request: &Value, id: Value) -> Value {
-    let Some(files) = request.get("files").and_then(Value::as_array) else {
-        return json!({
-            "id": id,
-            "error": "check request files must be an array",
-        });
-    };
-    let mut inputs = Vec::with_capacity(files.len());
-    for file in files {
-        let Some(path) = file
-            .get("path")
-            .or_else(|| file.get("file"))
-            .and_then(Value::as_str)
-        else {
-            return json!({"id": id, "error": "check request file has no path"});
-        };
-        let Some(content) = file.get("content").and_then(Value::as_str) else {
-            return json!({"id": id, "error": "check request file has no content"});
-        };
-        inputs.push((path.to_string(), Arc::<str>::from(content)));
-    }
-
-    service.reset();
-    let mut options = compiler_options(request.get("options").unwrap_or(&Value::Null));
-    options.no_emit = true;
-    service.configure(options);
-    for (path, content) in inputs {
-        service.open(path, content);
-    }
-    let started = std::time::Instant::now();
-    let output_result = service.compile();
-    let codes = output_result
-        .diagnostics
-        .iter()
-        .map(|diagnostic| diagnostic.code)
-        .collect::<Vec<_>>();
-    json!({
-        "id": id,
-        "codes": codes,
-        "semantic_completion": output_result.semantic_completion,
-        "elapsed_ms": started.elapsed().as_secs_f64() * 1_000.0,
-    })
 }

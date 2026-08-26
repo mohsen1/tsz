@@ -1,10 +1,43 @@
-use crate::source::Span;
+use crate::source::{SourceText, Span};
 
 use super::{ParseOutput, Parser};
 use crate::syntax::{
-    CommentKind, CommentSourcePosition, CommentTrivia, JavaScriptJSDocCastKind, SourceUnit,
+    CommentKind, CommentSourcePosition, CommentTrivia, JavaScriptJSDocCastKind, SourceUnit, Token,
     TokenKind, parse_source_check_directive,
 };
+
+pub(super) fn source_is_external_module(source: &SourceText, tokens: &[Token]) -> bool {
+    let implicit_module = source
+        .path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "mts" | "cts" | "mjs" | "cjs"
+            )
+        });
+    if implicit_module {
+        return true;
+    }
+    let mut brace_depth = 0_u32;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.kind {
+            TokenKind::LeftBrace => brace_depth += 1,
+            TokenKind::RightBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::Export if brace_depth == 0 => return true,
+            TokenKind::Import
+                if brace_depth == 0
+                    && tokens.get(index + 1).map(|token| token.kind)
+                        != Some(TokenKind::LeftParen) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
 
 impl Parser<'_> {
     /// Whether the current token's trivia range contains an authored JSDoc
@@ -70,10 +103,8 @@ impl Parser<'_> {
                 self.bump();
             }
         }
-        self.finish_no_substitution_template_source(&statements);
-        self.finish_extended_unicode_string_source(&statements);
-        self.finish_regular_expression_source(&statements);
-        self.finish_numeric_recovery_source(&statements);
+        self.finish_regular_expression_source();
+        self.finish_numeric_recovery_source();
         self.finish_numeric_separator_source();
         let parser_recovery_facts = self.finish_parser_recovery_facts(&statements);
         let authored_literal_facts =
@@ -99,6 +130,7 @@ impl Parser<'_> {
                 unmodeled_declaration_hosts: self.unmodeled_declaration_hosts,
                 source_check_directive,
                 source_syntax_facts: self.source_syntax_facts.into_iter().collect(),
+                contextual_grammar_facts: self.contextual_grammar_facts,
                 comments: self.comments,
                 has_unicode_line_comment_terminator: self.has_unicode_line_comment_terminator,
             },

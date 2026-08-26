@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::source::{DeclId, FileId, NodeId};
-use crate::syntax::parse_number_literal;
+use crate::syntax::{KeywordType, parse_number_literal};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeId(pub u32);
@@ -17,7 +17,7 @@ pub struct Property {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParameterType {
-    pub name: String,
+    pub name: Option<String>,
     pub ty: TypeId,
     pub optional: bool,
     pub rest: bool,
@@ -34,43 +34,6 @@ pub struct Signature {
     pub untyped_javascript: bool,
     pub parameters: Vec<ParameterType>,
     pub return_type: TypeId,
-}
-
-/// Name-free callable structure used inside object shapes.
-///
-/// Authored parameter names remain syntax/display provenance. They cannot
-/// participate in semantic interning because renaming a binder does not
-/// change a callable type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ShapeParameter {
-    pub ty: TypeId,
-    pub optional: bool,
-    pub rest: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ShapeSignature {
-    pub untyped_javascript: bool,
-    pub parameters: Vec<ShapeParameter>,
-    pub return_type: TypeId,
-}
-
-impl From<&Signature> for ShapeSignature {
-    fn from(signature: &Signature) -> Self {
-        Self {
-            untyped_javascript: signature.untyped_javascript,
-            parameters: signature
-                .parameters
-                .iter()
-                .map(|parameter| ShapeParameter {
-                    ty: parameter.ty,
-                    optional: parameter.optional,
-                    rest: parameter.rest,
-                })
-                .collect(),
-            return_type: signature.return_type,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +63,8 @@ pub enum IndexKeyKind {
     Number,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
 pub enum ElementAccessMode {
     Read,
     Write,
@@ -127,8 +91,8 @@ pub struct IndexSignature {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ObjectShape {
     pub properties: Vec<Property>,
-    pub call_signatures: Vec<ShapeSignature>,
-    pub construct_signatures: Vec<ShapeSignature>,
+    pub call_signatures: Vec<Signature>,
+    pub construct_signatures: Vec<Signature>,
     pub index_signatures: Vec<IndexSignature>,
 }
 
@@ -148,7 +112,8 @@ impl From<Vec<Property>> for ObjectShape {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
 pub enum DeferredBinaryOperator {
     Add,
     Subtract,
@@ -156,98 +121,104 @@ pub enum DeferredBinaryOperator {
     Divide,
     Remainder,
     BitwiseAnd,
+    BitwiseXor,
     BitwiseOr,
+    LeftShift,
+    SignedRightShift,
     UnsignedRightShift,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
 pub enum DeferredLogicalOperator {
     And,
     Or,
     Nullish,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
 pub enum DeferredUnaryOperator {
     Plus,
     Minus,
     BitwiseNot,
     Await,
+    NonNull,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DeferredType {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DeferredType<T = TypeId> {
     Reference {
         declaration: DeclId,
-        arguments: Vec<TypeId>,
+        arguments: Vec<T>,
     },
     Value(DeclId),
     FlowReference {
         file: FileId,
         expression: NodeId,
         declaration: DeclId,
-        declared: TypeId,
+        declared: T,
     },
     LexicalThis {
         file: FileId,
         expression: NodeId,
     },
     Call {
-        callee: TypeId,
+        callee: T,
         argument_count: usize,
     },
     GenericCall,
     Construct {
-        callee: TypeId,
-        type_arguments: Vec<TypeId>,
-        argument_count: usize,
+        callee: T,
+        type_arguments: Vec<T>,
+        arguments: Vec<T>,
     },
     Property {
-        object: TypeId,
+        object: T,
         name: String,
     },
     ElementAccess {
-        object: TypeId,
-        index: TypeId,
+        object: T,
+        index: T,
         mode: ElementAccessMode,
     },
     Predicate {
         parameter: String,
-        asserted: Option<TypeId>,
+        asserted: Option<T>,
         asserts: bool,
         parameter_is_bound: bool,
     },
     Binary {
         operator: DeferredBinaryOperator,
-        left: TypeId,
-        right: TypeId,
+        left: T,
+        right: T,
     },
     Logical {
         operator: DeferredLogicalOperator,
-        left: TypeId,
-        right: TypeId,
+        left: T,
+        right: T,
     },
     Unary {
         operator: DeferredUnaryOperator,
-        operand: TypeId,
+        operand: T,
     },
-    KeyOf(TypeId),
+    KeyOf(T),
     Conditional {
-        check: TypeId,
-        extends: TypeId,
-        when_true: TypeId,
-        when_false: TypeId,
+        check: T,
+        extends: T,
+        when_true: T,
+        when_false: T,
     },
     Mapped {
-        constraint: TypeId,
-        name_type: Option<TypeId>,
-        value: TypeId,
+        constraint: T,
+        name_type: Option<T>,
+        value: T,
         readonly: Option<bool>,
         optional: Option<bool>,
     },
     IndexedAccess {
-        object: TypeId,
-        index: TypeId,
+        object: T,
+        index: T,
     },
     BigIntLiteral,
     NumericRecovery,
@@ -257,12 +228,137 @@ pub enum DeferredType {
     ObjectShape,
 }
 
-impl DeferredType {
+impl<T> DeferredType<T> {
     pub(crate) const fn is_query_local(&self) -> bool {
         matches!(
             self,
             Self::Value(_) | Self::Binary { .. } | Self::FlowReference { .. }
         )
+    }
+
+    fn map_types<U>(self, mut map: impl FnMut(T) -> U) -> DeferredType<U> {
+        match self {
+            Self::Reference {
+                declaration,
+                arguments,
+            } => DeferredType::Reference {
+                declaration,
+                arguments: arguments.into_iter().map(&mut map).collect(),
+            },
+            Self::Value(declaration) => DeferredType::Value(declaration),
+            Self::FlowReference {
+                file,
+                expression,
+                declaration,
+                declared,
+            } => DeferredType::FlowReference {
+                file,
+                expression,
+                declaration,
+                declared: map(declared),
+            },
+            Self::LexicalThis { file, expression } => {
+                DeferredType::LexicalThis { file, expression }
+            }
+            Self::Call {
+                callee,
+                argument_count,
+            } => DeferredType::Call {
+                callee: map(callee),
+                argument_count,
+            },
+            Self::GenericCall => DeferredType::GenericCall,
+            Self::Construct {
+                callee,
+                type_arguments,
+                arguments,
+            } => DeferredType::Construct {
+                callee: map(callee),
+                type_arguments: type_arguments.into_iter().map(&mut map).collect(),
+                arguments: arguments.into_iter().map(&mut map).collect(),
+            },
+            Self::Property { object, name } => DeferredType::Property {
+                object: map(object),
+                name,
+            },
+            Self::ElementAccess {
+                object,
+                index,
+                mode,
+            } => DeferredType::ElementAccess {
+                object: map(object),
+                index: map(index),
+                mode,
+            },
+            Self::Predicate {
+                parameter,
+                asserted,
+                asserts,
+                parameter_is_bound,
+            } => DeferredType::Predicate {
+                parameter,
+                asserted: asserted.map(map),
+                asserts,
+                parameter_is_bound,
+            },
+            Self::Binary {
+                operator,
+                left,
+                right,
+            } => DeferredType::Binary {
+                operator,
+                left: map(left),
+                right: map(right),
+            },
+            Self::Logical {
+                operator,
+                left,
+                right,
+            } => DeferredType::Logical {
+                operator,
+                left: map(left),
+                right: map(right),
+            },
+            Self::Unary { operator, operand } => DeferredType::Unary {
+                operator,
+                operand: map(operand),
+            },
+            Self::KeyOf(operand) => DeferredType::KeyOf(map(operand)),
+            Self::Conditional {
+                check,
+                extends,
+                when_true,
+                when_false,
+            } => DeferredType::Conditional {
+                check: map(check),
+                extends: map(extends),
+                when_true: map(when_true),
+                when_false: map(when_false),
+            },
+            Self::Mapped {
+                constraint,
+                name_type,
+                value,
+                readonly,
+                optional,
+            } => DeferredType::Mapped {
+                constraint: map(constraint),
+                name_type: name_type.map(&mut map),
+                value: map(value),
+                readonly,
+                optional,
+            },
+            Self::IndexedAccess { object, index } => DeferredType::IndexedAccess {
+                object: map(object),
+                index: map(index),
+            },
+            Self::BigIntLiteral => DeferredType::BigIntLiteral,
+            Self::NumericRecovery => DeferredType::NumericRecovery,
+            Self::Utf16StringLiteral => DeferredType::Utf16StringLiteral,
+            Self::UniqueSymbol => DeferredType::UniqueSymbol,
+            Self::GenericFunction => DeferredType::GenericFunction,
+            Self::ObjectShape => DeferredType::ObjectShape,
+        }
     }
 }
 
@@ -389,8 +485,13 @@ pub enum TypeKind {
         declaration: DeclId,
         name: String,
     },
+    LibraryReference {
+        declaration: DeclId,
+        name: String,
+        arguments: Vec<TypeId>,
+    },
     Function(Signature),
-    ShapeFunction(ShapeSignature),
+    ShapeFunction(Signature),
     Deferred(DeferredType),
 }
 
@@ -431,71 +532,18 @@ enum TypeOrderKey {
     },
     ClassInstance(DeclId, Vec<TypeOrderKey>, Vec<PropertyOrderKey>),
     ClassConstructor(DeclId),
+    LibraryReference(DeclId, Vec<TypeOrderKey>),
     Function(Option<DeclId>, SignatureOrderKey),
     ShapeFunction(SignatureOrderKey),
     Deferred(DeferredOrderKey),
     Truncated,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct PropertyOrderKey {
-    name: String,
-    ty: TypeOrderKey,
-    optional: bool,
-    readonly: bool,
-}
+type PropertyOrderKey = (String, TypeOrderKey, bool, bool);
+type ParameterOrderKey = (TypeOrderKey, bool, bool);
+type SignatureOrderKey = (bool, Vec<ParameterOrderKey>, Box<TypeOrderKey>);
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct ParameterOrderKey {
-    ty: TypeOrderKey,
-    optional: bool,
-    rest: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct SignatureOrderKey {
-    untyped_javascript: bool,
-    parameters: Vec<ParameterOrderKey>,
-    return_type: Box<TypeOrderKey>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum DeferredOrderKey {
-    Reference(DeclId, Vec<TypeOrderKey>),
-    Value(DeclId),
-    FlowReference(FileId, NodeId, DeclId, Box<TypeOrderKey>),
-    LexicalThis(FileId, NodeId),
-    Call(Box<TypeOrderKey>, usize),
-    GenericCall,
-    Construct(Box<TypeOrderKey>, Vec<TypeOrderKey>, usize),
-    Property(Box<TypeOrderKey>, String),
-    ElementAccess(Box<TypeOrderKey>, Box<TypeOrderKey>, u8),
-    Predicate(String, Option<Box<TypeOrderKey>>, bool, bool),
-    Binary(u8, Box<TypeOrderKey>, Box<TypeOrderKey>),
-    Logical(u8, Box<TypeOrderKey>, Box<TypeOrderKey>),
-    Unary(u8, Box<TypeOrderKey>),
-    KeyOf(Box<TypeOrderKey>),
-    Conditional(
-        Box<TypeOrderKey>,
-        Box<TypeOrderKey>,
-        Box<TypeOrderKey>,
-        Box<TypeOrderKey>,
-    ),
-    Mapped(
-        Box<TypeOrderKey>,
-        Option<Box<TypeOrderKey>>,
-        Box<TypeOrderKey>,
-        Option<bool>,
-        Option<bool>,
-    ),
-    IndexedAccess(Box<TypeOrderKey>, Box<TypeOrderKey>),
-    BigIntLiteral,
-    NumericRecovery,
-    Utf16StringLiteral,
-    UniqueSymbol,
-    GenericFunction,
-    ObjectShape,
-}
+type DeferredOrderKey = DeferredType<Box<TypeOrderKey>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnionPolicy {
@@ -518,6 +566,26 @@ pub struct BuiltinTypes {
     pub bigint: TypeId,
     pub object: TypeId,
     pub symbol: TypeId,
+}
+
+impl BuiltinTypes {
+    pub(crate) const fn keyword(self, keyword: KeywordType) -> Option<TypeId> {
+        Some(match keyword {
+            KeywordType::Any => self.any,
+            KeywordType::Unknown => self.unknown,
+            KeywordType::Never => self.never,
+            KeywordType::Void => self.void,
+            KeywordType::Undefined => self.undefined,
+            KeywordType::Null => self.null,
+            KeywordType::Boolean => self.boolean,
+            KeywordType::Number => self.number,
+            KeywordType::String => self.string,
+            KeywordType::BigInt => self.bigint,
+            KeywordType::Object => self.object,
+            KeywordType::Symbol => self.symbol,
+            KeywordType::UniqueSymbol => return None,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -585,7 +653,7 @@ impl TypeStore {
 
     pub(crate) fn effective_call_arity(
         &self,
-        signature: &ShapeSignature,
+        signature: &Signature,
         references: &HashMap<TypeId, Completion<CallArityResolution>>,
     ) -> Result<(usize, Option<usize>), CallArityGap> {
         let parameters = &signature.parameters;
@@ -661,7 +729,7 @@ impl TypeStore {
 
     fn call_minimum(
         &self,
-        fixed: &[ShapeParameter],
+        fixed: &[ParameterType],
         tail: &[TypeId],
         base: usize,
         references: &HashMap<TypeId, Completion<CallArityResolution>>,
@@ -750,6 +818,14 @@ impl TypeStore {
         }))
     }
 
+    pub(crate) fn type_parameter(&mut self, declaration: DeclId, index: u32, name: &str) -> TypeId {
+        self.intern(TypeKind::TypeParameter {
+            declaration,
+            index,
+            name: name.to_string(),
+        })
+    }
+
     /// Query an unapplied symbolic reference without exposing solver storage
     /// representation to checker feature modules.
     pub(crate) fn is_unapplied_symbolic_reference(&self, ty: TypeId, declaration: DeclId) -> bool {
@@ -805,32 +881,14 @@ impl TypeStore {
                 pending.extend(arguments.iter().copied());
                 Self::push_shape_children(properties, pending);
             }
-            TypeKind::Function(signature) => {
-                pending.extend(signature.parameters.iter().map(|parameter| parameter.ty));
-                pending.push(signature.return_type);
+            TypeKind::LibraryReference { arguments, .. } => {
+                pending.extend(arguments.iter().copied());
             }
-            TypeKind::ShapeFunction(signature) => {
+            TypeKind::Function(signature) | TypeKind::ShapeFunction(signature) => {
                 Self::push_signature_children(signature, pending);
             }
             TypeKind::Deferred(deferred) => Self::push_deferred_children(deferred, pending),
-            TypeKind::Error
-            | TypeKind::Any
-            | TypeKind::Unknown
-            | TypeKind::Never
-            | TypeKind::Void
-            | TypeKind::Undefined
-            | TypeKind::Null
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::String
-            | TypeKind::BigInt
-            | TypeKind::ObjectKeyword
-            | TypeKind::Symbol
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _)
-            | TypeKind::LiteralString(_, _)
-            | TypeKind::TypeParameter { .. }
-            | TypeKind::ClassConstructor { .. } => {}
+            TypeKind::Error | non_recursive_type_kind!() => {}
         }
     }
 
@@ -846,12 +904,12 @@ impl TypeStore {
         pending.extend(shape.index_signatures.iter().map(|index| index.value));
     }
 
-    fn push_signature_children(signature: &ShapeSignature, pending: &mut Vec<TypeId>) {
+    fn push_signature_children(signature: &Signature, pending: &mut Vec<TypeId>) {
         pending.extend(signature.parameters.iter().map(|parameter| parameter.ty));
         pending.push(signature.return_type);
     }
 
-    fn push_deferred_children(deferred: &DeferredType, pending: &mut Vec<TypeId>) {
+    pub(crate) fn push_deferred_children(deferred: &DeferredType, pending: &mut Vec<TypeId>) {
         match deferred {
             DeferredType::Reference { arguments, .. } => pending.extend(arguments.iter().copied()),
             DeferredType::Call { callee, .. } | DeferredType::Property { object: callee, .. } => {
@@ -863,10 +921,11 @@ impl TypeStore {
             DeferredType::Construct {
                 callee,
                 type_arguments,
-                ..
+                arguments,
             } => {
                 pending.push(*callee);
                 pending.extend(type_arguments.iter().copied());
+                pending.extend(arguments.iter().copied());
             }
             DeferredType::Predicate { asserted, .. } => pending.extend(asserted.iter().copied()),
             DeferredType::Binary { left, right, .. }
@@ -889,8 +948,8 @@ impl TypeStore {
                 ..
             } => {
                 pending.push(*constraint);
-                pending.extend(name_type.iter().copied());
                 pending.push(*value);
+                pending.extend(name_type.iter().copied());
             }
             DeferredType::IndexedAccess { object, index } => pending.extend([*object, *index]),
             DeferredType::FlowReference { declared, .. } => pending.push(*declared),
@@ -924,6 +983,22 @@ impl TypeStore {
     /// unrelated call sites from sharing recursion identity or a force entry.
     pub fn deferred_generic_call(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::GenericCall)
+    }
+
+    pub(crate) fn deferred_unary(
+        &mut self,
+        operator: DeferredUnaryOperator,
+        operand: TypeId,
+    ) -> TypeId {
+        if operator == DeferredUnaryOperator::NonNull
+            && let Completion::Complete(non_nullable) = self.non_nullable(operand)
+        {
+            return non_nullable;
+        }
+        self.intern(TypeKind::Deferred(DeferredType::Unary {
+            operator,
+            operand,
+        }))
     }
 
     pub fn function(
@@ -1096,6 +1171,29 @@ impl TypeStore {
         }
     }
 
+    pub(crate) fn non_nullable(&mut self, ty: TypeId) -> Completion<TypeId> {
+        use Completion::{Complete, Deferred};
+
+        let nullish =
+            |kind: &TypeKind| matches!(kind, TypeKind::Void | TypeKind::Null | TypeKind::Undefined);
+        match self.kind(ty).clone() {
+            TypeKind::Deferred(_) | TypeKind::TypeParameter { .. } => Deferred,
+            TypeKind::Void | TypeKind::Null | TypeKind::Undefined => Complete(self.builtins.never),
+            TypeKind::Unknown => Complete(self.object(Vec::new())),
+            TypeKind::Union(mut types) => {
+                if types
+                    .iter()
+                    .any(|&id| matches!(self.kind(id), TypeKind::TypeParameter { .. }))
+                {
+                    return Deferred;
+                }
+                types.retain(|&id| !nullish(self.kind(id)));
+                Complete(self.union(types, UnionPolicy::Canonical))
+            }
+            _ => Complete(ty),
+        }
+    }
+
     pub fn object(&mut self, mut properties: Vec<Property>) -> TypeId {
         properties.sort_by(|left, right| left.name.cmp(&right.name));
         self.object_shape(ObjectShape {
@@ -1120,11 +1218,13 @@ impl TypeStore {
         let properties = |properties: &[Property]| {
             properties
                 .iter()
-                .map(|property| PropertyOrderKey {
-                    name: property.name.clone(),
-                    ty: nested(property.ty),
-                    optional: property.optional,
-                    readonly: property.readonly,
+                .map(|property| {
+                    (
+                        property.name.clone(),
+                        nested(property.ty),
+                        property.optional,
+                        property.readonly,
+                    )
                 })
                 .collect()
         };
@@ -1177,12 +1277,12 @@ impl TypeStore {
                 call_signatures: shape
                     .call_signatures
                     .iter()
-                    .map(|signature| self.shape_signature_order_key(signature, depth + 1))
+                    .map(|signature| self.signature_order_key(signature, depth + 1))
                     .collect(),
                 construct_signatures: shape
                     .construct_signatures
                     .iter()
-                    .map(|signature| self.shape_signature_order_key(signature, depth + 1))
+                    .map(|signature| self.signature_order_key(signature, depth + 1))
                     .collect(),
                 index_signatures: shape
                     .index_signatures
@@ -1203,12 +1303,20 @@ impl TypeStore {
             TypeKind::ClassConstructor { declaration, .. } => {
                 TypeOrderKey::ClassConstructor(*declaration)
             }
+            TypeKind::LibraryReference {
+                declaration,
+                arguments,
+                ..
+            } => TypeOrderKey::LibraryReference(
+                *declaration,
+                arguments.iter().map(|argument| nested(*argument)).collect(),
+            ),
             TypeKind::Function(signature) => TypeOrderKey::Function(
                 signature.generic_declaration,
                 self.signature_order_key(signature, depth + 1),
             ),
             TypeKind::ShapeFunction(signature) => {
-                TypeOrderKey::ShapeFunction(self.shape_signature_order_key(signature, depth + 1))
+                TypeOrderKey::ShapeFunction(self.signature_order_key(signature, depth + 1))
             }
             TypeKind::Deferred(deferred) => {
                 TypeOrderKey::Deferred(self.deferred_order_key(deferred, depth + 1))
@@ -1217,197 +1325,27 @@ impl TypeStore {
     }
 
     fn signature_order_key(&self, signature: &Signature, depth: usize) -> SignatureOrderKey {
-        self.signature_parts_order_key(
+        (
             signature.untyped_javascript,
             signature
                 .parameters
                 .iter()
-                .map(|parameter| (parameter.ty, parameter.optional, parameter.rest)),
-            signature.return_type,
-            depth,
-        )
-    }
-
-    fn shape_signature_order_key(
-        &self,
-        signature: &ShapeSignature,
-        depth: usize,
-    ) -> SignatureOrderKey {
-        self.signature_parts_order_key(
-            signature.untyped_javascript,
-            signature
-                .parameters
-                .iter()
-                .map(|parameter| (parameter.ty, parameter.optional, parameter.rest)),
-            signature.return_type,
-            depth,
-        )
-    }
-
-    fn signature_parts_order_key(
-        &self,
-        untyped_javascript: bool,
-        parameters: impl Iterator<Item = (TypeId, bool, bool)>,
-        return_type: TypeId,
-        depth: usize,
-    ) -> SignatureOrderKey {
-        SignatureOrderKey {
-            untyped_javascript,
-            parameters: parameters
-                .map(|(ty, optional, rest)| ParameterOrderKey {
-                    ty: self.stable_order_key(ty, depth),
-                    optional,
-                    rest,
+                .map(|parameter| {
+                    (
+                        self.stable_order_key(parameter.ty, depth),
+                        parameter.optional,
+                        parameter.rest,
+                    )
                 })
                 .collect(),
-            return_type: Box::new(self.stable_order_key(return_type, depth)),
-        }
+            Box::new(self.stable_order_key(signature.return_type, depth)),
+        )
     }
 
     fn deferred_order_key(&self, deferred: &DeferredType, depth: usize) -> DeferredOrderKey {
-        let nested = |id| self.stable_order_key(id, depth + 1);
-        match deferred {
-            DeferredType::Reference {
-                declaration,
-                arguments,
-            } => DeferredOrderKey::Reference(
-                *declaration,
-                arguments.iter().map(|argument| nested(*argument)).collect(),
-            ),
-            DeferredType::Value(declaration) => DeferredOrderKey::Value(*declaration),
-            DeferredType::FlowReference {
-                file,
-                expression,
-                declaration,
-                declared,
-            } => DeferredOrderKey::FlowReference(
-                *file,
-                *expression,
-                *declaration,
-                Box::new(nested(*declared)),
-            ),
-            DeferredType::LexicalThis { file, expression } => {
-                DeferredOrderKey::LexicalThis(*file, *expression)
-            }
-            DeferredType::Call {
-                callee,
-                argument_count,
-            } => DeferredOrderKey::Call(Box::new(nested(*callee)), *argument_count),
-            DeferredType::GenericCall => DeferredOrderKey::GenericCall,
-            DeferredType::Construct {
-                callee,
-                type_arguments,
-                argument_count,
-            } => DeferredOrderKey::Construct(
-                Box::new(nested(*callee)),
-                type_arguments
-                    .iter()
-                    .map(|argument| nested(*argument))
-                    .collect(),
-                *argument_count,
-            ),
-            DeferredType::Property { object, name } => {
-                DeferredOrderKey::Property(Box::new(nested(*object)), name.clone())
-            }
-            DeferredType::ElementAccess {
-                object,
-                index,
-                mode,
-            } => DeferredOrderKey::ElementAccess(
-                Box::new(nested(*object)),
-                Box::new(nested(*index)),
-                match mode {
-                    ElementAccessMode::Read => 0,
-                    ElementAccessMode::Write => 1,
-                    ElementAccessMode::EvolvingArrayWrite => 2,
-                },
-            ),
-            DeferredType::Predicate {
-                parameter,
-                asserted,
-                asserts,
-                parameter_is_bound,
-            } => DeferredOrderKey::Predicate(
-                parameter.clone(),
-                asserted.map(|asserted| Box::new(nested(asserted))),
-                *asserts,
-                *parameter_is_bound,
-            ),
-            DeferredType::Binary {
-                operator,
-                left,
-                right,
-            } => DeferredOrderKey::Binary(
-                match operator {
-                    DeferredBinaryOperator::Add => 0,
-                    DeferredBinaryOperator::Subtract => 1,
-                    DeferredBinaryOperator::Multiply => 2,
-                    DeferredBinaryOperator::Divide => 3,
-                    DeferredBinaryOperator::Remainder => 4,
-                    DeferredBinaryOperator::BitwiseAnd => 5,
-                    DeferredBinaryOperator::BitwiseOr => 6,
-                    DeferredBinaryOperator::UnsignedRightShift => 7,
-                },
-                Box::new(nested(*left)),
-                Box::new(nested(*right)),
-            ),
-            DeferredType::Logical {
-                operator,
-                left,
-                right,
-            } => DeferredOrderKey::Logical(
-                match operator {
-                    DeferredLogicalOperator::And => 0,
-                    DeferredLogicalOperator::Or => 1,
-                    DeferredLogicalOperator::Nullish => 2,
-                },
-                Box::new(nested(*left)),
-                Box::new(nested(*right)),
-            ),
-            DeferredType::Unary { operator, operand } => DeferredOrderKey::Unary(
-                match operator {
-                    DeferredUnaryOperator::Plus => 0,
-                    DeferredUnaryOperator::Minus => 1,
-                    DeferredUnaryOperator::BitwiseNot => 2,
-                    DeferredUnaryOperator::Await => 3,
-                },
-                Box::new(nested(*operand)),
-            ),
-            DeferredType::KeyOf(operand) => DeferredOrderKey::KeyOf(Box::new(nested(*operand))),
-            DeferredType::Conditional {
-                check,
-                extends,
-                when_true,
-                when_false,
-            } => DeferredOrderKey::Conditional(
-                Box::new(nested(*check)),
-                Box::new(nested(*extends)),
-                Box::new(nested(*when_true)),
-                Box::new(nested(*when_false)),
-            ),
-            DeferredType::Mapped {
-                constraint,
-                name_type,
-                value,
-                readonly,
-                optional,
-            } => DeferredOrderKey::Mapped(
-                Box::new(nested(*constraint)),
-                name_type.map(|name_type| Box::new(nested(name_type))),
-                Box::new(nested(*value)),
-                *readonly,
-                *optional,
-            ),
-            DeferredType::IndexedAccess { object, index } => {
-                DeferredOrderKey::IndexedAccess(Box::new(nested(*object)), Box::new(nested(*index)))
-            }
-            DeferredType::BigIntLiteral => DeferredOrderKey::BigIntLiteral,
-            DeferredType::NumericRecovery => DeferredOrderKey::NumericRecovery,
-            DeferredType::Utf16StringLiteral => DeferredOrderKey::Utf16StringLiteral,
-            DeferredType::UniqueSymbol => DeferredOrderKey::UniqueSymbol,
-            DeferredType::GenericFunction => DeferredOrderKey::GenericFunction,
-            DeferredType::ObjectShape => DeferredOrderKey::ObjectShape,
-        }
+        deferred
+            .clone()
+            .map_types(|id| Box::new(self.stable_order_key(id, depth + 1)))
     }
 
     /// Return TypeScript's widened literal type while preserving regular
@@ -1416,9 +1354,11 @@ impl TypeStore {
     /// mutable observation requires widening.
     pub fn widened_literal_type(&mut self, id: TypeId) -> TypeId {
         match self.kind(id).clone() {
-            TypeKind::LiteralString(_, LiteralProvenance::Fresh) => self.builtins.string,
+            TypeKind::LiteralString(_, LiteralProvenance::Fresh)
+            | TypeKind::Deferred(DeferredType::Utf16StringLiteral) => self.builtins.string,
             TypeKind::LiteralNumber(_, LiteralProvenance::Fresh) => self.builtins.number,
             TypeKind::LiteralBoolean(_, LiteralProvenance::Fresh) => self.builtins.boolean,
+            TypeKind::Deferred(DeferredType::BigIntLiteral) => self.builtins.bigint,
             TypeKind::Array(element) => {
                 let widened = self.widened_literal_type(element);
                 if widened == element {
@@ -1469,6 +1409,9 @@ impl TypeStore {
             TypeKind::LiteralString(value, _) => format!("\"{value}\""),
             TypeKind::TypeParameter { name, .. } => name.clone(),
             TypeKind::ClassInstance {
+                name, arguments, ..
+            }
+            | TypeKind::LibraryReference {
                 name, arguments, ..
             } => {
                 if arguments.is_empty() {
@@ -1558,16 +1501,22 @@ impl TypeStore {
                 signature
                     .parameters
                     .iter()
-                    .map(|parameter| format!(
-                        "{}{}: {}",
-                        if parameter.rest {
-                            format!("...{}", parameter.name)
-                        } else {
-                            parameter.name.clone()
-                        },
-                        if parameter.optional { "?" } else { "" },
-                        self.display_inner(parameter.ty, depth + 1)
-                    ))
+                    .map(|parameter| {
+                        let name = parameter
+                            .name
+                            .as_deref()
+                            .expect("authored function parameters retain their names");
+                        format!(
+                            "{}{}: {}",
+                            if parameter.rest {
+                                format!("...{name}")
+                            } else {
+                                name.to_string()
+                            },
+                            if parameter.optional { "?" } else { "" },
+                            self.display_inner(parameter.ty, depth + 1)
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", "),
                 self.display_inner(signature.return_type, depth + 1)
@@ -1645,7 +1594,10 @@ impl TypeStore {
                     DeferredBinaryOperator::Divide => "/",
                     DeferredBinaryOperator::Remainder => "%",
                     DeferredBinaryOperator::BitwiseAnd => "&",
+                    DeferredBinaryOperator::BitwiseXor => "^",
                     DeferredBinaryOperator::BitwiseOr => "|",
+                    DeferredBinaryOperator::LeftShift => "<<",
+                    DeferredBinaryOperator::SignedRightShift => ">>",
                     DeferredBinaryOperator::UnsignedRightShift => ">>>",
                 },
                 self.display_inner(*right, depth + 1)
@@ -1671,6 +1623,7 @@ impl TypeStore {
                     DeferredUnaryOperator::Minus => "-",
                     DeferredUnaryOperator::BitwiseNot => "~",
                     DeferredUnaryOperator::Await => "await ",
+                    DeferredUnaryOperator::NonNull => "NonNullable ",
                 },
                 self.display_inner(*operand, depth + 1)
             ),
@@ -1731,7 +1684,7 @@ impl TypeStore {
 
     fn display_shape_signature(
         &self,
-        signature: &ShapeSignature,
+        signature: &Signature,
         depth: usize,
         prefix: &str,
         return_separator: &str,

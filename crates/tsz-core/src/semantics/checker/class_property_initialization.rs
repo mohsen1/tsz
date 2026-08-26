@@ -139,6 +139,7 @@ impl Checker<'_> {
             | TypeKind::Object(_)
             | TypeKind::ClassInstance { .. }
             | TypeKind::ClassConstructor { .. }
+            | TypeKind::LibraryReference { .. }
             | TypeKind::Function(_)
             | TypeKind::ShapeFunction(_) => Completion::Complete(true),
         }

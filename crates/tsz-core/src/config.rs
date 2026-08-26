@@ -10,6 +10,7 @@ use crate::diagnostics::{Diagnostic, RelatedInformation, sort_and_deduplicate};
 use crate::host::ProgramHost;
 use crate::program::{CompilerOptions, SourceInput};
 use crate::project_graph::{ProjectConfigId, ProjectGraph, ProjectReference};
+use crate::source::{display_path, normalize_project_path_lexically as normalize_path};
 
 const CONFIG_FILE_NAME: &str = "tsconfig.json";
 const DEFAULT_INCLUDE: &str = "**/*";
@@ -97,7 +98,7 @@ macro_rules! compiler_option_schema {
         bool_property($options, $json)
     };
     (@decode string_array, $options:ident, $json:literal, $origin:ident) => {
-        string_array_property($options, $json)
+        string_values($options.get($json), false)
     };
     (@decode string, $options:ident, $json:literal, $origin:ident) => {
         string_property($options, $json)
@@ -250,6 +251,7 @@ compiler_option_schema! {
     SourceMap => source_map, "sourceMap", bool;
     InlineSourceMap => inline_source_map, "inlineSourceMap", bool;
     RemoveComments => remove_comments, "removeComments", bool;
+    UseDefineForClassFields => use_define_for_class_fields, "useDefineForClassFields", optional_bool;
     Target => target, "target", string;
     Module => module, "module", string;
     RootDir => root_dir, "rootDir", path;
@@ -719,7 +721,7 @@ impl<'a> Resolver<'a> {
         stack.push(path.clone());
 
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
-        let extends_values = string_or_string_array(object.get("extends"));
+        let extends_values = string_values(object.get("extends"), true).unwrap_or_default();
         let mut merged = MergedConfig::default();
         let mut extends_ids = Vec::new();
         let mut bases_complete = true;
@@ -738,25 +740,25 @@ impl<'a> Resolver<'a> {
         let own_origins = compiler_option_origins(
             &own_options,
             &text,
-            &document.tokens,
+            &document.source_spans.compiler_options,
             &logical_path_from_host(self.host.current_directory(), &path),
         );
         merged.options.merge_from(&own_options);
         merged.option_origins.extend(own_origins);
-        if let Some(values) = string_array_property(&object, "files") {
+        if let Some(values) = string_values(object.get("files"), false) {
             merged.files = Some(Selector::new(values, directory));
         }
-        if let Some(values) = string_array_property(&object, "include") {
+        if let Some(values) = string_values(object.get("include"), false) {
             merged.include = Some(Selector::new(values, directory));
         }
-        if let Some(values) = string_array_property(&object, "exclude") {
+        if let Some(values) = string_values(object.get("exclude"), false) {
             merged.exclude = Some(Selector::new(values, directory));
         }
         merged.own_has_extends = object.contains_key("extends");
         merged.own_has_references = object.contains_key("references");
 
         let references = if is_entry {
-            project_references(&object, &document.tokens, directory, id)
+            project_references(&object, &document.source_spans.references, directory, id)
         } else {
             Vec::new()
         };
@@ -983,10 +985,9 @@ impl Selector {
 fn compiler_option_origins(
     options: &CompilerOptionPatch,
     source_text: &Arc<str>,
-    tokens: &[JsonToken],
+    spans: &BTreeMap<String, ConfigOptionSpans>,
     logical_path: &Path,
 ) -> BTreeMap<CompilerOptionKey, CompilerOptionOrigin> {
-    let spans = compiler_option_spans(tokens);
     CompilerOptionKey::ALL
         .iter()
         .copied()
@@ -1010,11 +1011,10 @@ fn compiler_option_origins(
 
 fn project_references(
     object: &Map<String, Value>,
-    tokens: &[JsonToken],
+    spans: &[(u32, u32)],
     origin: &Path,
     owner: ProjectConfigId,
 ) -> Vec<ProjectReference> {
-    let spans = reference_object_spans(tokens);
     object
         .get("references")
         .and_then(Value::as_array)
@@ -1024,8 +1024,7 @@ fn project_references(
         .enumerate()
         .filter_map(|(index, reference)| {
             let raw = reference.get("path").and_then(Value::as_str)?;
-            let (source_start, source_length) =
-                spans.get(index).copied().flatten().unwrap_or((0, 0));
+            let (source_start, source_length) = spans.get(index).copied().unwrap_or((0, 0));
             Some(ProjectReference {
                 owner,
                 path: absolute_path(origin, Path::new(raw)),
@@ -1053,7 +1052,13 @@ struct JsonToken {
 
 struct JsoncDocument {
     value: Value,
-    tokens: Vec<JsonToken>,
+    source_spans: ConfigSourceSpans,
+}
+
+#[derive(Debug, Default)]
+struct ConfigSourceSpans {
+    compiler_options: BTreeMap<String, ConfigOptionSpans>,
+    references: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1064,111 +1069,99 @@ struct ConfigOptionSpans {
     value_length: Option<u32>,
 }
 
-/// Locate direct properties of the top-level `compilerOptions` object.
-///
-/// The JSON value is parsed separately. This scanner owns only source
-/// provenance, retaining the spelling and byte spans that diagnostics need.
-fn top_level_container(tokens: &[JsonToken], name: &str, opening: u8) -> Option<usize> {
-    let mut object_depth = 0usize;
-    let mut array_depth = 0usize;
-    for (index, token) in tokens.iter().enumerate() {
-        match &token.kind {
-            JsonTokenKind::Punctuation(b'{') => object_depth += 1,
-            JsonTokenKind::Punctuation(b'}') => object_depth = object_depth.saturating_sub(1),
-            JsonTokenKind::Punctuation(b'[') => array_depth += 1,
-            JsonTokenKind::Punctuation(b']') => array_depth = array_depth.saturating_sub(1),
-            JsonTokenKind::String(value) if object_depth == 1 && array_depth == 0 => {
-                if value == name
-                    && matches!(
+impl ConfigSourceSpans {
+    /// Inventory source provenance while walking the shared JSONC token stream once.
+    fn from_tokens(tokens: &[JsonToken]) -> Self {
+        let mut spans = Self::default();
+        let mut object_depth = 0usize;
+        let mut array_depth = 0usize;
+        let mut options_open = None;
+        let mut references_open = None;
+        let mut in_options = false;
+        let mut in_references = false;
+        let mut reference_start = None;
+
+        for (index, token) in tokens.iter().enumerate() {
+            in_options |= options_open == Some(index);
+            in_references |= references_open == Some(index);
+            match &token.kind {
+                JsonTokenKind::Punctuation(b'{') => {
+                    if in_references && object_depth == 1 && array_depth == 1 {
+                        reference_start = Some(token.start);
+                    }
+                    object_depth += 1;
+                }
+                JsonTokenKind::Punctuation(b'}') => {
+                    if in_references
+                        && object_depth == 2
+                        && array_depth == 1
+                        && let Some(start) = reference_start.take()
+                    {
+                        spans
+                            .references
+                            .push((start as u32, (token.end - start) as u32));
+                    }
+                    if in_options && object_depth == 2 && array_depth == 0 {
+                        in_options = false;
+                    }
+                    object_depth = object_depth.saturating_sub(1);
+                }
+                JsonTokenKind::Punctuation(b'[') => array_depth += 1,
+                JsonTokenKind::Punctuation(b']') => {
+                    if in_references && object_depth == 1 && array_depth == 1 {
+                        in_references = false;
+                    }
+                    array_depth = array_depth.saturating_sub(1);
+                }
+                JsonTokenKind::String(name)
+                    if in_options && object_depth == 2 && array_depth == 0 =>
+                {
+                    if matches!(
                         tokens.get(index + 1).map(|token| &token.kind),
                         Some(JsonTokenKind::Punctuation(b':'))
-                    )
-                    && matches!(
-                        tokens.get(index + 2).map(|token| &token.kind),
-                        Some(JsonTokenKind::Punctuation(byte)) if *byte == opening
-                    )
-                {
-                    return Some(index + 2);
+                    ) {
+                        let value = tokens.get(index + 2);
+                        spans.compiler_options.insert(
+                            name.clone(),
+                            ConfigOptionSpans {
+                                key_start: token.start as u32,
+                                key_length: (token.end - token.start) as u32,
+                                value_start: value.map(|value| value.start as u32),
+                                value_length: value.map(|value| (value.end - value.start) as u32),
+                            },
+                        );
+                    }
                 }
-            }
-            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Punctuation(_) => {}
-        }
-    }
-    None
-}
-
-fn compiler_option_spans(tokens: &[JsonToken]) -> BTreeMap<String, ConfigOptionSpans> {
-    let Some(options_open) = top_level_container(tokens, "compilerOptions", b'{') else {
-        return BTreeMap::new();
-    };
-
-    let mut spans = BTreeMap::new();
-    let mut nested_objects = 0usize;
-    let mut nested_arrays = 0usize;
-    let mut index = options_open + 1;
-    while let Some(token) = tokens.get(index) {
-        match &token.kind {
-            JsonTokenKind::Punctuation(b'}') if nested_objects == 0 && nested_arrays == 0 => break,
-            JsonTokenKind::Punctuation(b'{') => nested_objects += 1,
-            JsonTokenKind::Punctuation(b'}') => nested_objects = nested_objects.saturating_sub(1),
-            JsonTokenKind::Punctuation(b'[') => nested_arrays += 1,
-            JsonTokenKind::Punctuation(b']') => nested_arrays = nested_arrays.saturating_sub(1),
-            JsonTokenKind::String(name) if nested_objects == 0 && nested_arrays == 0 => {
-                if matches!(
-                    tokens.get(index + 1).map(|token| &token.kind),
-                    Some(JsonTokenKind::Punctuation(b':'))
-                ) {
-                    let value = tokens.get(index + 2);
-                    spans.insert(
-                        name.clone(),
-                        ConfigOptionSpans {
-                            key_start: token.start as u32,
-                            key_length: (token.end - token.start) as u32,
-                            value_start: value.map(|value| value.start as u32),
-                            value_length: value.map(|value| (value.end - value.start) as u32),
-                        },
-                    );
+                JsonTokenKind::String(name) if object_depth == 1 && array_depth == 0 => {
+                    if matches!(
+                        tokens.get(index + 1).map(|token| &token.kind),
+                        Some(JsonTokenKind::Punctuation(b':'))
+                    ) {
+                        match (
+                            name.as_str(),
+                            tokens.get(index + 2).map(|token| &token.kind),
+                        ) {
+                            ("compilerOptions", Some(JsonTokenKind::Punctuation(b'{')))
+                                if options_open.is_none() =>
+                            {
+                                options_open = Some(index + 2);
+                            }
+                            ("references", Some(JsonTokenKind::Punctuation(b'[')))
+                                if references_open.is_none() =>
+                            {
+                                references_open = Some(index + 2);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
+                JsonTokenKind::String(_)
+                | JsonTokenKind::Literal
+                | JsonTokenKind::Punctuation(_) => {}
             }
-            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Punctuation(_) => {}
         }
-        index += 1;
+        spans
     }
-    spans
-}
-
-/// Locate each object element of the top-level `references` array while
-/// preserving byte offsets in the original JSONC source.
-fn reference_object_spans(tokens: &[JsonToken]) -> Vec<Option<(u32, u32)>> {
-    let Some(references_open) = top_level_container(tokens, "references", b'[') else {
-        return Vec::new();
-    };
-
-    let mut spans = Vec::new();
-    let mut nested_arrays = 0usize;
-    let mut nested_objects = 0usize;
-    let mut object_start = None;
-    for token in &tokens[references_open + 1..] {
-        match token.kind {
-            JsonTokenKind::Punctuation(b'[') => nested_arrays += 1,
-            JsonTokenKind::Punctuation(b']') if nested_arrays > 0 => nested_arrays -= 1,
-            JsonTokenKind::Punctuation(b']') if nested_objects == 0 => break,
-            JsonTokenKind::Punctuation(b'{') if nested_objects == 0 && nested_arrays == 0 => {
-                nested_objects = 1;
-                object_start = Some(token.start);
-            }
-            JsonTokenKind::Punctuation(b'{') if nested_objects > 0 => nested_objects += 1,
-            JsonTokenKind::Punctuation(b'}') if nested_objects > 1 => nested_objects -= 1,
-            JsonTokenKind::Punctuation(b'}') if nested_objects == 1 => {
-                nested_objects = 0;
-                if let Some(start) = object_start.take() {
-                    spans.push(Some((start as u32, (token.end - start) as u32)));
-                }
-            }
-            JsonTokenKind::String(_) | JsonTokenKind::Literal | JsonTokenKind::Punctuation(_) => {}
-        }
-    }
-    spans
 }
 
 fn scan_jsonc(source_text: &str) -> (String, Vec<JsonToken>) {
@@ -1645,28 +1638,23 @@ fn root_file_diagnostic(message_text: String, code: u32, reason: RootReason) -> 
 fn parse_jsonc(text: &str) -> Result<JsoncDocument, ()> {
     let (normalized, tokens) = scan_jsonc(text);
     let value = serde_json::from_str(normalized.trim_start_matches('\u{feff}')).map_err(|_| ())?;
-    Ok(JsoncDocument { value, tokens })
-}
-
-fn string_array_property(object: &Map<String, Value>, name: &str) -> Option<Vec<String>> {
-    object.get(name).and_then(Value::as_array).map(|values| {
-        values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect()
+    Ok(JsoncDocument {
+        value,
+        source_spans: ConfigSourceSpans::from_tokens(&tokens),
     })
 }
 
-fn string_or_string_array(value: Option<&Value>) -> Vec<String> {
+fn string_values(value: Option<&Value>, allow_scalar: bool) -> Option<Vec<String>> {
     match value {
-        Some(Value::String(value)) => vec![value.clone()],
-        Some(Value::Array(values)) => values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect(),
-        _ => Vec::new(),
+        Some(Value::String(value)) if allow_scalar => Some(vec![value.clone()]),
+        Some(Value::Array(values)) => Some(
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        ),
+        _ => None,
     }
 }
 
@@ -1704,24 +1692,6 @@ fn absolute_path(base: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push(component.as_os_str());
-                }
-            }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
-}
-
 fn deduplicate_paths(paths: Vec<PathBuf>, case_sensitive: bool) -> Vec<PathBuf> {
     let mut seen = BTreeSet::new();
     paths
@@ -1732,16 +1702,11 @@ fn deduplicate_paths(paths: Vec<PathBuf>, case_sensitive: bool) -> Vec<PathBuf> 
 }
 
 fn path_key(path: &Path, case_sensitive: bool) -> String {
-    let path = display_path(path);
     if case_sensitive {
-        path
+        display_path(path)
     } else {
-        path.to_ascii_lowercase()
+        display_path(path).to_ascii_lowercase()
     }
-}
-
-fn display_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 fn logical_source_path_from_host(host: &dyn ProgramHost, path: &Path) -> PathBuf {

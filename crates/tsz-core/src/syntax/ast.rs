@@ -1,10 +1,8 @@
 use crate::source::{NodeId, Span};
 
 use super::{
-    CommentTrivia, RegularExpressionLiteral, SourceCheckDirective, TokenKind,
-    descendant_walk::{
-        ExpressionRoot, ExpressionTraversal, contains_matching_expression, for_each_statement_in,
-    },
+    CommentTrivia, RegularExpressionLiteral, SourceCheckDirective, TokenKind, Utf16String,
+    descendant_walk::for_each_statement_in,
 };
 
 #[derive(Debug, Clone)]
@@ -16,8 +14,26 @@ pub struct SourceUnit {
     pub(crate) unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
     pub(crate) source_check_directive: Option<SourceCheckDirective>,
     pub(crate) source_syntax_facts: Vec<SourceSyntaxFact>,
+    pub(crate) contextual_grammar_facts: Vec<ContextualGrammarFact>,
     pub(crate) comments: Vec<CommentTrivia>,
     pub(crate) has_unicode_line_comment_terminator: bool,
+}
+
+/// Authored contextual grammar whose diagnostics are produced by semantic
+/// checking and therefore suppressed by `--noCheck`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ContextualGrammarFact {
+    pub(crate) span: Span,
+    pub(crate) kind: ContextualGrammarKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ContextualGrammarKind {
+    AccessorTypeParameters,
+    AccessorThisParameter,
+    AwaitBinding,
+    StrictYieldBinding,
+    ClassStrictYieldBinding,
 }
 
 /// Positive parser observations that cannot be reconstructed from the current
@@ -25,7 +41,6 @@ pub struct SourceUnit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SourceSyntaxFact {
     AsyncClassModifier,
-    AuthoredExtendedUnicodeString,
     AuthoredFunctionExpressionModifier,
     AuthoredRegularExpression,
     DefaultExportOnUnsupportedHost,
@@ -49,7 +64,7 @@ pub(crate) enum JavaScriptJSDocCastKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum LiteralSyntaxBoundary {
     LexicalRecovery,
-    SourceContext,
+    SemanticValidation,
     UnsupportedHost,
 }
 
@@ -71,7 +86,6 @@ pub(crate) struct AuthoredLiteralFact {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AuthoredLiteralKind {
     Template,
-    ExtendedUnicodeString,
     RegularExpression,
     NumericRecovery,
     NumericSeparator,
@@ -101,7 +115,6 @@ pub(crate) struct ParserRecoveryOwner {
 pub(crate) enum ParserRecoveryKind {
     Declaration,
     GeneratorFunctionLike,
-    VariableDeclaratorTail,
     Expression,
     ObjectMember,
     ForStatement,
@@ -128,6 +141,7 @@ pub(crate) struct UnmodeledDeclarationHostFact {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnmodeledDeclarationHostKind {
+    Enum,
     Namespace,
     Module,
     ExternalModule,
@@ -161,6 +175,10 @@ impl SourceUnit {
         self.source_syntax_facts.binary_search(&fact).is_ok()
     }
 
+    pub(crate) fn contextual_grammar_facts(&self) -> &[ContextualGrammarFact] {
+        &self.contextual_grammar_facts
+    }
+
     pub(crate) fn javascript_jsdoc_casts(
         &self,
     ) -> impl Iterator<Item = (NodeId, JavaScriptJSDocCastKind)> + '_ {
@@ -170,13 +188,6 @@ impl SourceUnit {
                 SourceSyntaxFact::JavaScriptJSDocCast(owner, kind) => Some((*owner, *kind)),
                 _ => None,
             })
-    }
-
-    #[must_use]
-    pub(crate) fn has_authored_literal(&self, kind: AuthoredLiteralKind) -> bool {
-        self.authored_literal_facts
-            .iter()
-            .any(|fact| fact.kind == kind)
     }
 
     /// Whether this file owns a module-local root scope rather than
@@ -212,84 +223,6 @@ impl SourceUnit {
                 })
     }
 
-    /// Whether parser recovery escaped an authored type-member list anywhere
-    /// in this file. Emit blocks both products until the enclosing recovery
-    /// syntax is represented explicitly.
-    #[must_use]
-    pub fn contains_recovered_type_members(&self) -> bool {
-        let mut written_type_contains_recovery = false;
-        for_each_statement_in(&self.statements, &mut |statement| {
-            written_type_contains_recovery |= statement_owns_recovered_type_members(statement);
-        });
-        written_type_contains_recovery
-            || contains_matching_expression(
-                ExpressionRoot::Statements(&self.statements),
-                ExpressionTraversal::All,
-                expression_owns_recovered_type_members,
-            )
-    }
-
-    /// Whether declaration emit needs an overload summary that the syntax
-    /// printer does not own yet. Runtime implementations must be omitted from
-    /// `.d.ts` output whenever a sibling signature exists.
-    #[must_use]
-    pub fn has_local_unmodeled_declaration_overloads(&self) -> bool {
-        self.statements
-            .iter()
-            .any(|statement| match &statement.kind {
-                StatementKind::Function(declaration) if !declaration.has_body => {
-                    self.statements.iter().any(|candidate| {
-                        matches!(
-                            &candidate.kind,
-                            StatementKind::Function(candidate)
-                                if candidate.has_body && candidate.name == declaration.name
-                        )
-                    })
-                }
-                StatementKind::Class(declaration) => declaration.members.iter().any(|member| {
-                    let bodyless = matches!(
-                        &member.kind,
-                        ClassMemberKind::Constructor {
-                            has_body: false,
-                            ..
-                        } | ClassMemberKind::Method {
-                            has_body: false,
-                            ..
-                        }
-                    );
-                    bodyless
-                        && declaration.members.iter().any(|candidate| {
-                            match (&member.kind, &candidate.kind) {
-                                (
-                                    ClassMemberKind::Constructor { .. },
-                                    ClassMemberKind::Constructor { has_body: true, .. },
-                                ) => true,
-                                (
-                                    ClassMemberKind::Method { .. },
-                                    ClassMemberKind::Method { has_body: true, .. },
-                                ) => candidate.name == member.name,
-                                _ => false,
-                            }
-                        })
-                }),
-                StatementKind::Import(_)
-                | StatementKind::Export(_)
-                | StatementKind::Variable(_)
-                | StatementKind::Function(_)
-                | StatementKind::TypeAlias(_)
-                | StatementKind::Interface(_)
-                | StatementKind::If(_)
-                | StatementKind::Switch(_)
-                | StatementKind::Break(_)
-                | StatementKind::Continue(_)
-                | StatementKind::Return(_)
-                | StatementKind::Block(_)
-                | StatementKind::Expression(_)
-                | StatementKind::Empty
-                | StatementKind::Unknown => false,
-            })
-    }
-
     /// Whether emit would need function-modifier product ownership that the
     /// syntax printer does not yet provide for every module target.
     #[must_use]
@@ -303,11 +236,6 @@ impl SourceUnit {
         unmodeled
     }
 
-    #[must_use]
-    pub fn has_authored_extended_unicode_string(&self) -> bool {
-        self.has_source_syntax_fact(SourceSyntaxFact::AuthoredExtendedUnicodeString)
-    }
-
     pub(crate) fn comments(&self) -> &[CommentTrivia] {
         &self.comments
     }
@@ -317,42 +245,15 @@ impl SourceUnit {
         self.has_unicode_line_comment_terminator
     }
 
-    /// Whether template syntax outside the exact no-substitution expression
-    /// slice would require an AST, semantic, or emit product TSZ does not own.
-    #[must_use]
-    pub fn has_unmodeled_template_products(&self) -> bool {
-        self.has_literal_syntax_boundary(AuthoredLiteralKind::Template)
-    }
-
-    #[must_use]
-    pub fn has_unmodeled_extended_unicode_string_products(&self) -> bool {
-        self.has_literal_syntax_boundary(AuthoredLiteralKind::ExtendedUnicodeString)
-    }
-
-    #[must_use]
-    pub(crate) fn has_authored_regular_expression(&self) -> bool {
-        self.has_source_syntax_fact(SourceSyntaxFact::AuthoredRegularExpression)
-    }
-
-    #[must_use]
-    pub(crate) fn has_unmodeled_regular_expression_products(&self) -> bool {
-        self.has_literal_syntax_boundary(AuthoredLiteralKind::RegularExpression)
-    }
-
-    #[must_use]
-    pub(crate) fn has_unmodeled_numeric_recovery_products(&self) -> bool {
-        self.has_literal_syntax_boundary(AuthoredLiteralKind::NumericRecovery)
-    }
-
-    #[must_use]
-    pub(crate) fn has_unmodeled_numeric_separator_products(&self) -> bool {
-        self.has_literal_syntax_boundary(AuthoredLiteralKind::NumericSeparator)
-    }
-
-    fn has_literal_syntax_boundary(&self, family: AuthoredLiteralKind) -> bool {
-        self.source_syntax_facts.iter().any(|fact| {
-            matches!(fact, SourceSyntaxFact::LiteralBoundary(candidate, _) if *candidate == family)
-        })
+    pub(crate) fn literal_syntax_boundaries(
+        &self,
+    ) -> impl Iterator<Item = (AuthoredLiteralKind, LiteralSyntaxBoundary)> + '_ {
+        self.source_syntax_facts
+            .iter()
+            .filter_map(|fact| match fact {
+                SourceSyntaxFact::LiteralBoundary(family, boundary) => Some((*family, *boundary)),
+                _ => None,
+            })
     }
 }
 
@@ -367,7 +268,7 @@ pub struct Statement {
 pub enum StatementKind {
     Import(ImportDeclaration),
     Export(ExportDeclaration),
-    Variable(VariableDeclaration),
+    Variable(VariableStatement),
     Function(FunctionDeclaration),
     Class(ClassDeclaration),
     TypeAlias(TypeAliasDeclaration),
@@ -381,90 +282,6 @@ pub enum StatementKind {
     Expression(Expression),
     Empty,
     Unknown,
-}
-
-fn statement_owns_recovered_type_members(statement: &Statement) -> bool {
-    match &statement.kind {
-        StatementKind::Variable(declaration) => declaration
-            .annotation
-            .as_ref()
-            .is_some_and(TypeNode::contains_recovered_type_members),
-        StatementKind::Function(declaration) => signature_contains_recovered_type_members(
-            &declaration.type_parameters,
-            &declaration.parameters,
-            declaration.return_type.as_ref(),
-        ),
-        StatementKind::Class(declaration) => {
-            type_parameters_contain_recovery(&declaration.type_parameters)
-                || declaration
-                    .extends
-                    .as_ref()
-                    .is_some_and(TypeNode::contains_recovered_type_members)
-                || declaration
-                    .implements
-                    .iter()
-                    .any(TypeNode::contains_recovered_type_members)
-                || declaration
-                    .members
-                    .iter()
-                    .any(class_member_owns_recovered_type_members)
-        }
-        StatementKind::TypeAlias(declaration) => {
-            type_parameters_contain_recovery(&declaration.type_parameters)
-                || declaration.ty.contains_recovered_type_members()
-        }
-        StatementKind::Interface(declaration) => {
-            type_parameters_contain_recovery(&declaration.type_parameters)
-                || declaration
-                    .extends
-                    .iter()
-                    .any(TypeNode::contains_recovered_type_members)
-                || declaration
-                    .members
-                    .iter()
-                    .any(|member| member.contains(TypeContainment::RecoveredTypeMembers))
-        }
-        StatementKind::Import(_)
-        | StatementKind::Export(_)
-        | StatementKind::If(_)
-        | StatementKind::Switch(_)
-        | StatementKind::Break(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Return(_)
-        | StatementKind::Block(_)
-        | StatementKind::Expression(_)
-        | StatementKind::Empty
-        | StatementKind::Unknown => false,
-    }
-}
-
-fn class_member_owns_recovered_type_members(member: &ClassMember) -> bool {
-    match &member.kind {
-        ClassMemberKind::Constructor { parameters, .. } => parameters_contain_recovery(parameters),
-        ClassMemberKind::Property { annotation, .. } => annotation
-            .as_ref()
-            .is_some_and(TypeNode::contains_recovered_type_members),
-        ClassMemberKind::Method {
-            type_parameters,
-            parameters,
-            return_type,
-            ..
-        } => signature_contains_recovered_type_members(
-            type_parameters,
-            parameters,
-            return_type.as_ref(),
-        ),
-    }
-}
-
-fn signature_contains_recovered_type_members(
-    type_parameters: &[TypeParameterDeclaration],
-    parameters: &[Parameter],
-    return_type: Option<&TypeNode>,
-) -> bool {
-    type_parameters_contain_recovery(type_parameters)
-        || parameters_contain_recovery(parameters)
-        || return_type.is_some_and(TypeNode::contains_recovered_type_members)
 }
 
 #[derive(Debug, Clone)]
@@ -512,6 +329,7 @@ pub struct ImportDeclaration {
 #[derive(Debug, Clone)]
 pub struct ImportBinding {
     pub imported: Option<String>,
+    pub imported_span: Option<Span>,
     pub local: String,
     pub local_span: Span,
     pub type_only: bool,
@@ -546,17 +364,22 @@ pub enum VariableKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct VariableDeclaration {
+pub struct VariableStatement {
     pub declaration_kind: VariableKind,
+    pub declarators: Vec<VariableDeclarator>,
+    /// A JSDoc comment occurs in this statement's leading trivia range.
+    pub has_leading_jsdoc: bool,
+    pub exported: bool,
+    pub declared: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct VariableDeclarator {
     pub name: String,
     pub name_span: Span,
     pub(crate) recovered_binding_names: Vec<AuthoredBindingName>,
     pub annotation: Option<TypeNode>,
     pub initializer: Option<Expression>,
-    /// A JSDoc comment occurs in this declaration's leading trivia range.
-    pub has_leading_jsdoc: bool,
-    pub exported: bool,
-    pub declared: bool,
 }
 
 /// An authored binding identity retained independently from its declaration.
@@ -658,7 +481,7 @@ impl ClassMemberModifiers {
         *slot = true;
     }
 
-    pub(crate) const fn constructor_products_supported(&self) -> bool {
+    pub(crate) const fn constructor_modifiers_are_modeled(&self) -> bool {
         !self.unsupported_for_emit_products
             && !self.readonly
             && !self.static_member
@@ -667,14 +490,14 @@ impl ClassMemberModifiers {
             && !self.async_member
     }
 
-    pub(crate) const fn method_products_supported(&self) -> bool {
+    pub(crate) const fn method_modifiers_are_modeled(&self) -> bool {
         !self.unsupported_for_emit_products
             && !self.readonly
             && !self.abstract_member
             && !self.declared
     }
 
-    pub(crate) const fn property_products_supported(&self) -> bool {
+    pub(crate) const fn property_modifiers_are_modeled(&self) -> bool {
         !self.unsupported_for_emit_products
             && !self.abstract_member
             && !self.declared
@@ -688,6 +511,10 @@ pub struct ClassMember {
     pub name: String,
     pub name_span: Span,
     pub name_kind: PropertyNameKind,
+    /// Scanner-cooked property identity for string-literal names. Kept
+    /// separate from `name` so emit can preserve authored spelling and lone
+    /// UTF-16 surrogate units remain representable.
+    pub string_name_value: Option<Utf16String>,
     pub span: Span,
     pub modifiers: ClassMemberModifiers,
     pub overload_completion_supported: bool,
@@ -714,7 +541,9 @@ pub enum PropertyNameKind {
 #[derive(Debug, Clone)]
 pub enum ClassMemberKind {
     Constructor {
+        type_parameters: Vec<TypeParameterDeclaration>,
         parameters: Vec<Parameter>,
+        return_type: Option<TypeNode>,
         body: Vec<Statement>,
         has_body: bool,
         body_span: Option<Span>,
@@ -787,6 +616,12 @@ pub enum ParameterNameKind {
 }
 
 impl Parameter {
+    pub(crate) fn is_property(&self) -> bool {
+        self.modifiers
+            .iter()
+            .any(|modifier| modifier.kind.is_property())
+    }
+
     pub(crate) const fn overload_context_is_recovery_free(&self) -> bool {
         self.overload_completion_supported
     }
@@ -819,6 +654,15 @@ pub enum ParameterModifier {
     Private,
     Readonly,
     Static,
+}
+
+impl ParameterModifier {
+    pub(crate) const fn is_property(self) -> bool {
+        matches!(
+            self,
+            Self::Override | Self::Public | Self::Protected | Self::Private | Self::Readonly
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1059,6 +903,7 @@ pub enum TypeNodeKind {
         name_span: Span,
         arguments: Vec<TypeNode>,
     },
+    This,
     TypeQuery {
         name: String,
         name_span: Span,
@@ -1128,28 +973,130 @@ impl TypeNode {
         self.contains(TypeContainment::TypeQuery)
     }
 
-    /// Whether declaration/runtime recovery for this type escaped an authored
-    /// `TypeElement` list. Emitters use this to block a host product until the
-    /// enclosing declarator/parameter recovery is represented structurally.
-    #[must_use]
-    pub fn contains_recovered_type_members(&self) -> bool {
-        self.contains(TypeContainment::RecoveredTypeMembers)
+    /// Visit the `infer` declarations introduced by one conditional extends
+    /// pattern. Nested conditionals own their declarations, so their subtrees
+    /// are deliberately pruned. Children otherwise retain authored order.
+    pub(crate) fn for_each_conditional_infer<'a>(&'a self, visit: &mut impl FnMut(&'a str, Span)) {
+        walk_authored_item(
+            AuthoredTypeItem::Type(self, AuthoredTypeEdge::Nested),
+            &mut |item| match item {
+                AuthoredTypeItem::Type(_, AuthoredTypeEdge::TypeParameterDeclaration) => {
+                    TypeWalkControl::Prune
+                }
+                AuthoredTypeItem::Type(node, _) => match &node.kind {
+                    TypeNodeKind::Infer {
+                        name, name_span, ..
+                    } => {
+                        visit(name, *name_span);
+                        TypeWalkControl::Prune
+                    }
+                    TypeNodeKind::Conditional { .. } => TypeWalkControl::Prune,
+                    _ => TypeWalkControl::Continue,
+                },
+                AuthoredTypeItem::Member(_) => TypeWalkControl::Continue,
+            },
+        );
+    }
+
+    /// Tests authored type members while walking every nested type position.
+    /// The predicate owns any product or semantic policy; syntax only owns the
+    /// immutable traversal of written type structure.
+    pub(crate) fn contains_matching_type_member(
+        &self,
+        predicate: &mut impl FnMut(&TypeMember) -> bool,
+    ) -> bool {
+        walk_authored_item(
+            AuthoredTypeItem::Type(self, AuthoredTypeEdge::Nested),
+            &mut |item| match item {
+                AuthoredTypeItem::Member(member) if predicate(member) => TypeWalkControl::Stop,
+                _ => TypeWalkControl::Continue,
+            },
+        )
     }
 
     fn contains(&self, containment: TypeContainment) -> bool {
+        walk_authored_item(
+            AuthoredTypeItem::Type(self, AuthoredTypeEdge::Nested),
+            &mut |item| containment.control(item),
+        )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TypeContainment {
+    TypeQuery,
+}
+
+impl TypeContainment {
+    fn control(self, item: AuthoredTypeItem<'_>) -> TypeWalkControl {
+        match item {
+            AuthoredTypeItem::Type(node, _)
+                if self == Self::TypeQuery
+                    && matches!(node.kind, TypeNodeKind::TypeQuery { .. }) =>
+            {
+                TypeWalkControl::Stop
+            }
+            AuthoredTypeItem::Member(member) if member.recovered => TypeWalkControl::Prune,
+            _ => TypeWalkControl::Continue,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthoredTypeEdge {
+    Nested,
+    TypeParameterDeclaration,
+    ConditionalTrue,
+    MappedConstraint,
+}
+
+#[derive(Clone, Copy)]
+enum TypeWalkControl {
+    Continue,
+    Prune,
+    Stop,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum AuthoredTypeItem<'a> {
+    Type(&'a TypeNode, AuthoredTypeEdge),
+    Member(&'a TypeMember),
+}
+
+fn walk_authored_item<'a>(
+    root: AuthoredTypeItem<'a>,
+    visit: &mut impl FnMut(AuthoredTypeItem<'a>) -> TypeWalkControl,
+) -> bool {
+    let mut pending = vec![root];
+    while let Some(item) = pending.pop() {
+        match visit(item) {
+            TypeWalkControl::Stop => return true,
+            TypeWalkControl::Prune => continue,
+            TypeWalkControl::Continue => {}
+        }
+        match item {
+            AuthoredTypeItem::Type(node, _) => node.push_authored_children(&mut pending),
+            AuthoredTypeItem::Member(member) => member.push_authored_children(&mut pending),
+        }
+    }
+    false
+}
+
+impl TypeNode {
+    pub(crate) fn push_authored_children<'a>(&'a self, pending: &mut Vec<AuthoredTypeItem<'a>>) {
+        let nested = |node| AuthoredTypeItem::Type(node, AuthoredTypeEdge::Nested);
         match &self.kind {
-            TypeNodeKind::TypeQuery { .. } => containment == TypeContainment::TypeQuery,
-            TypeNodeKind::Array(inner)
-            | TypeNodeKind::KeyOf(inner)
-            | TypeNodeKind::Readonly(inner)
-            | TypeNodeKind::Parenthesized(inner) => inner.contains(containment),
-            TypeNodeKind::Tuple(types)
-            | TypeNodeKind::Union(types)
-            | TypeNodeKind::Intersection(types) => {
-                types.iter().any(|node| node.contains(containment))
+            TypeNodeKind::Array(child)
+            | TypeNodeKind::KeyOf(child)
+            | TypeNodeKind::Readonly(child)
+            | TypeNodeKind::Parenthesized(child) => pending.push(nested(child)),
+            TypeNodeKind::Tuple(children)
+            | TypeNodeKind::Union(children)
+            | TypeNodeKind::Intersection(children) => {
+                pending.extend(children.iter().rev().map(nested));
             }
             TypeNodeKind::Object(members) => {
-                members.iter().any(|member| member.contains(containment))
+                pending.extend(members.iter().rev().map(AuthoredTypeItem::Member));
             }
             TypeNodeKind::Function {
                 type_parameters,
@@ -1162,23 +1109,20 @@ impl TypeNode {
                 parameters,
                 return_type,
                 ..
-            } => {
-                type_parameters
-                    .iter()
-                    .any(|parameter| containment.contains_type_parameter(parameter))
-                    || parameters
-                        .iter()
-                        .any(|parameter| containment.contains_parameter(parameter))
-                    || return_type.contains(containment)
-            }
+            } => push_authored_signature_children(
+                type_parameters,
+                parameters,
+                Some(return_type),
+                pending,
+            ),
             TypeNodeKind::Reference { arguments, .. } => {
-                arguments.iter().any(|node| node.contains(containment))
+                pending.extend(arguments.iter().rev().map(nested));
             }
-            TypeNodeKind::Infer { constraint, .. } => constraint
-                .as_deref()
-                .is_some_and(|node| node.contains(containment)),
+            TypeNodeKind::Infer { constraint, .. } => {
+                pending.extend(constraint.iter().map(|node| nested(node)));
+            }
             TypeNodeKind::Predicate { ty, .. } => {
-                ty.as_deref().is_some_and(|node| node.contains(containment))
+                pending.extend(ty.iter().map(|node| nested(node)));
             }
             TypeNodeKind::Conditional {
                 check_type,
@@ -1186,10 +1130,13 @@ impl TypeNode {
                 true_type,
                 false_type,
             } => {
-                check_type.contains(containment)
-                    || extends_type.contains(containment)
-                    || true_type.contains(containment)
-                    || false_type.contains(containment)
+                pending.push(nested(false_type));
+                pending.push(AuthoredTypeItem::Type(
+                    true_type,
+                    AuthoredTypeEdge::ConditionalTrue,
+                ));
+                pending.push(nested(extends_type));
+                pending.push(nested(check_type));
             }
             TypeNodeKind::Mapped {
                 constraint,
@@ -1198,105 +1145,71 @@ impl TypeNode {
                 members,
                 ..
             } => {
-                constraint.contains(containment)
-                    || name_type
-                        .as_deref()
-                        .is_some_and(|node| node.contains(containment))
-                    || value_type.contains(containment)
-                    || members.iter().any(|member| member.contains(containment))
+                pending.extend(members.iter().rev().map(AuthoredTypeItem::Member));
+                pending.push(nested(value_type));
+                pending.extend(name_type.iter().map(|node| nested(node)));
+                pending.push(AuthoredTypeItem::Type(
+                    constraint,
+                    AuthoredTypeEdge::MappedConstraint,
+                ));
             }
             TypeNodeKind::IndexedAccess { object, index } => {
-                object.contains(containment) || index.contains(containment)
+                pending.push(nested(index));
+                pending.push(nested(object));
             }
-            TypeNodeKind::Keyword(_) | TypeNodeKind::Literal(_) | TypeNodeKind::Missing => false,
+            TypeNodeKind::Keyword(_)
+            | TypeNodeKind::Literal(_)
+            | TypeNodeKind::This
+            | TypeNodeKind::TypeQuery { .. }
+            | TypeNodeKind::Missing => {}
         }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TypeContainment {
-    TypeQuery,
-    RecoveredTypeMembers,
-}
-
-impl TypeContainment {
-    fn contains_type_parameter(self, parameter: &TypeParameterDeclaration) -> bool {
-        parameter
-            .constraint
-            .as_ref()
-            .is_some_and(|node| node.contains(self))
-            || parameter
-                .default
-                .as_ref()
-                .is_some_and(|node| node.contains(self))
-    }
-
-    fn contains_parameter(self, parameter: &Parameter) -> bool {
-        parameter
-            .annotation
-            .as_ref()
-            .is_some_and(|node| node.contains(self))
-            || self == Self::RecoveredTypeMembers
-                && parameter
-                    .initializer
-                    .as_ref()
-                    .is_some_and(expression_contains_recovered_type_members)
     }
 }
 
 impl TypeMember {
-    fn contains(&self, containment: TypeContainment) -> bool {
-        if self.recovered {
-            return containment == TypeContainment::RecoveredTypeMembers;
+    pub(crate) fn push_authored_children<'a>(&'a self, pending: &mut Vec<AuthoredTypeItem<'a>>) {
+        if let TypeMemberKind::Property { ty, .. } = &self.kind {
+            pending.extend(
+                ty.iter()
+                    .map(|node| AuthoredTypeItem::Type(node, AuthoredTypeEdge::Nested)),
+            );
+            return;
         }
-        if containment == TypeContainment::RecoveredTypeMembers
-            && matches!(
-                &self.kind,
-                TypeMemberKind::Property { name, .. }
-                    | TypeMemberKind::Method { name, .. }
-                    | TypeMemberKind::Accessor { name, .. }
-                    if matches!(
-                        &name.kind,
-                        TypeMemberNameKind::Computed(expression)
-                            if expression_contains_recovered_type_members(expression)
-                    )
-            )
-        {
-            return true;
+        if let Some((_, type_parameters, parameters, return_type)) = self.kind.signature() {
+            push_authored_signature_children(type_parameters, parameters, return_type, pending);
         }
-        if let TypeMemberKind::Property {
-            ty, initializer, ..
-        } = &self.kind
-        {
-            return ty.as_ref().is_some_and(|node| node.contains(containment))
-                || containment == TypeContainment::RecoveredTypeMembers
-                    && initializer
-                        .as_ref()
-                        .is_some_and(expression_contains_recovered_type_members);
-        }
-        let Some((_, type_parameters, parameters, return_type)) = self.kind.signature() else {
-            return false;
-        };
-        type_parameters
-            .iter()
-            .any(|parameter| containment.contains_type_parameter(parameter))
-            || parameters
-                .iter()
-                .any(|parameter| containment.contains_parameter(parameter))
-            || return_type.is_some_and(|node| node.contains(containment))
     }
 }
 
-fn parameters_contain_recovery(parameters: &[Parameter]) -> bool {
-    parameters
-        .iter()
-        .any(|parameter| TypeContainment::RecoveredTypeMembers.contains_parameter(parameter))
-}
-
-fn type_parameters_contain_recovery(parameters: &[TypeParameterDeclaration]) -> bool {
-    parameters
-        .iter()
-        .any(|parameter| TypeContainment::RecoveredTypeMembers.contains_type_parameter(parameter))
+fn push_authored_signature_children<'a>(
+    type_parameters: &'a [TypeParameterDeclaration],
+    parameters: &'a [Parameter],
+    return_type: Option<&'a TypeNode>,
+    pending: &mut Vec<AuthoredTypeItem<'a>>,
+) {
+    pending.extend(
+        return_type
+            .into_iter()
+            .map(|node| AuthoredTypeItem::Type(node, AuthoredTypeEdge::Nested)),
+    );
+    pending.extend(parameters.iter().rev().filter_map(|parameter| {
+        parameter
+            .annotation
+            .as_ref()
+            .map(|node| AuthoredTypeItem::Type(node, AuthoredTypeEdge::Nested))
+    }));
+    for parameter in type_parameters.iter().rev() {
+        pending.extend(
+            parameter.default.iter().map(|node| {
+                AuthoredTypeItem::Type(node, AuthoredTypeEdge::TypeParameterDeclaration)
+            }),
+        );
+        pending.extend(
+            parameter.constraint.iter().map(|node| {
+                AuthoredTypeItem::Type(node, AuthoredTypeEdge::TypeParameterDeclaration)
+            }),
+        );
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1326,7 +1239,9 @@ pub enum ExpressionKind {
     New {
         callee: Box<Expression>,
         type_arguments: Vec<TypeNode>,
+        type_argument_list_close: Option<Span>,
         arguments: Vec<Expression>,
+        has_argument_list: bool,
     },
     Member {
         object: Box<Expression>,
@@ -1350,6 +1265,8 @@ pub enum ExpressionKind {
     },
     Assignment {
         left: Box<Expression>,
+        operator: AssignmentOperator,
+        operator_span: Span,
         right: Box<Expression>,
         /// A JSDoc comment occurs before the assignment's left edge.
         has_leading_jsdoc: bool,
@@ -1358,6 +1275,7 @@ pub enum ExpressionKind {
         expression: Box<Expression>,
         ty: TypeNode,
     },
+    NonNull(Box<Expression>),
     Parenthesized(Box<Expression>),
     Missing,
 }
@@ -1374,6 +1292,7 @@ impl Expression {
     pub(crate) fn peel_parentheses_and_assertions(&self) -> &Self {
         let mut expression = self;
         while let ExpressionKind::Parenthesized(inner)
+        | ExpressionKind::NonNull(inner)
         | ExpressionKind::As {
             expression: inner, ..
         } = &expression.kind
@@ -1381,45 +1300,6 @@ impl Expression {
             expression = inner;
         }
         expression
-    }
-}
-
-fn expression_contains_recovered_type_members(expression: &Expression) -> bool {
-    contains_matching_expression(
-        ExpressionRoot::Expression(expression),
-        ExpressionTraversal::All,
-        expression_owns_recovered_type_members,
-    )
-}
-
-fn expression_owns_recovered_type_members(expression: &Expression) -> bool {
-    match &expression.kind {
-        ExpressionKind::Call { type_arguments, .. } => type_arguments
-            .iter()
-            .flatten()
-            .any(TypeNode::contains_recovered_type_members),
-        ExpressionKind::New { type_arguments, .. } => type_arguments
-            .iter()
-            .any(TypeNode::contains_recovered_type_members),
-        ExpressionKind::FunctionLike(function) => signature_contains_recovered_type_members(
-            &function.type_parameters,
-            &function.parameters,
-            function.return_type.as_ref(),
-        ),
-        ExpressionKind::As { ty, .. } => ty.contains_recovered_type_members(),
-        ExpressionKind::Identifier { .. }
-        | ExpressionKind::This
-        | ExpressionKind::Literal(_)
-        | ExpressionKind::RegularExpression(_)
-        | ExpressionKind::Object(_)
-        | ExpressionKind::Array(_)
-        | ExpressionKind::Member { .. }
-        | ExpressionKind::ElementAccess { .. }
-        | ExpressionKind::Binary { .. }
-        | ExpressionKind::Unary { .. }
-        | ExpressionKind::Assignment { .. }
-        | ExpressionKind::Parenthesized(_)
-        | ExpressionKind::Missing => false,
     }
 }
 
@@ -1495,6 +1375,7 @@ pub enum ArrowBody {
 pub struct ObjectProperty {
     pub name: String,
     pub name_span: Span,
+    pub name_kind: PropertyNameKind,
     pub shorthand: bool,
     pub shorthand_equals_span: Option<Span>,
     pub value: Expression,
@@ -1525,6 +1406,8 @@ pub enum BinaryOperator {
     LessThanEquals,
     GreaterThan,
     GreaterThanEquals,
+    LeftShift,
+    SignedRightShift,
     UnsignedRightShift,
     Equals,
     NotEquals,
@@ -1533,10 +1416,17 @@ pub enum BinaryOperator {
     LogicalAnd,
     LogicalOr,
     BitwiseAnd,
+    BitwiseXor,
     BitwiseOr,
     NullishCoalesce,
     In,
     InstanceOf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentOperator {
+    Assign,
+    AddAssign,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

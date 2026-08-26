@@ -3,6 +3,7 @@
 //! Emit erases type syntax and prints runtime nodes without semantic validation or recovery.
 
 mod comments;
+pub(crate) mod display;
 mod element_access;
 mod functions;
 mod literals;
@@ -11,24 +12,30 @@ mod reachability;
 mod regular_expression;
 mod statements;
 #[cfg(test)]
-#[path = "emit/test_support.rs"]
+#[path = "../rewrite-tests/emit_target_boundaries.rs"]
+mod target_boundary_tests;
+#[cfg(test)]
+#[path = "../rewrite-tests/emit_unit.rs"]
 mod tests;
 mod type_members;
 use self::comments::GapOwner::{End, Kind};
 use self::comments::{CommentIndex, GapSeparator as Gap};
+use crate::bind::{BoundFile, DeclarationKind};
 use crate::emit_paths::EmitFilePlan;
 use crate::program::{
     CompilerOptions, EmittedFile, ProgramFile, is_declaration_source, is_effective_commonjs,
 };
 use crate::source::{SourceText, Span};
 use crate::syntax::{
-    AccessorKind, BinaryOperator, ClassDeclaration, ClassMemberKind, ExportDeclaration, Expression,
-    ExpressionKind, FunctionDeclaration, FunctionLikeSyntax, ImportDeclaration,
-    InterfaceDeclaration, KeywordType, ObjectProperty, Parameter, ParameterNameKind, SourceUnit,
-    Statement, StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, VariableDeclaration,
-    VariableKind, erased_assertion_expression,
+    BinaryOperator, ExportDeclaration, Expression, ExpressionKind, FunctionLikeSyntax,
+    ImportDeclaration, InterfaceDeclaration, ObjectProperty, Parameter, ParameterNameKind,
+    SourceUnit, Statement, StatementKind, TypeAliasDeclaration, TypeNode, TypeNodeKind,
+    VariableDeclarator, VariableKind, VariableStatement, erased_assertion_expression,
+    keyword_type_text,
 };
 use operators::*;
+
+pub(crate) use literals::render_inferred_expression_type;
 pub(crate) fn emit_file_with_plan(
     file: &ProgramFile,
     options: &CompilerOptions,
@@ -37,13 +44,9 @@ pub(crate) fn emit_file_with_plan(
     if is_declaration_source(&file.source.path) {
         return Vec::new();
     }
-    if file.syntax.contains_recovered_type_members() {
-        return Vec::new();
-    }
-
     let mut emitted = Vec::with_capacity(usize::from(plan.declaration.is_some()) + 1);
     if let Some(javascript_path) = &plan.javascript {
-        let mut javascript = Printer::new(&file.source, options);
+        let mut javascript = Printer::new(&file.source, &file.bindings, options);
         javascript.emit_javascript(&file.syntax);
         if javascript.javascript_supported {
             emitted.push(EmittedFile {
@@ -57,7 +60,7 @@ pub(crate) fn emit_file_with_plan(
     if let Some(declaration_path) = &plan.declaration
         && !reachability::requires_checked_declaration_reachability(file)
     {
-        let mut declarations = Printer::new(&file.source, options);
+        let mut declarations = Printer::new(&file.source, &file.bindings, options);
         declarations.emit_declarations(&file.syntax);
         if declarations.declaration_supported {
             emitted.push(EmittedFile {
@@ -79,6 +82,7 @@ enum ModuleFormat {
 
 struct Printer<'a> {
     source: &'a SourceText,
+    bindings: &'a BoundFile,
     output: String,
     indent: usize,
     module_format: ModuleFormat,
@@ -93,10 +97,11 @@ struct Printer<'a> {
     javascript_supported: bool,
     declaration_supported: bool,
     declaration_parameter_property_host: bool,
+    compact_type: bool,
 }
 
 impl<'a> Printer<'a> {
-    fn new(source: &'a SourceText, options: &CompilerOptions) -> Self {
+    fn new(source: &'a SourceText, bindings: &'a BoundFile, options: &CompilerOptions) -> Self {
         let target = options.target.trim().to_ascii_lowercase();
         let extension = source
             .path
@@ -106,6 +111,7 @@ impl<'a> Printer<'a> {
             .to_ascii_lowercase();
         Self {
             source,
+            bindings,
             output: String::new(),
             indent: 0,
             module_format: if is_effective_commonjs(&source.path, &options.module) {
@@ -130,6 +136,7 @@ impl<'a> Printer<'a> {
             javascript_supported: true,
             declaration_supported: true,
             declaration_parameter_property_host: false,
+            compact_type: false,
         }
     }
 
@@ -138,31 +145,48 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_javascript(&mut self, unit: &SourceUnit) {
-        let has_export = unit.statements.iter().any(statement_is_exported);
+        let (has_export, runtime_export) = module_export_facts(&unit.statements);
         let external_module = has_export || self.implicit_external_module;
-        let has_runtime_export = unit
-            .statements
-            .iter()
-            .any(|statement| self.statement_is_runtime_export(statement));
+        let (mut directive_end, mut strict) = (0, false);
+        for (index, statement) in unit.statements.iter().enumerate() {
+            if let StatementKind::Import(_) | StatementKind::Export(_) = &statement.kind
+                && !self.javascript_statement_is_emitted(statement)
+            {
+                continue;
+            }
+            let Some(is_strict) = type_members::directive(statement) else {
+                break;
+            };
+            strict |= directive_end == 0 && is_strict;
+            directive_end = index + 1;
+        }
 
-        if self.module_format == ModuleFormat::CommonJs || !external_module {
+        if (self.module_format == ModuleFormat::CommonJs || !external_module) && !strict {
             self.output.push_str("\"use strict\";\n");
+        }
+        self.comment_index
+            .reset(unit.comments(), self.preserve_comments);
+        for statement in &unit.statements[..directive_end] {
+            self.write_javascript_statement(statement, true);
         }
         if external_module && self.module_format == ModuleFormat::CommonJs {
             self.output
                 .push_str("Object.defineProperty(exports, \"__esModule\", { value: true });\n");
+            self.write_commonjs_declaration_prologue(unit);
         }
+        for statement in &unit.statements[directive_end..] {
+            self.write_javascript_statement(statement, true);
+        }
+        self.finish_javascript_statements(unit);
 
-        self.write_javascript_statements(unit);
-
-        if external_module && !has_runtime_export && self.module_format == ModuleFormat::EsModule {
+        if external_module && !runtime_export && self.module_format == ModuleFormat::EsModule {
             self.output.push_str("export {};\n");
         }
     }
 
     fn emit_declarations(&mut self, unit: &SourceUnit) {
         self.emitting_declaration = true;
-        let has_export = unit.statements.iter().any(statement_is_exported);
+        let (has_export, _) = module_export_facts(&unit.statements);
         for statement in &unit.statements {
             match &statement.kind {
                 StatementKind::Import(_) => self.write_raw_statement(statement),
@@ -198,7 +222,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn write_javascript_variable(&mut self, declaration: &VariableDeclaration, top_level: bool) {
+    fn write_javascript_variable(&mut self, declaration: &VariableStatement, top_level: bool) {
         self.write_indent();
         if top_level && declaration.exported && self.module_format == ModuleFormat::EsModule {
             self.output.push_str("export ");
@@ -207,11 +231,20 @@ impl<'a> Printer<'a> {
         self.output.push('\n');
 
         if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
-            self.write_commonjs_export(&declaration.name);
+            for declarator in &declaration.declarators {
+                self.write_commonjs_export(
+                    &declarator.name,
+                    &declarator.name,
+                    Some(declarator.name_span),
+                );
+            }
         }
     }
 
-    fn write_runtime_variable(&mut self, declaration: &VariableDeclaration) {
+    fn write_runtime_variable(&mut self, declaration: &VariableStatement) {
+        let Some((first, rest)) = declaration.declarators.split_first() else {
+            return;
+        };
         self.output
             .push_str(self.runtime_variable_kind(declaration.declaration_kind));
         let keyword = match declaration.declaration_kind {
@@ -219,8 +252,22 @@ impl<'a> Printer<'a> {
             VariableKind::Const => crate::syntax::TokenKind::Const,
             VariableKind::Var => crate::syntax::TokenKind::Var,
         };
-        self.write_gap(Kind(keyword, declaration.name_span.start), true, Gap::Space);
-        self.output.push_str(&declaration.name);
+        self.write_gap(Kind(keyword, first.name_span.start), true, Gap::Space);
+        self.write_runtime_variable_declarator(first);
+        for declarator in rest {
+            self.output.push(',');
+            self.write_gap(
+                Kind(crate::syntax::TokenKind::Comma, declarator.name_span.start),
+                true,
+                Gap::Space,
+            );
+            self.write_runtime_variable_declarator(declarator);
+        }
+        self.output.push(';');
+    }
+
+    fn write_runtime_variable_declarator(&mut self, declaration: &VariableDeclarator) {
+        self.write_authored_identifier(&declaration.name, declaration.name_span);
         let separator = if declaration.initializer.is_some() {
             Gap::Space
         } else {
@@ -233,44 +280,9 @@ impl<'a> Printer<'a> {
             self.write_gap(equals, false, Gap::Space);
             self.write_expression(initializer, PREC_ASSIGNMENT);
         }
-        self.output.push(';');
-    }
-
-    fn write_javascript_function(
-        &mut self,
-        _statement: &Statement,
-        declaration: &FunctionDeclaration,
-        top_level: bool,
-    ) {
-        if declaration.declared || !declaration.has_body {
-            return;
-        }
-        self.write_indent();
-        if top_level && declaration.exported && self.module_format == ModuleFormat::EsModule {
-            self.output.push_str("export ");
-        }
-        if declaration.is_async {
-            self.output.push_str("async ");
-        }
-        self.write_parts(&["function ", &declaration.name]);
-        self.write_runtime_parameters(&declaration.parameters, true);
-        self.output.push(' ');
-        self.write_braced_statements(declaration.body_span, &declaration.body);
-        self.output.push('\n');
-
-        if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
-            self.write_commonjs_export(&declaration.name);
-        }
     }
 
     fn write_javascript_import(&mut self, _statement: &Statement, declaration: &ImportDeclaration) {
-        let has_runtime_binding = declaration
-            .bindings
-            .iter()
-            .any(|binding| !binding.type_only);
-        if declaration.type_only || (!declaration.side_effect_only && !has_runtime_binding) {
-            return;
-        }
         if self.module_format == ModuleFormat::EsModule {
             self.write_esmodule_import(declaration);
             return;
@@ -331,14 +343,15 @@ impl<'a> Printer<'a> {
 
         let mut wrote_clause = false;
         if let Some(binding) = default_binding {
-            self.output.push_str(&binding.local);
+            self.write_authored_identifier(&binding.local, binding.local_span);
             wrote_clause = true;
         }
         if let Some(binding) = namespace_binding {
             if wrote_clause {
                 self.output.push_str(", ");
             }
-            self.write_parts(&["* as ", &binding.local]);
+            self.output.push_str("* as ");
+            self.write_authored_identifier(&binding.local, binding.local_span);
         } else if !named_bindings.is_empty() {
             if wrote_clause {
                 self.output.push_str(", ");
@@ -349,9 +362,17 @@ impl<'a> Printer<'a> {
                     self.output.push_str(", ");
                 }
                 let imported = binding.imported.as_deref().unwrap_or(&binding.local);
-                self.output.push_str(imported);
-                if imported != binding.local {
-                    self.write_parts(&[" as ", &binding.local]);
+                if let Some(imported_span) = binding.imported_span {
+                    self.write_authored_identifier(imported, imported_span);
+                } else {
+                    self.output.push_str(imported);
+                }
+                if binding
+                    .imported_span
+                    .is_some_and(|imported_span| imported_span != binding.local_span)
+                {
+                    self.output.push_str(" as ");
+                    self.write_authored_identifier(&binding.local, binding.local_span);
                 }
             }
             self.output.push_str(" }");
@@ -362,16 +383,6 @@ impl<'a> Printer<'a> {
     }
 
     fn write_javascript_export(&mut self, _statement: &Statement, declaration: &ExportDeclaration) {
-        if declaration.type_only
-            || (!declaration.export_all
-                && declaration.assignment.is_none()
-                && declaration
-                    .specifiers
-                    .iter()
-                    .all(|specifier| specifier.type_only))
-        {
-            return;
-        }
         if self.module_format == ModuleFormat::EsModule {
             self.write_esmodule_export(declaration);
             return;
@@ -404,11 +415,37 @@ impl<'a> Printer<'a> {
             .filter(|specifier| !specifier.type_only)
         {
             self.write_indent();
-            self.write_parts(&["exports.", &specifier.exported, " = "]);
-            if let Some(module) = &declaration.module_specifier {
-                self.write_parts(&["require(", &quote_string(module), ")."]);
+            let imported_binding = self
+                .bindings
+                .export_specifier_target(specifier.local_span)
+                .is_some_and(|target| target.kind == DeclarationKind::Import);
+            if imported_binding || declaration.module_specifier.is_some() {
+                let export_key = if imported_binding {
+                    self.source.slice(specifier.exported_span)
+                } else {
+                    &specifier.exported
+                };
+                self.write_parts(&[
+                    "Object.defineProperty(exports, ",
+                    &quote_string(export_key),
+                    ", { enumerable: true, get: function () { return ",
+                ]);
+                if let Some(module) = &declaration.module_specifier {
+                    self.write_parts(&["require(", &quote_string(module), ")."]);
+                    self.write_authored_identifier(&specifier.local, specifier.local_span);
+                } else {
+                    self.output.push_str(&specifier.local);
+                }
+                self.output.push_str("; } });\n");
+            } else {
+                self.write_parts(&[
+                    "exports.",
+                    &specifier.exported,
+                    " = ",
+                    &specifier.local,
+                    ";\n",
+                ]);
             }
-            self.write_parts(&[&specifier.local, ";\n"]);
         }
     }
 
@@ -432,7 +469,8 @@ impl<'a> Printer<'a> {
                 .iter()
                 .find(|specifier| !specifier.type_only)
             {
-                self.write_parts(&[" as ", &specifier.exported]);
+                self.output.push_str(" as ");
+                self.write_authored_identifier(&specifier.exported, specifier.exported_span);
             }
         } else {
             self.output.push_str("export { ");
@@ -446,9 +484,10 @@ impl<'a> Printer<'a> {
                     self.output.push_str(", ");
                 }
                 first = false;
-                self.output.push_str(&specifier.local);
-                if specifier.local != specifier.exported {
-                    self.write_parts(&[" as ", &specifier.exported]);
+                self.write_authored_identifier(&specifier.local, specifier.local_span);
+                if specifier.local_span != specifier.exported_span {
+                    self.output.push_str(" as ");
+                    self.write_authored_identifier(&specifier.exported, specifier.exported_span);
                 }
             }
             self.output.push_str(" }");
@@ -481,7 +520,9 @@ impl<'a> Printer<'a> {
 
     fn write_heritage_type(&mut self, ty: &TypeNode) {
         match &ty.kind {
-            TypeNodeKind::Reference { name, .. } => self.output.push_str(name),
+            TypeNodeKind::Reference {
+                name, name_span, ..
+            } => self.write_authored_identifier(name, *name_span),
             TypeNodeKind::Parenthesized(inner) => {
                 self.output.push('(');
                 self.write_heritage_type(inner);
@@ -515,7 +556,7 @@ impl<'a> Printer<'a> {
                     self.write_gap(End(rest_span.end), true, Gap::Indent);
                 }
             }
-            self.output.push_str(&parameter.name);
+            self.write_authored_identifier(&parameter.name, parameter.name_span);
             self.write_gap(End(parameter.name_span.end), true, Gap::Indent);
             if let Some(initializer) = &parameter.initializer {
                 self.consume_comments_before(initializer.span.start);
@@ -531,9 +572,26 @@ impl<'a> Printer<'a> {
         self.output.push(')');
     }
 
-    fn write_commonjs_export(&mut self, name: &str) {
+    fn write_commonjs_export(
+        &mut self,
+        export_name: &str,
+        local_name: &str,
+        authored_span: Option<Span>,
+    ) {
         self.write_indent();
-        self.write_parts(&["exports.", name, " = ", name, ";\n"]);
+        self.output.push_str("exports.");
+        if let Some(span) = authored_span {
+            self.write_authored_identifier(export_name, span);
+        } else {
+            self.output.push_str(export_name);
+        }
+        self.output.push_str(" = ");
+        if let Some(span) = authored_span {
+            self.write_authored_identifier(local_name, span);
+        } else {
+            self.output.push_str(local_name);
+        }
+        self.output.push_str(";\n");
     }
 
     fn write_expression(&mut self, expression: &Expression, parent_precedence: u8) {
@@ -555,7 +613,17 @@ impl<'a> Printer<'a> {
         }
 
         match &expression.kind {
-            ExpressionKind::Identifier { name, .. } => self.output.push_str(name),
+            ExpressionKind::Identifier {
+                name,
+                name_span,
+                entity_name,
+            } => {
+                if *entity_name {
+                    self.write_authored_identifier(name, *name_span);
+                } else {
+                    self.output.push_str(name);
+                }
+            }
             ExpressionKind::This => self.output.push_str("this"),
             ExpressionKind::Literal(literal) => self
                 .output
@@ -588,18 +656,28 @@ impl<'a> Printer<'a> {
             }
             ExpressionKind::New {
                 callee,
-                type_arguments,
+                type_argument_list_close,
                 arguments,
+                has_argument_list,
+                ..
             } => {
                 self.output.push_str("new ");
                 self.write_expression(callee, PREC_POSTFIX);
-                self.write_type_arguments(type_arguments);
-                self.output.push('(');
-                self.write_expression_list(arguments);
-                if self.write_comments_before_close(expression.span.end) {
-                    self.write_indent();
+                if let Some(close) = type_argument_list_close {
+                    self.write_gap(End(callee.span.end), false, Gap::None);
+                    self.consume_comments_before(close.end);
+                    if *has_argument_list {
+                        self.consume_comments_through_token(close.end);
+                    }
                 }
-                self.output.push(')');
+                if *has_argument_list {
+                    self.output.push('(');
+                    self.write_expression_list(arguments);
+                    if self.write_comments_before_close(expression.span.end) {
+                        self.write_indent();
+                    }
+                    self.output.push(')');
+                }
             }
             ExpressionKind::Member {
                 object,
@@ -609,7 +687,9 @@ impl<'a> Printer<'a> {
             ExpressionKind::ElementAccess { object, index } => {
                 self.write_element_access(object, index)
             }
-            ExpressionKind::FunctionLike(function) => self.write_function_like(function),
+            ExpressionKind::FunctionLike(function) => {
+                self.write_function_like(function, expression.span)
+            }
             ExpressionKind::Binary {
                 left,
                 operator,
@@ -631,12 +711,24 @@ impl<'a> Printer<'a> {
                 }
                 self.write_expression(operand, PREC_UNARY);
             }
-            ExpressionKind::Assignment { left, right, .. } => {
+            ExpressionKind::Assignment {
+                left,
+                operator,
+                operator_span,
+                right,
+                ..
+            } => {
                 self.write_expression(left, PREC_ASSIGNMENT.saturating_add(1));
-                self.output.push_str(" = ");
+                self.write_gap(End(left.span.end), false, Gap::Space);
+                self.output.push_str(assignment_operator_text(*operator));
+                self.write_gap(End(operator_span.end), false, Gap::Hanging);
                 self.write_expression(right, PREC_ASSIGNMENT);
             }
             ExpressionKind::As { .. } => unreachable!("assertions are erased before printing"),
+            ExpressionKind::NonNull(inner) => {
+                self.write_expression(inner, parent_precedence);
+                self.write_gap(End(inner.span.end), false, Gap::None);
+            }
             ExpressionKind::Parenthesized(inner) => {
                 self.output.push('(');
                 self.write_expression(inner, PREC_LOWEST);
@@ -731,6 +823,7 @@ impl<'a> Printer<'a> {
                 BinaryOperator::LogicalOr | BinaryOperator::NullishCoalesce => PREC_LOGICAL_OR,
                 BinaryOperator::LogicalAnd => PREC_LOGICAL_AND,
                 BinaryOperator::BitwiseOr => PREC_BITWISE_OR,
+                BinaryOperator::BitwiseXor => PREC_BITWISE_XOR,
                 BinaryOperator::BitwiseAnd => PREC_BITWISE_AND,
                 BinaryOperator::Equals
                 | BinaryOperator::NotEquals
@@ -742,7 +835,9 @@ impl<'a> Printer<'a> {
                 | BinaryOperator::GreaterThanEquals
                 | BinaryOperator::In
                 | BinaryOperator::InstanceOf => PREC_RELATIONAL,
-                BinaryOperator::UnsignedRightShift => PREC_SHIFT,
+                BinaryOperator::LeftShift
+                | BinaryOperator::SignedRightShift
+                | BinaryOperator::UnsignedRightShift => PREC_SHIFT,
                 BinaryOperator::Add | BinaryOperator::Subtract => PREC_ADDITIVE,
                 BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Remainder => {
                     PREC_MULTIPLICATIVE
@@ -754,6 +849,7 @@ impl<'a> Printer<'a> {
             | ExpressionKind::Member { .. }
             | ExpressionKind::ElementAccess { .. } => PREC_POSTFIX,
             ExpressionKind::As { expression, .. } => self.expression_precedence(expression),
+            ExpressionKind::NonNull(inner) => self.expression_precedence(inner),
             ExpressionKind::Identifier { .. }
             | ExpressionKind::This
             | ExpressionKind::Literal(_)
@@ -776,11 +872,8 @@ impl<'a> Printer<'a> {
 
     fn write_declaration_type_alias(&mut self, declaration: &TypeAliasDeclaration) {
         self.write_indent();
-        self.write_parts(&[
-            if declaration.exported { "export " } else { "" },
-            "type ",
-            &declaration.name,
-        ]);
+        self.write_parts(&[if declaration.exported { "export " } else { "" }, "type "]);
+        self.write_authored_identifier(&declaration.name, declaration.name_span);
         self.write_type_parameters(&declaration.type_parameters);
         self.output.push_str(" = ");
         self.write_type(&declaration.ty, TYPE_PREC_LOWEST);
@@ -792,8 +885,8 @@ impl<'a> Printer<'a> {
         self.write_parts(&[
             if declaration.exported { "export " } else { "" },
             "interface ",
-            &declaration.name,
         ]);
+        self.write_authored_identifier(&declaration.name, declaration.name_span);
         self.write_type_parameters(&declaration.type_parameters);
         if !declaration.extends.is_empty() {
             self.output.push_str(" extends ");
@@ -827,135 +920,16 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn write_declaration_class(&mut self, declaration: &ClassDeclaration) {
-        self.write_indent();
-        if declaration.exported {
-            self.output.push_str("export ");
-            if declaration.default_export {
-                self.output.push_str("default ");
-            }
-        }
-        self.write_parts(&["declare class ", &declaration.name]);
-        self.write_type_parameters(&declaration.type_parameters);
-        if let Some(base) = &declaration.extends {
-            self.output.push_str(" extends ");
-            self.write_type(base, TYPE_PREC_LOWEST);
-        }
-        if !declaration.implements.is_empty() {
-            self.output.push_str(" implements ");
-            self.write_type_list(&declaration.implements, ", ", TYPE_PREC_LOWEST);
-        }
-        self.output.push_str(" {\n");
-        self.indent += 1;
-        for member in &declaration.members {
-            if let ClassMemberKind::Constructor {
-                parameters,
-                has_body: true,
-                ..
-            } = &member.kind
-            {
-                self.write_parameter_property_declarations(parameters);
-            }
-            self.write_indent();
-            self.write_parts(&[
-                if member.modifiers.private {
-                    "private "
-                } else if member.modifiers.protected {
-                    "protected "
-                } else if member.modifiers.public {
-                    "public "
-                } else {
-                    ""
-                },
-                if member.modifiers.static_member {
-                    "static "
-                } else {
-                    ""
-                },
-                if member.modifiers.readonly {
-                    "readonly "
-                } else {
-                    ""
-                },
-            ]);
-            match &member.kind {
-                ClassMemberKind::Constructor { parameters, .. } => {
-                    self.output.push_str("constructor");
-                    let previous = self.declaration_parameter_property_host;
-                    self.declaration_parameter_property_host = true;
-                    self.write_declaration_parameters(parameters);
-                    self.declaration_parameter_property_host = previous;
-                    self.output.push_str(";\n");
-                }
-                ClassMemberKind::Property {
-                    annotation,
-                    initializer,
-                    optional,
-                    ..
-                } => {
-                    self.write_property_name(&member.name, member.name_span);
-                    if *optional {
-                        self.output.push('?');
-                    }
-                    self.output.push_str(": ");
-                    if let Some(annotation) = annotation {
-                        self.write_type(annotation, TYPE_PREC_LOWEST);
-                    } else {
-                        if initializer
-                            .as_ref()
-                            .is_some_and(literals::expression_contains_template)
-                        {
-                            self.declaration_supported = false;
-                        }
-                        self.output.push_str("unknown");
-                    }
-                    self.output.push_str(";\n");
-                }
-                ClassMemberKind::Method {
-                    type_parameters,
-                    parameters,
-                    return_type,
-                    body,
-                    has_body,
-                    accessor,
-                    ..
-                } => {
-                    if let Some(accessor) = accessor {
-                        self.output.push_str(match accessor {
-                            AccessorKind::Get => "get ",
-                            AccessorKind::Set => "set ",
-                        });
-                    }
-                    self.write_property_name(&member.name, member.name_span);
-                    self.write_type_parameters(type_parameters);
-                    self.write_declaration_parameters(parameters);
-                    self.output.push_str(": ");
-                    if let Some(return_type) = return_type {
-                        self.write_type(return_type, TYPE_PREC_LOWEST);
-                    } else if !has_body {
-                        self.output.push_str("any");
-                    } else if body.is_empty() {
-                        self.output.push_str("void");
-                    } else {
-                        self.declaration_supported = false;
-                        self.output.push_str("unknown");
-                    }
-                    self.output.push_str(";\n");
-                }
-            }
-        }
-        self.indent = self.indent.saturating_sub(1);
-        self.write_indent();
-        self.output.push_str("}\n");
-    }
-
     fn write_declaration_parameters(&mut self, parameters: &[Parameter]) {
         self.output.push('(');
         for (index, parameter) in parameters.iter().enumerate() {
             if index != 0 {
                 self.output.push_str(", ");
             }
-            self.write_parts(&[if parameter.rest { "..." } else { "" }, &parameter.name]);
+            if parameter.rest {
+                self.output.push_str("...");
+            }
+            self.write_authored_identifier(&parameter.name, parameter.name_span);
             if parameter.optional || parameter.initializer.is_some() {
                 self.output.push('?');
             }
@@ -963,7 +937,7 @@ impl<'a> Printer<'a> {
             self.write_declaration_parameter_type(parameter);
             if self.declaration_parameter_property_host
                 && parameter.optional
-                && type_members::is_parameter_property(parameter)
+                && parameter.is_property()
                 && parameter.annotation.as_ref().is_none_or(|annotation| {
                     !type_members::optional_type_absorbs_undefined(annotation)
                 })
@@ -991,8 +965,8 @@ impl<'a> Printer<'a> {
                 },
                 if parameter.in_variance { "in " } else { "" },
                 if parameter.out_variance { "out " } else { "" },
-                &parameter.name,
             ]);
+            self.write_authored_identifier(&parameter.name, parameter.name_span);
             if let Some(constraint) = &parameter.constraint {
                 self.output.push_str(" extends ");
                 self.write_type(constraint, TYPE_PREC_LOWEST);
@@ -1051,15 +1025,23 @@ impl<'a> Printer<'a> {
             TypeNodeKind::Object(members) => {
                 self.output.push('{');
                 if members.iter().any(|member| !member.recovered) {
-                    self.output.push('\n');
-                    self.indent += 1;
-                    for member in members.iter().filter(|member| !member.recovered) {
-                        self.write_indent();
-                        self.write_type_member(member);
+                    if self.compact_type {
+                        self.output.push(' ');
+                        for member in members.iter().filter(|member| !member.recovered) {
+                            self.write_type_member(member);
+                            self.output.push(' ');
+                        }
+                    } else {
                         self.output.push('\n');
+                        self.indent += 1;
+                        for member in members.iter().filter(|member| !member.recovered) {
+                            self.write_indent();
+                            self.write_type_member(member);
+                            self.output.push('\n');
+                        }
+                        self.indent = self.indent.saturating_sub(1);
+                        self.write_indent();
                     }
-                    self.indent = self.indent.saturating_sub(1);
-                    self.write_indent();
                 }
                 self.output.push('}');
             }
@@ -1091,18 +1073,27 @@ impl<'a> Printer<'a> {
                 self.write_type(return_type, TYPE_PREC_FUNCTION);
             }
             TypeNodeKind::Reference {
-                name, arguments, ..
+                name,
+                name_span,
+                arguments,
             } => {
-                self.output.push_str(name);
+                self.write_authored_identifier(name, *name_span);
                 self.write_type_arguments(arguments);
             }
-            TypeNodeKind::TypeQuery { name, .. } => {
-                self.write_parts(&["typeof ", name]);
+            TypeNodeKind::This => self.output.push_str("this"),
+            TypeNodeKind::TypeQuery {
+                name, name_span, ..
+            } => {
+                self.output.push_str("typeof ");
+                self.write_authored_identifier(name, *name_span);
             }
             TypeNodeKind::Infer {
-                name, constraint, ..
+                name,
+                name_span,
+                constraint,
             } => {
-                self.write_parts(&["infer ", name]);
+                self.output.push_str("infer ");
+                self.write_authored_identifier(name, *name_span);
                 if let Some(constraint) = constraint {
                     self.output.push_str(" extends ");
                     self.write_type(constraint, TYPE_PREC_LOWEST);
@@ -1110,11 +1101,14 @@ impl<'a> Printer<'a> {
             }
             TypeNodeKind::Predicate {
                 parameter,
+                parameter_span,
                 asserts,
                 ty,
-                ..
             } => {
-                self.write_parts(&[if *asserts { "asserts " } else { "" }, parameter]);
+                if *asserts {
+                    self.output.push_str("asserts ");
+                }
+                self.write_authored_identifier(parameter, *parameter_span);
                 if let Some(ty) = ty {
                     self.output.push_str(" is ");
                     self.write_type(ty, TYPE_PREC_LOWEST);
@@ -1144,20 +1138,22 @@ impl<'a> Printer<'a> {
             }
             TypeNodeKind::Mapped {
                 parameter,
+                parameter_span,
                 constraint,
                 name_type,
                 value_type,
                 readonly,
                 optional,
                 members,
-                ..
             } => {
                 self.output.push_str("{ ");
                 if let Some(readonly) = readonly {
                     self.output
                         .push_str(if *readonly { "readonly " } else { "-readonly " });
                 }
-                self.write_parts(&["[", parameter, " in "]);
+                self.output.push('[');
+                self.write_authored_identifier(parameter, *parameter_span);
+                self.output.push_str(" in ");
                 self.write_type(constraint, TYPE_PREC_LOWEST);
                 if let Some(name_type) = name_type {
                     self.output.push_str(" as ");
@@ -1208,9 +1204,20 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn write_property_name(&mut self, name: &str, span: Span) {
+    fn write_property_name(
+        &mut self,
+        name: &str,
+        span: Span,
+        kind: crate::syntax::PropertyNameKind,
+    ) {
         let raw = self.source.slice(span).trim();
-        if raw_is_property_name(raw) || is_private_identifier(raw) {
+        if matches!(
+            kind,
+            crate::syntax::PropertyNameKind::Identifier
+                | crate::syntax::PropertyNameKind::PrivateIdentifier
+                | crate::syntax::PropertyNameKind::StringLiteral
+                | crate::syntax::PropertyNameKind::NumericLiteral
+        ) {
             self.output.push_str(raw);
         } else if is_identifier_name(name)
             || is_numeric_property_name(name)
@@ -1222,42 +1229,23 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Print the exact source token for an identifier node while retaining the
+    /// parser's cooked `name` as the semantic identity. Grammar keyword nodes
+    /// do not call this helper, so escaped keywords remain normalized by their
+    /// owning syntax production.
+    fn write_authored_identifier(&mut self, name: &str, span: Span) {
+        if name == "<missing>" {
+            self.output.push_str(name);
+        } else {
+            self.output.push_str(self.source.slice(span).trim());
+        }
+    }
+
     const fn runtime_variable_kind(&self, kind: VariableKind) -> &'static str {
         if self.preserve_block_scope {
             variable_kind_text(kind)
         } else {
             "var"
-        }
-    }
-
-    fn statement_is_runtime_export(&self, statement: &Statement) -> bool {
-        match &statement.kind {
-            StatementKind::Export(declaration) => {
-                !declaration.type_only
-                    && (declaration.export_all
-                        || declaration.assignment.is_some()
-                        || declaration
-                            .specifiers
-                            .iter()
-                            .any(|specifier| !specifier.type_only))
-            }
-            StatementKind::Class(declaration) => declaration.exported && !declaration.declared,
-            StatementKind::Variable(declaration) => declaration.exported && !declaration.declared,
-            StatementKind::Function(declaration) => {
-                declaration.exported && !declaration.declared && declaration.has_body
-            }
-            StatementKind::Import(_)
-            | StatementKind::TypeAlias(_)
-            | StatementKind::Interface(_)
-            | StatementKind::If(_)
-            | StatementKind::Switch(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Block(_)
-            | StatementKind::Expression(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => false,
         }
     }
 
@@ -1306,6 +1294,7 @@ const fn type_precedence(ty: &TypeNode) -> u8 {
         | TypeNodeKind::Tuple(_)
         | TypeNodeKind::Object(_)
         | TypeNodeKind::Reference { .. }
+        | TypeNodeKind::This
         | TypeNodeKind::TypeQuery { .. }
         | TypeNodeKind::Infer { .. }
         | TypeNodeKind::Mapped { .. }
@@ -1314,54 +1303,40 @@ const fn type_precedence(ty: &TypeNode) -> u8 {
     }
 }
 
-const fn statement_is_exported(statement: &Statement) -> bool {
-    match &statement.kind {
-        StatementKind::Import(_) | StatementKind::Export(_) => true,
-        StatementKind::Variable(declaration) => declaration.exported,
-        StatementKind::Function(declaration) => declaration.exported,
-        StatementKind::Class(declaration) => declaration.exported,
-        StatementKind::TypeAlias(declaration) => declaration.exported,
-        StatementKind::Interface(declaration) => declaration.exported,
-        StatementKind::If(_)
-        | StatementKind::Switch(_)
-        | StatementKind::Break(_)
-        | StatementKind::Continue(_)
-        | StatementKind::Return(_)
-        | StatementKind::Block(_)
-        | StatementKind::Expression(_)
-        | StatementKind::Empty
-        | StatementKind::Unknown => false,
-    }
+fn module_export_facts(statements: &[Statement]) -> (bool, bool) {
+    use StatementKind::*;
+
+    statements.iter().fold((false, false), |facts, statement| {
+        let next = match &statement.kind {
+            Import(_) => (true, false),
+            Export(declaration) => (true, statements::export_has_runtime_product(declaration)),
+            Variable(declaration) => (
+                declaration.exported,
+                declaration.exported && !declaration.declared,
+            ),
+            Function(declaration) => (
+                declaration.exported,
+                declaration.exported && !declaration.declared && declaration.has_body,
+            ),
+            Class(declaration) => (
+                declaration.exported,
+                declaration.exported && !declaration.declared,
+            ),
+            TypeAlias(declaration) => (declaration.exported, false),
+            Interface(declaration) => (declaration.exported, false),
+            If(_) | Switch(_) | Break(_) | Continue(_) | Return(_) | Block(_) | Expression(_)
+            | Empty | Unknown => (false, false),
+        };
+        (facts.0 || next.0, facts.1 || next.1)
+    })
 }
 
-const fn variable_kind_text(kind: VariableKind) -> &'static str {
+pub(crate) const fn variable_kind_text(kind: VariableKind) -> &'static str {
     match kind {
         VariableKind::Let => "let",
         VariableKind::Const => "const",
         VariableKind::Var => "var",
     }
-}
-
-const fn keyword_type_text(keyword: KeywordType) -> &'static str {
-    match keyword {
-        KeywordType::Any => "any",
-        KeywordType::Unknown => "unknown",
-        KeywordType::Never => "never",
-        KeywordType::Void => "void",
-        KeywordType::Undefined => "undefined",
-        KeywordType::Null => "null",
-        KeywordType::Boolean => "boolean",
-        KeywordType::Number => "number",
-        KeywordType::String => "string",
-        KeywordType::BigInt => "bigint",
-        KeywordType::Object => "object",
-        KeywordType::Symbol => "symbol",
-        KeywordType::UniqueSymbol => "unique symbol",
-    }
-}
-
-fn raw_is_property_name(raw: &str) -> bool {
-    is_quoted(raw) || is_identifier_name(raw) || is_numeric_property_name(raw)
 }
 
 fn is_private_identifier(text: &str) -> bool {

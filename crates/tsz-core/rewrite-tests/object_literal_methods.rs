@@ -71,7 +71,7 @@ fn generic_object_methods_retain_signatures_bodies_and_property_fallbacks() {
     else {
         panic!("expected holder declaration");
     };
-    let ExpressionKind::Object(properties) = &holder
+    let ExpressionKind::Object(properties) = &holder.declarators[0]
         .initializer
         .as_ref()
         .expect("holder initializer")
@@ -140,6 +140,243 @@ fn generic_object_methods_retain_signatures_bodies_and_property_fallbacks() {
 }
 
 #[test]
+fn concrete_method_heads_use_object_method_owner_without_stealing_other_property_forms() {
+    let source = concat!(
+        "const holder = {\n",
+        "  renamed(value: number): number { return value; },\n",
+        "  nested: { wrapped(text: string): number { return 1; } },\n",
+        "  get accessed(): number { return 1; },\n",
+        "  set accessed(value: number) {},\n",
+        "  property: function (value: number): number { return value; },\n",
+        "  arrow: (value: number): number => value,\n",
+        "};\n",
+    );
+    let parsed = parse(source);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+    let StatementKind::Variable(holder) = &parsed.unit.statements[0].kind else {
+        panic!("expected holder declaration");
+    };
+    let ExpressionKind::Object(properties) = &holder.declarators[0]
+        .initializer
+        .as_ref()
+        .expect("holder initializer")
+        .kind
+    else {
+        panic!("expected holder object");
+    };
+    assert_eq!(properties.len(), 4);
+    assert_eq!(
+        properties
+            .iter()
+            .map(|property| property.name.as_str())
+            .collect::<Vec<_>>(),
+        ["renamed", "nested", "property", "arrow"],
+    );
+    assert!(matches!(
+        &properties[0].value.kind,
+        ExpressionKind::FunctionLike(function)
+            if function.type_parameters.is_empty()
+                && matches!(
+                    &function.syntax,
+                    FunctionLikeSyntax::Function {
+                        kind: FunctionLikeFunctionKind::ObjectMethod,
+                        ..
+                    }
+                )
+    ));
+    let ExpressionKind::Object(nested) = &properties[1].value.kind else {
+        panic!("expected nested object");
+    };
+    assert!(matches!(
+        &nested[0].value.kind,
+        ExpressionKind::FunctionLike(function)
+            if matches!(
+                &function.syntax,
+                FunctionLikeSyntax::Function {
+                    kind: FunctionLikeFunctionKind::ObjectMethod,
+                    ..
+                }
+            )
+    ));
+    assert!(matches!(
+        &properties[2].value.kind,
+        ExpressionKind::FunctionLike(function)
+            if matches!(
+                &function.syntax,
+                FunctionLikeSyntax::Function {
+                    kind: FunctionLikeFunctionKind::Expression,
+                    ..
+                }
+            )
+    ));
+    assert!(matches!(
+        &properties[3].value.kind,
+        ExpressionKind::FunctionLike(function)
+            if matches!(&function.syntax, FunctionLikeSyntax::Arrow(_))
+    ));
+}
+
+#[test]
+fn concrete_object_methods_publish_exact_nested_and_property_relations() {
+    let source = concat!(
+        "const renamed = {\n",
+        "  concrete(value: number): number { return value; },\n",
+        "  nested: { wrapped(text: string): number { return 1; } },\n",
+        "  property: function (value: number): number { return value; },\n",
+        "  arrow: (value: number): number => value,\n",
+        "};\n",
+        "const concreteOkay: number = renamed.concrete(1);\n",
+        "const nestedOkay: number = renamed.nested.wrapped(\"text\");\n",
+        "const propertyOkay: number = renamed.property(1);\n",
+        "const arrowOkay: number = renamed.arrow(1);\n",
+        "const badConcrete: string = renamed.concrete(1);\n",
+        "const badNested: string = renamed.nested.wrapped(\"text\");\n",
+        "const badProperty: string = renamed.property(1);\n",
+    );
+    let output = compile(source, false, "es2022");
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic.file.as_str(),
+                    diagnostic.code,
+                    diagnostic.start,
+                    diagnostic.length,
+                    diagnostic.message_text.as_str(),
+                    diagnostic.category,
+                    diagnostic.related_information.as_slice(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        ["badConcrete", "badNested", "badProperty"]
+            .into_iter()
+            .map(|name| {
+                (
+                    "object-literal-method.ts",
+                    2322,
+                    source.find(name).unwrap() as u32,
+                    name.len() as u32,
+                    "Type 'number' is not assignable to type 'string'.",
+                    DiagnosticCategory::Error,
+                    &[][..],
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        output.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
+    assert!(output.emitted_files.is_empty());
+}
+
+#[test]
+fn concrete_object_method_shapes_complete_only_for_supported_callable_pairs() {
+    let complete = [
+        (
+            "direct",
+            concat!(
+                "interface Handler { on(value: number): void; }\n",
+                "const exact: Handler = { on(renamed: number): void { void renamed; } };\n",
+            ),
+        ),
+        (
+            "nested renamed",
+            concat!(
+                "interface Outer { nested: { on(target: number): number } }\n",
+                "const source = { nested: { on(renamed: number): number { return renamed; } } };\n",
+                "const exact: Outer = source;\n",
+            ),
+        ),
+        (
+            "function to shape",
+            concat!(
+                "interface Handler { on(value: number): void; }\n",
+                "const exact: Handler = { on: (renamed: number): void => { void renamed; } };\n",
+            ),
+        ),
+        (
+            "extra source method",
+            concat!(
+                "const source = { on(value: number): void { void value; } };\n",
+                "const exact: {} = source;\n",
+            ),
+        ),
+    ];
+    for (label, source) in complete {
+        let output = compile(source, false, "es2022");
+        assert_eq!(output.diagnostics, [], "{label}: {:#?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{label}"
+        );
+        assert_eq!(output.exit_status, CompileExitStatus::Success, "{label}");
+    }
+
+    let deferred = [
+        (
+            "parameter mismatch",
+            "interface Handler { on(value: string): void; }\nconst bad: Handler = { on(value: number): void { void value; } };\n",
+        ),
+        (
+            "return mismatch",
+            "interface Handler { on(value: number): string; }\nconst bad: Handler = { on(value: number): number { return value; } };\n",
+        ),
+        (
+            "noncallable source",
+            "interface Handler { on(value: number): void; }\nconst bad: Handler = { on: 1 };\n",
+        ),
+        (
+            "missing method",
+            "interface Handler { on(value: number): void; }\nconst bad: Handler = {};\n",
+        ),
+        (
+            "generic method",
+            "interface Handler { on<Target>(value: Target): void; }\nconst bounded: Handler = { on<Source>(value: Source): void { void value; } };\n",
+        ),
+    ];
+    for (label, source) in deferred {
+        let output = compile(source, false, "es2022");
+        assert_eq!(output.diagnostics, [], "{label}: {:#?}", output.diagnostics);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{label}"
+        );
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::SemanticIncomplete,
+            "{label}"
+        );
+    }
+
+    let contract = SourceInput::new(
+        "contract.ts",
+        Arc::<str>::from("interface RootHandler { on(target: number): void; }\n"),
+    );
+    let source = SourceInput::new(
+        "source.ts",
+        Arc::<str>::from(concat!(
+            "const source = { on(renamed: number): void { void renamed; } };\n",
+            "const exact: RootHandler = source;\n",
+        )),
+    );
+    for inputs in [
+        vec![contract.clone(), source.clone()],
+        vec![source, contract],
+    ] {
+        let output = Compiler::new().compile(inputs, &CompilerOptions::default());
+        assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
+    }
+}
+
+#[test]
 fn outer_generic_function_keeps_object_method_type_parameters_structural() {
     let source = concat!(
         "function make<Events extends Record<PropertyKey, unknown>>() {\n",
@@ -158,7 +395,11 @@ fn outer_generic_function_keeps_object_method_type_parameters_structural() {
     let StatementKind::Variable(all) = &make.body[0].kind else {
         panic!("expected local object");
     };
-    let ExpressionKind::Object(properties) = &all.initializer.as_ref().expect("initializer").kind
+    let ExpressionKind::Object(properties) = &all.declarators[0]
+        .initializer
+        .as_ref()
+        .expect("initializer")
+        .kind
     else {
         panic!("expected object literal");
     };
@@ -231,12 +472,7 @@ fn generic_object_method_is_a_typed_local_nonclaim_without_diagnostics() {
 }
 
 #[test]
-fn nongeneric_and_malformed_method_shapes_remain_parser_recovery() {
-    let nongeneric = "const holder = { renamed(value: number) { return value; } };\n";
-    let parsed = parse(nongeneric);
-    assert!(!parsed.diagnostics.is_empty());
-    assert!(compile(nongeneric, true, "es2015").emitted_files.is_empty());
-
+fn private_and_malformed_method_shapes_remain_parser_recovery() {
     let private = "const holder = { #secret<Value>(value: Value) { return value; } };\n";
     let private_output = compile(private, true, "es2015");
     assert_eq!(

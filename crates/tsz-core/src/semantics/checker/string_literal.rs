@@ -1,7 +1,5 @@
 use crate::program::SemanticCompletion;
-use crate::syntax::{
-    ExpressionKind, Literal, NumberLiteral, StringLiteral, VariableDeclaration, VariableKind,
-};
+use crate::syntax::{Literal, NumberLiteral, StringLiteral};
 
 use super::super::relation::RelationContext;
 use super::{Checker, Completion, LiteralProvenance, TypeId, TypeKind};
@@ -51,6 +49,14 @@ impl<'a> Checker<'a> {
     ) -> Completion<TypeId> {
         let value = match literal {
             StringLiteral::Plain(value) => value.clone(),
+            StringLiteral::Extended(literal)
+                if literal.terminated && !literal.contains_invalid_escape =>
+            {
+                let Some(value) = literal.cooked.as_string() else {
+                    return Completion::Complete(self.store.deferred_utf16_string_literal());
+                };
+                value
+            }
             StringLiteral::Extended(_) => return Completion::Deferred,
         };
         Completion::Complete(
@@ -59,44 +65,13 @@ impl<'a> Checker<'a> {
         )
     }
 
-    /// Own the only mutable-string inference shape graduated by this
-    /// campaign. The direct `var` path widens without ever allocating a
-    /// surrogate-bearing literal type. Every other extended-string variable
-    /// host remains a typed deferred demand.
-    pub(super) fn extended_unicode_variable_type(
-        &mut self,
-        declaration: &VariableDeclaration,
-    ) -> Option<Completion<TypeId>> {
-        let literal = match declaration
-            .initializer
-            .as_ref()
-            .map(|expression| &expression.kind)
-        {
-            Some(ExpressionKind::Literal(Literal::String(StringLiteral::Extended(literal)))) => {
-                literal
-            }
-            _ => return None,
-        };
-        if declaration.declaration_kind == VariableKind::Var
-            && !declaration.exported
-            && declaration.annotation.is_none()
-            && literal.validation_supported()
-        {
-            Some(Completion::Complete(self.store.builtins.string))
-        } else {
-            Some(Completion::Deferred)
-        }
-    }
-
     pub(super) fn widen(&mut self, ty: TypeId) -> TypeId {
         if self.is_symbolic_regular_expression_type(ty) {
             return ty;
         }
-        if matches!(
-            self.store.kind(ty),
-            TypeKind::Deferred(crate::semantics::types::DeferredType::BigIntLiteral)
-        ) {
-            return self.store.builtins.bigint;
+        let widened = self.store.widened_literal_type(ty);
+        if widened != ty {
+            return widened;
         }
         let completion = self.force_type(ty, 0);
         let ty = match self.require_completion(completion) {

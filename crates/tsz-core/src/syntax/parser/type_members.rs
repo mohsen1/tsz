@@ -64,7 +64,11 @@ impl Parser<'_> {
                             && self.peek_kind(3) == TokenKind::Colon);
             if named {
                 while !self.at_any(&[TokenKind::Colon, TokenKind::EndOfFile]) {
-                    self.bump();
+                    if self.kind().is_identifier() {
+                        self.bump_identifier();
+                    } else {
+                        self.bump();
+                    }
                 }
                 let colon = self.bump().span;
                 self.retain_parser_recovery(ParserRecoveryKind::Type, label, label.merge(colon));
@@ -159,7 +163,14 @@ impl Parser<'_> {
     ) -> TypeMember {
         self.bump();
         let name = self.parse_type_member_name();
-        let parameters = self.parse_parameters();
+        let type_parameters = self.parse_type_parameters();
+        if !type_parameters.is_empty() {
+            self.record_contextual_grammar(
+                name.span,
+                crate::syntax::ContextualGrammarKind::AccessorTypeParameters,
+            );
+        }
+        let parameters = self.parse_accessor_parameters();
         let return_type = self.parse_type_annotation();
         self.parse_type_member_separator();
         self.finish_type_member(
@@ -294,9 +305,11 @@ impl Parser<'_> {
                 self.error_current("Declaration or statement expected.", 1128);
             }
         }
+        let span = start.merge(self.previous().span);
+        self.record_parser_recovery_for_analysis(ParserRecoveryKind::Type, start, span);
         TypeMember {
             id: self.alloc_node(),
-            span: start.merge(self.previous().span),
+            span,
             recovered: true,
             recovery_incomplete,
             modifiers: TypeMemberModifiers::default(),
@@ -464,7 +477,10 @@ fn type_member_start_at(parser: &Parser<'_>, offset: usize) -> bool {
     }
     if matches!(kind, TokenKind::Get | TokenKind::Set)
         && is_type_member_name_token(parser.peek_kind(offset + 1))
-        && parser.peek_kind(offset + 2) == TokenKind::LeftParen
+        && matches!(
+            parser.peek_kind(offset + 2),
+            TokenKind::LeftParen | TokenKind::LessThan
+        )
     {
         return true;
     }

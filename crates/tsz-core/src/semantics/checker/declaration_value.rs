@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use crate::bind::{DeclarationKind, ScopeId};
 use crate::program::SemanticCompletion;
+use crate::semantics::relation::RelationMode;
 use crate::semantics::types::{Completion, ObjectShape, Property, TypeId, TypeKind, UnionPolicy};
-use crate::source::DeclId;
-use crate::syntax::VariableKind;
+use crate::source::{DeclId, FileId, NodeId};
+use crate::syntax::{VariableDeclarator, VariableKind, VariableStatement};
 
-use super::{Checker, DeclarationModel};
+use super::{Checker, DeclarationModel, relation_diagnostic::RelationDiagnosticStyle};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ValueQueryState {
@@ -14,6 +16,118 @@ pub(super) enum ValueQueryState {
 }
 
 impl Checker<'_> {
+    pub(super) fn check_variable(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        owner: NodeId,
+        statement: &VariableStatement,
+    ) {
+        let ambient = statement.declared
+            || self.program.files[file.0 as usize]
+                .source
+                .is_declaration_source();
+        for declarator in &statement.declarators {
+            self.check_variable_declarator(
+                file,
+                scope,
+                owner,
+                statement.declaration_kind,
+                ambient,
+                declarator,
+            );
+        }
+    }
+
+    fn check_variable_declarator(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        owner: NodeId,
+        declaration_kind: VariableKind,
+        ambient: bool,
+        declaration: &VariableDeclarator,
+    ) {
+        if ambient
+            && declaration.annotation.is_none()
+            && declaration.initializer.is_none()
+            && self.options.effective_no_implicit_any()
+        {
+            self.push_diagnostic(
+                file,
+                declaration.name_span,
+                format!(
+                    "Variable '{}' implicitly has an 'any' type.",
+                    declaration.name
+                ),
+                7005,
+            );
+        }
+        let (annotation, annotation_is_complete) =
+            declaration
+                .annotation
+                .as_ref()
+                .map_or((None, true), |annotation| {
+                    let ty = self.resolve_type_node(file, scope, annotation, &HashMap::new());
+                    let is_complete = self.complete_required_type_nodes.contains(&annotation.span);
+                    (Some(ty), is_complete)
+                });
+        self.completion.begin_capture();
+        let initializer = declaration
+            .initializer
+            .as_ref()
+            .map(|initializer| self.infer_expression(file, scope, initializer, annotation));
+        let initializer_completion = self.completion.finish_capture();
+        if let (Some(source), Some(target), Some(initializer)) =
+            (initializer, annotation, declaration.initializer.as_ref())
+        {
+            let target_order = declaration.annotation.as_ref().and_then(|annotation| {
+                self.property_order_for_type_node_root(file, scope, annotation)
+            });
+            self.report_relation(
+                source,
+                target,
+                declaration.name_span,
+                Some(initializer),
+                target_order,
+                RelationMode::Assignment,
+                RelationDiagnosticStyle::Type,
+            );
+        }
+        if let Some(id) = self.program.files[file.0 as usize]
+            .bindings
+            .declarations
+            .iter()
+            .find(|candidate| {
+                candidate.owner == owner
+                    && candidate.kind == DeclarationKind::Variable
+                    && candidate.name_span == declaration.name_span
+            })
+            .map(|candidate| candidate.id)
+        {
+            let initializer = initializer.map(|inferred| {
+                if declaration_kind == VariableKind::Const {
+                    inferred
+                } else {
+                    self.widen(inferred)
+                }
+            });
+            let value = annotation
+                .or(initializer)
+                .unwrap_or(self.store.builtins.any);
+            if annotation_is_complete
+                && (annotation.is_some() || initializer_completion.is_complete())
+                && self.is_cacheable_type(value)
+                && self.semantic_declaration_is_claimed(id)
+                && self.program.javascript_assignments.root(id).is_none()
+            {
+                self.value_queries.insert(id, ValueQueryState::Ready(value));
+            } else {
+                self.value_queries.remove(&id);
+            }
+        }
+    }
+
     pub(super) fn declaration_value_type(&mut self, id: DeclId) -> Completion<TypeId> {
         let javascript_root = self.program.javascript_assignments.root(id);
         let javascript_expando = javascript_root.is_some()
@@ -26,7 +140,13 @@ impl Checker<'_> {
             return Completion::Deferred;
         }
         if let Some(declaration) = self.program.standard_library_declaration(id) {
-            if self.program.standard_library.is_array_value(id) {
+            if self.program.standard_library.is_array_value(id)
+                || self
+                    .program
+                    .standard_library
+                    .map_type_for_value(id)
+                    .is_some()
+            {
                 // Preserve the ambient constructor's declaration identity so
                 // operation-local queries can recognize their owned subset of
                 // its value shape without inventing a global `any` value.
@@ -61,7 +181,11 @@ impl Checker<'_> {
         };
         self.completion.begin_capture();
         let result = match model {
-            DeclarationModel::Variable { declaration, scope } => {
+            DeclarationModel::Variable {
+                declaration,
+                declaration_kind,
+                scope,
+            } => {
                 if let Some(annotation) = &declaration.annotation {
                     Completion::Complete(self.resolve_type_node(
                         id.file,
@@ -69,11 +193,9 @@ impl Checker<'_> {
                         annotation,
                         &HashMap::new(),
                     ))
-                } else if let Some(completion) = self.extended_unicode_variable_type(declaration) {
-                    completion
                 } else if let Some(initializer) = &declaration.initializer {
                     let inferred = self.infer_expression(id.file, scope, initializer, None);
-                    Completion::Complete(if declaration.declaration_kind == VariableKind::Const {
+                    Completion::Complete(if declaration_kind == VariableKind::Const {
                         inferred
                     } else {
                         self.widen(inferred)
@@ -196,9 +318,13 @@ impl Checker<'_> {
         let value = match self.store.kind(base).clone() {
             TypeKind::Object(_) => self.store.object(properties),
             TypeKind::Function(_) | TypeKind::ShapeFunction(_) => {
-                let Some(signature) = self.callable_signature(base) else {
+                let Some(mut signature) = self.callable_signature(base) else {
                     return Completion::Deferred;
                 };
+                signature.generic_declaration = None;
+                for parameter in &mut signature.parameters {
+                    parameter.name = None;
+                }
                 self.store.intern(TypeKind::Object(ObjectShape {
                     properties,
                     call_signatures: vec![signature],

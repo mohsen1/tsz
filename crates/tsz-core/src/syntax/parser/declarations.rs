@@ -1,6 +1,7 @@
 use super::{Modifiers, Parser};
 use crate::syntax::{
-    AuthoredBindingName, ParserRecoveryKind, TokenKind, VariableDeclaration, VariableKind,
+    AuthoredBindingName, ParserRecoveryKind, TokenKind, VariableDeclarator, VariableKind,
+    VariableStatement,
 };
 
 const fn delimiter_depth_after(kind: TokenKind, depth: u32) -> u32 {
@@ -28,67 +29,123 @@ impl Parser<'_> {
             && self.tokens_are_on_same_line(self.index, self.index + 1)
     }
 
+    /// Recognize a closed enum declaration without claiming member semantics.
+    /// Its authored name is retained separately as an opaque declaration host.
+    pub(super) fn starts_unmodeled_enum_declaration(&self) -> bool {
+        let enum_offset = if self.at(TokenKind::Enum) {
+            0
+        } else if self.at(TokenKind::Const) && self.peek_kind(1) == TokenKind::Enum {
+            1
+        } else {
+            return false;
+        };
+        let name_offset = enum_offset + 1;
+        let body_offset = name_offset + 1;
+        self.peek_kind(name_offset).is_identifier()
+            && self.peek_kind(body_offset) == TokenKind::LeftBrace
+            && self
+                .balanced_recovery_brace_extent(self.index + body_offset)
+                .is_some()
+    }
+
+    pub(super) fn parse_unmodeled_enum_declaration(&mut self) {
+        self.eat(TokenKind::Const);
+        self.bump();
+        self.parse_name();
+        self.consume_balanced_tokens(TokenKind::LeftBrace, TokenKind::RightBrace, "'}' expected.");
+        self.eat(TokenKind::Semicolon);
+    }
+
     pub(super) fn parse_variable(
         &mut self,
         modifiers: Modifiers,
         has_leading_jsdoc: bool,
-    ) -> VariableDeclaration {
+    ) -> VariableStatement {
         let declaration_kind = match self.kind() {
             TokenKind::Const => VariableKind::Const,
             TokenKind::Var => VariableKind::Var,
             _ => VariableKind::Let,
         };
         self.bump();
-        let binding_start = self.current().span;
-        let modeled_binding = self.kind().is_identifier();
-        let recovered_binding_names = self.recovered_binding_names(self.index);
-        let (name, name_span) = self.parse_recovered_binding_head();
-        self.retain_variable_declaration_recovery(
-            binding_start,
-            name_span,
-            modeled_binding,
-            !recovered_binding_names.is_empty(),
-        );
-        let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
-        let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
-        if initializer.as_ref().is_some_and(|expression| {
-            self.expression_starts_rejected_generic_arrow_prefix(expression.span)
-        }) && self.eat(TokenKind::Comma)
-        {
-            self.error_current("Variable declaration expected.", 1134);
-            self.bump();
-        }
-        if initializer.as_ref().is_some_and(|expression| {
-            matches!(expression.kind, crate::syntax::ExpressionKind::As { .. })
-                && !self.expression_starts_rejected_generic_arrow_prefix(expression.span)
-        }) && !self.at_any(&[
-            TokenKind::Semicolon,
-            TokenKind::RightBrace,
-            TokenKind::EndOfFile,
-        ]) && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
-        {
-            let authored_span = self.current().span;
-            let recovery_extent = self.recovery_extent_from_current(authored_span);
-            self.retain_parser_recovery(
-                ParserRecoveryKind::Declaration,
-                authored_span,
-                recovery_extent,
+        let mut declarators = Vec::new();
+        loop {
+            let binding_start = self.current().span;
+            let modeled_binding = self.kind().is_identifier();
+            let recovered_binding_names = self.recovered_binding_names_in_target(self.index);
+            let (name, name_span) = if self.kind().is_identifier_name()
+                && !self.kind().is_identifier()
+                && self.identifier_value(binding_start).is_some()
+            {
+                let token = self.bump_identifier();
+                let name = self.text(token.span).to_string();
+                self.diagnostics.push(crate::diagnostics::Diagnostic::at(
+                    self.source,
+                    token.span,
+                    format!("'{name}' is not allowed as a variable declaration name."),
+                    1389,
+                ));
+                (name, token.span)
+            } else {
+                self.parse_recovered_binding_head()
+            };
+            self.retain_variable_declaration_recovery(
+                binding_start,
+                name_span,
+                modeled_binding,
+                !recovered_binding_names.is_empty(),
             );
-            self.record_parser_recovery_for_analysis(
-                ParserRecoveryKind::VariableDeclaratorTail,
-                authored_span,
-                recovery_extent,
-            );
-            self.recover_statement(Some(recovery_extent));
+            let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
+            let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
+            let rejected_arrow_tail = initializer.as_ref().is_some_and(|expression| {
+                self.expression_starts_rejected_generic_arrow_prefix(expression.span)
+            }) && self.eat(TokenKind::Comma);
+            if initializer.as_ref().is_some_and(|expression| {
+                matches!(expression.kind, crate::syntax::ExpressionKind::As { .. })
+                    && !self.expression_starts_rejected_generic_arrow_prefix(expression.span)
+            }) && !self.at_any(&[
+                TokenKind::Comma,
+                TokenKind::Semicolon,
+                TokenKind::RightBrace,
+                TokenKind::EndOfFile,
+            ]) && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
+            {
+                let authored_span = self.current().span;
+                let recovery_extent = self.recovery_extent_from_current(authored_span);
+                self.retain_parser_recovery(
+                    ParserRecoveryKind::Declaration,
+                    authored_span,
+                    recovery_extent,
+                );
+                self.recover_statement(Some(recovery_extent));
+            }
+            declarators.push(VariableDeclarator {
+                name,
+                name_span,
+                recovered_binding_names,
+                annotation,
+                initializer,
+            });
+            if rejected_arrow_tail {
+                self.error_current("Variable declaration expected.", 1134);
+                self.bump();
+                break;
+            }
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+            if self.at_any(&[
+                TokenKind::Semicolon,
+                TokenKind::RightBrace,
+                TokenKind::EndOfFile,
+            ]) {
+                self.error_current("Variable declaration expected.", 1134);
+                break;
+            }
         }
         self.eat(TokenKind::Semicolon);
-        VariableDeclaration {
+        VariableStatement {
             declaration_kind,
-            name,
-            name_span,
-            recovered_binding_names,
-            annotation,
-            initializer,
+            declarators,
             has_leading_jsdoc,
             exported: modifiers.exported,
             declared: modifiers.declared,
@@ -159,131 +216,6 @@ impl Parser<'_> {
         let mut cursor = start;
         self.scan_binding_target(&mut cursor, &mut names);
         names
-    }
-
-    fn recovered_binding_names(&self, start: usize) -> Vec<AuthoredBindingName> {
-        if self.tokens[start].kind == TokenKind::EndOfFile {
-            return Vec::new();
-        }
-        let binding_pattern = matches!(
-            self.tokens[start].kind,
-            TokenKind::LeftBrace | TokenKind::LeftBracket
-        );
-        let mut names = Vec::new();
-        let mut cursor = start;
-        let mut recovered_declarator = false;
-        loop {
-            self.scan_binding_target(&mut cursor, &mut names);
-            if !self.scan_to_next_variable_declarator(&mut cursor) {
-                break;
-            }
-            recovered_declarator = true;
-        }
-        if binding_pattern || recovered_declarator {
-            names
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Retain the binding identity at each authored variable-list separator.
-    /// The statement model currently represents only the first declarator, so
-    /// commas nested in an annotation or initializer must not manufacture a
-    /// peer declaration.
-    fn scan_to_next_variable_declarator(&self, cursor: &mut usize) -> bool {
-        let mut depth = 0_u32;
-        let mut type_argument_depth = 0_u32;
-        let mut in_type_annotation = false;
-        while let Some(token) = self.tokens.get(*cursor) {
-            let kind = token.kind;
-            if kind == TokenKind::EndOfFile {
-                break;
-            }
-            if depth == 0 {
-                if kind == TokenKind::Comma
-                    && type_argument_depth == 0
-                    && self.comma_starts_variable_declarator(*cursor)
-                {
-                    *cursor += 1;
-                    return true;
-                }
-                if matches!(
-                    kind,
-                    TokenKind::Semicolon
-                        | TokenKind::RightBrace
-                        | TokenKind::RightParen
-                        | TokenKind::In
-                        | TokenKind::Of
-                ) {
-                    return false;
-                }
-                match kind {
-                    TokenKind::Colon if type_argument_depth == 0 => in_type_annotation = true,
-                    TokenKind::Equals if type_argument_depth == 0 => in_type_annotation = false,
-                    TokenKind::LessThan if in_type_annotation => type_argument_depth += 1,
-                    TokenKind::GreaterThan
-                    | TokenKind::GreaterThanEquals
-                    | TokenKind::GreaterThanGreaterThan
-                    | TokenKind::GreaterThanGreaterThanEquals
-                    | TokenKind::GreaterThanGreaterThanGreaterThan
-                    | TokenKind::GreaterThanGreaterThanGreaterThanEquals
-                        if in_type_annotation && type_argument_depth > 0 =>
-                    {
-                        let close_count = match kind {
-                            TokenKind::GreaterThan | TokenKind::GreaterThanEquals => 1,
-                            TokenKind::GreaterThanGreaterThan
-                            | TokenKind::GreaterThanGreaterThanEquals => 2,
-                            TokenKind::GreaterThanGreaterThanGreaterThan
-                            | TokenKind::GreaterThanGreaterThanGreaterThanEquals => 3,
-                            _ => unreachable!(),
-                        };
-                        type_argument_depth = type_argument_depth.saturating_sub(close_count);
-                        if matches!(
-                            kind,
-                            TokenKind::GreaterThanEquals
-                                | TokenKind::GreaterThanGreaterThanEquals
-                                | TokenKind::GreaterThanGreaterThanGreaterThanEquals
-                        ) && type_argument_depth == 0
-                        {
-                            in_type_annotation = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            depth = delimiter_depth_after(kind, depth);
-            *cursor += 1;
-        }
-        false
-    }
-
-    fn comma_starts_variable_declarator(&self, comma: usize) -> bool {
-        let mut cursor = comma + 1;
-        if self
-            .tokens
-            .get(cursor)
-            .is_none_or(|token| token.kind == TokenKind::EndOfFile)
-        {
-            return false;
-        }
-        let mut names = Vec::new();
-        self.scan_binding_target(&mut cursor, &mut names);
-        !names.is_empty()
-            && matches!(
-                self.tokens
-                    .get(cursor)
-                    .map_or(TokenKind::EndOfFile, |token| token.kind),
-                TokenKind::Colon
-                    | TokenKind::Equals
-                    | TokenKind::Bang
-                    | TokenKind::Comma
-                    | TokenKind::Semicolon
-                    | TokenKind::RightBrace
-                    | TokenKind::RightParen
-                    | TokenKind::In
-                    | TokenKind::Of
-                    | TokenKind::EndOfFile
-            )
     }
 
     fn scan_binding_target(&self, cursor: &mut usize, names: &mut Vec<AuthoredBindingName>) {
@@ -419,6 +351,7 @@ impl Parser<'_> {
         let tail_requires_recovery = !self.at_any(&[
             TokenKind::Colon,
             TokenKind::Equals,
+            TokenKind::Comma,
             TokenKind::Semicolon,
             TokenKind::RightBrace,
             TokenKind::EndOfFile,

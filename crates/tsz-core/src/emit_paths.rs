@@ -93,10 +93,11 @@ impl EmitPlan {
                 .into_iter()
                 .take(if options.declaration { 2 } else { 1 })
             {
-                if !capabilities
-                    .claim(capability, CapabilityScope::File(file.source.id))
-                    .is_claimed()
-                {
+                if !capabilities.product_is_claimed(
+                    capability,
+                    CapabilityScope::File(file.source.id),
+                    options,
+                ) {
                     continue;
                 }
                 let output = paths.output_target(&file.source, directory, declaration);

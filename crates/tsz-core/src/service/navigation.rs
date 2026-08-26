@@ -8,20 +8,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::bind::{DeclarationKind, Meaning, ScopeId};
-use crate::program::{Program, ProgramFile};
-use crate::source::{DeclId, FileId, NodeId, Span};
-use crate::syntax::{
-    ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionKind,
-    FunctionLikeBody, FunctionLikeExpression, NestedStatement, Parameter, Statement, StatementKind,
-    SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode, TypeNodeKind,
-    TypeParameterDeclaration, VariableKind, walk_function_like_descendants,
-    walk_statement_descendants,
+use crate::bind::{BoundDeclaration, DeclarationKind, Meaning, ScopeId};
+use crate::program::{CompileOutput, Program, ProgramFile};
+use crate::semantics::{
+    DeclarationDisplayParts, DeclarationDisplaySummaries, DeclarationDisplaySummary,
 };
+use crate::source::{DeclId, FileId, Span};
 
-use super::display::{
-    display_parameter, display_parameter_type, display_type_node, display_variable_type,
-};
 use super::{QuickInfo, TextSpan, normalize_path};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,25 +129,16 @@ pub struct RenameResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum SymbolKey {
-    Bound(DeclId),
-    GlobalValue(String),
-    GlobalType(String),
-    GlobalValueAndType(String),
-    Synthetic { file: FileId, start: u32 },
+    // Chosen only after a BoundDeclaration exists; arbitrary syntax spans never enter.
+    Authored { file: FileId, start: u32, end: u32 },
 }
 
 #[derive(Debug, Clone)]
 struct DeclarationMetadata {
-    file_name: String,
     name: String,
-    kind: String,
-    span: TextSpan,
-    context_span: Option<TextSpan>,
+    kind: &'static str,
     is_local: bool,
-    is_ambient: bool,
-    display: String,
-    display_parts: Vec<SymbolDisplayPart>,
-    quick_info_kind: Option<String>,
+    summary: DeclarationDisplaySummary,
 }
 
 #[derive(Debug, Clone)]
@@ -164,23 +148,22 @@ struct Occurrence {
     span: TextSpan,
     context_span: Option<TextSpan>,
     is_write_access: bool,
-    is_declaration: bool,
+    declaration: Option<DeclarationMetadata>,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct NavigationIndex {
-    declarations: BTreeMap<SymbolKey, Vec<DeclarationMetadata>>,
     occurrences: Vec<Occurrence>,
     declaration_keys: BTreeMap<DeclId, SymbolKey>,
 }
 
 impl NavigationIndex {
-    pub(super) fn build(program: &Program) -> Self {
+    pub(super) fn build(output: &CompileOutput) -> Self {
+        let program = &output.program;
         let mut index = Self::default();
-        let dual_globals = dual_global_names(program);
 
         for file in &program.files {
-            index.collect_bound_declarations(file, &dual_globals);
+            index.collect_bound_declarations(program, file, &output.declaration_display_summaries);
         }
         for file in &program.files {
             index.collect_references(program, file);
@@ -197,51 +180,46 @@ impl NavigationIndex {
 
     pub(super) fn definition(&self, path: &str, offset: u32) -> Option<DefinitionAndBoundSpan> {
         let occurrence = self.occurrence_at(path, offset)?;
-        let declarations = self.declarations.get(&occurrence.key)?;
+        let definitions = self
+            .occurrences
+            .iter()
+            .filter(|location| location.key == occurrence.key)
+            .filter_map(|location| location.declaration.as_ref().map(|value| (location, value)))
+            .map(|(location, declaration)| DefinitionInfo {
+                file_name: location.file_name.clone(),
+                text_span: location.span,
+                kind: declaration.kind.to_string(),
+                name: declaration.name.clone(),
+                container_name: String::new(),
+                is_local: declaration.is_local,
+                is_ambient: declaration.summary.ambient,
+                unverified: false,
+                failed_alias_resolution: false,
+                context_span: location.context_span,
+            })
+            .collect::<Vec<_>>();
         Some(DefinitionAndBoundSpan {
-            definitions: declarations
-                .iter()
-                .map(|declaration| DefinitionInfo {
-                    file_name: declaration.file_name.clone(),
-                    text_span: declaration.span,
-                    kind: declaration.kind.clone(),
-                    name: declaration.name.clone(),
-                    container_name: String::new(),
-                    is_local: declaration.is_local,
-                    is_ambient: declaration.is_ambient,
-                    unverified: false,
-                    failed_alias_resolution: false,
-                    context_span: declaration.context_span,
-                })
-                .collect(),
+            definitions,
             text_span: occurrence.span,
         })
     }
 
     pub(super) fn quick_info(&self, path: &str, offset: u32) -> Option<QuickInfo> {
         let occurrence = self.occurrence_at(path, offset)?;
-        if !occurrence.is_declaration {
-            return None;
-        }
-        let normalized_path = normalize_path(path);
-        let declaration = self
-            .declarations
-            .get(&occurrence.key)?
-            .iter()
-            .find(|item| item.file_name == normalized_path && item.span == occurrence.span)?;
-        let kind = declaration.quick_info_kind.as_ref()?;
+        let declaration = occurrence.declaration.as_ref()?;
+        let kind = declaration.summary.quick_info_kind?;
         Some(QuickInfo {
-            kind: kind.clone(),
+            kind: kind.to_string(),
             text_span: occurrence.span,
-            display: declaration.display.clone(),
+            display: declaration.summary.display.clone(),
         })
     }
 
     pub(super) fn references(&self, path: &str, offset: u32) -> Vec<ReferencedSymbol> {
-        let Some((origin, declaration)) = self.declaration_at(path, offset) else {
+        let Some((origin, location, declaration)) = self.declaration_at(path, offset) else {
             return Vec::new();
         };
-        let mark_definitions = origin.is_declaration;
+        let mark_definitions = origin.declaration.is_some();
         let references = self
             .occurrences
             .iter()
@@ -251,19 +229,19 @@ impl NavigationIndex {
                 file_name: occurrence.file_name.clone(),
                 context_span: occurrence.context_span,
                 is_write_access: occurrence.is_write_access,
-                is_definition: mark_definitions.then_some(occurrence.is_declaration),
+                is_definition: mark_definitions.then_some(occurrence.declaration.is_some()),
             })
             .collect();
         vec![ReferencedSymbol {
             definition: ReferencedSymbolDefinition {
                 container_kind: String::new(),
                 container_name: String::new(),
-                file_name: declaration.file_name.clone(),
-                kind: declaration.kind.clone(),
-                name: declaration.display.clone(),
-                text_span: declaration.span,
-                display_parts: declaration.display_parts.clone(),
-                context_span: declaration.context_span,
+                file_name: location.file_name.clone(),
+                kind: declaration.kind.to_string(),
+                name: declaration.summary.display.clone(),
+                text_span: location.span,
+                display_parts: service_display_parts(&declaration.summary, &declaration.name),
+                context_span: location.context_span,
             },
             references,
         }]
@@ -314,7 +292,7 @@ impl NavigationIndex {
     }
 
     pub(super) fn rename(&self, path: &str, offset: u32) -> RenameResult {
-        let Some((origin, declaration)) = self.declaration_at(path, offset) else {
+        let Some((origin, _, declaration)) = self.declaration_at(path, offset) else {
             return RenameResult::failure();
         };
         RenameResult {
@@ -322,7 +300,7 @@ impl NavigationIndex {
                 can_rename: true,
                 display_name: Some(declaration.name.clone()),
                 full_display_name: Some(declaration.name.clone()),
-                kind: Some(declaration.kind.clone()),
+                kind: Some(declaration.kind.to_string()),
                 kind_modifiers: Some(String::new()),
                 trigger_span: Some(origin.span),
                 localized_error_message: None,
@@ -362,17 +340,24 @@ impl NavigationIndex {
         &self,
         path: &str,
         offset: u32,
-    ) -> Option<(&Occurrence, &DeclarationMetadata)> {
+    ) -> Option<(&Occurrence, &Occurrence, &DeclarationMetadata)> {
         let occurrence = self.occurrence_at(path, offset)?;
-        let declaration = self.declarations.get(&occurrence.key)?.first()?;
-        Some((occurrence, declaration))
+        let location = self
+            .occurrences
+            .iter()
+            .find(|location| location.key == occurrence.key && location.declaration.is_some())?;
+        let declaration = location.declaration.as_ref()?;
+        Some((occurrence, location, declaration))
     }
 
-    fn collect_bound_declarations(&mut self, file: &ProgramFile, dual_globals: &BTreeSet<String>) {
+    fn collect_bound_declarations(
+        &mut self,
+        program: &Program,
+        file: &ProgramFile,
+        summaries: &DeclarationDisplaySummaries,
+    ) {
         let file_name = normalize_path(&file.source.path.to_string_lossy());
         let module_file = file.is_external_module();
-        let syntax_metadata = syntax_declaration_metadata(file);
-        let mut same_span: BTreeMap<(u32, u32), SymbolKey> = BTreeMap::new();
 
         for declaration in &file.bindings.declarations {
             // Type-member groups are binder facts for checking. Until the
@@ -387,92 +372,75 @@ impl NavigationIndex {
             {
                 continue;
             }
-            let span_key = (declaration.name_span.start, declaration.name_span.end);
-            let key = if let Some(key) = same_span.get(&span_key) {
-                key.clone()
-            } else if declaration.scope == ScopeId(0)
-                && declaration.kind != DeclarationKind::Import
-                && !module_file
-            {
-                if dual_globals.contains(&declaration.name) {
-                    SymbolKey::GlobalValueAndType(declaration.name.clone())
-                } else {
-                    match declaration.meaning {
-                        Meaning::Value => SymbolKey::GlobalValue(declaration.name.clone()),
-                        Meaning::Type => SymbolKey::GlobalType(declaration.name.clone()),
-                    }
-                }
-            } else {
-                SymbolKey::Bound(declaration.id)
-            };
-            same_span.entry(span_key).or_insert_with(|| key.clone());
+            let key = declaration_key(program, module_file, declaration);
             self.declaration_keys.insert(declaration.id, key.clone());
 
-            if self.declarations.get(&key).is_some_and(|items| {
-                items.iter().any(|item| {
-                    item.file_name == file_name && item.span == text_span(declaration.name_span)
-                })
+            let span = text_span(declaration.name_span);
+            if self.occurrences.iter().any(|occurrence| {
+                occurrence.declaration.is_some()
+                    && occurrence.key == key
+                    && occurrence.file_name == file_name
+                    && occurrence.span == span
             }) {
                 continue;
             }
-            let (fallback_kind, fallback_display) =
-                fallback_metadata(declaration.kind, &declaration.name);
-            let syntax = syntax_metadata.get(&span_key);
+            let summary = summaries.get(&declaration.id).cloned().unwrap_or_else(|| {
+                let (kind, display) = fallback_metadata(declaration.kind, &declaration.name);
+                DeclarationDisplaySummary {
+                    kind,
+                    context_span: None,
+                    exported: false,
+                    ambient: false,
+                    display,
+                    display_parts: DeclarationDisplayParts::Text,
+                    quick_info_kind: None,
+                }
+            });
+            let context_span = summary.context_span.map(text_span);
             let is_local = declaration.scope != ScopeId(0)
                 || declaration.kind == DeclarationKind::Import
-                || (module_file && !syntax.is_some_and(|metadata| metadata.exported));
-            let kind = syntax.map_or_else(
-                || fallback_kind.to_string(),
-                |metadata| metadata.kind.clone(),
-            );
-            let metadata = DeclarationMetadata {
-                file_name: file_name.clone(),
-                name: declaration.name.clone(),
-                kind: if declaration.kind == DeclarationKind::Variable && is_local && kind == "var"
-                {
-                    "local var".to_string()
-                } else {
-                    kind
-                },
-                span: text_span(declaration.name_span),
-                context_span: syntax.and_then(|metadata| metadata.context_span),
-                is_local,
-                is_ambient: syntax.is_some_and(|metadata| metadata.ambient),
-                display: syntax.map_or_else(
-                    || fallback_display.clone(),
-                    |metadata| metadata.display.clone(),
-                ),
-                display_parts: syntax.map_or_else(
-                    || vec![display_part(&fallback_display, "text")],
-                    |metadata| metadata.display_parts.clone(),
-                ),
-                quick_info_kind: syntax.and_then(|metadata| metadata.quick_info_kind.clone()),
+                || (module_file && !summary.exported);
+            let kind = match (declaration.kind, is_local, summary.kind) {
+                (DeclarationKind::Variable, true, "var") => "local var",
+                (_, _, kind) => kind,
             };
-            self.declarations
-                .entry(key.clone())
-                .or_default()
-                .push(metadata);
+            let metadata = DeclarationMetadata {
+                name: declaration.name.clone(),
+                kind,
+                is_local,
+                summary,
+            };
             self.occurrences.push(Occurrence {
                 key,
                 file_name: file_name.clone(),
-                span: text_span(declaration.name_span),
-                context_span: syntax.and_then(|metadata| metadata.context_span),
+                span,
+                context_span,
                 is_write_access: true,
-                is_declaration: true,
+                declaration: Some(metadata),
             });
         }
     }
 
     fn collect_references(&mut self, program: &Program, file: &ProgramFile) {
         let file_name = normalize_path(&file.source.path.to_string_lossy());
-        let mut visitor = ReferenceVisitor {
-            program,
-            file,
-            file_name,
-            index: self,
-            type_locals: Vec::new(),
-        };
-        visitor.visit_statements(&file.syntax.statements, ScopeId(0));
+        for reference in file.bindings.reference_facts() {
+            let Some(declaration) =
+                reference.declaration(|name, meaning| program.resolve_global(name, meaning))
+            else {
+                continue;
+            };
+            let Some(key) = self.declaration_keys.get(&declaration).cloned() else {
+                continue;
+            };
+            self.occurrences.push(Occurrence {
+                key,
+                file_name: file_name.clone(),
+                span: text_span(reference.span),
+                context_span: None,
+                is_write_access: reference.is_write_access,
+                declaration: None,
+            });
+        }
     }
 }
 
@@ -488,869 +456,41 @@ impl RenameResult {
     }
 }
 
-struct ReferenceVisitor<'a> {
-    program: &'a Program,
-    file: &'a ProgramFile,
-    file_name: String,
-    index: &'a mut NavigationIndex,
-    type_locals: Vec<BTreeMap<String, SymbolKey>>,
-}
-
-impl ReferenceVisitor<'_> {
-    fn scope_for_node(&self, node: NodeId, fallback: ScopeId) -> ScopeId {
-        self.file
-            .bindings
-            .scope_for_node
-            .get(&node)
-            .copied()
-            .unwrap_or(fallback)
-    }
-
-    fn visit_statements(&mut self, statements: &[Statement], scope: ScopeId) {
-        for statement in statements {
-            self.visit_statement(statement, scope);
-        }
-    }
-
-    fn visit_bound_statements(&mut self, statements: &[Statement], scope: ScopeId) {
-        for statement in statements {
-            let statement_scope = self.scope_for_node(statement.id, scope);
-            self.visit_statement(statement, statement_scope);
-        }
-    }
-
-    fn visit_statement(&mut self, statement: &Statement, scope: ScopeId) {
-        match &statement.kind {
-            StatementKind::Export(declaration) => {
-                for specifier in &declaration.specifiers {
-                    let meaning = if declaration.type_only || specifier.type_only {
-                        Meaning::Type
-                    } else {
-                        Meaning::Value
-                    };
-                    self.record_name(
-                        &specifier.local,
-                        specifier.local_span,
-                        scope,
-                        meaning,
-                        false,
-                    );
-                }
-                self.visit_optional_expression(declaration.assignment.as_ref(), scope);
-            }
-            StatementKind::Variable(declaration) => {
-                self.visit_optional_type(declaration.annotation.as_ref(), scope);
-                self.visit_optional_expression(declaration.initializer.as_ref(), scope);
-            }
-            StatementKind::Function(declaration) => {
-                self.visit_signature(
-                    statement.id,
-                    scope,
-                    &declaration.type_parameters,
-                    &declaration.parameters,
-                    declaration.return_type.as_ref(),
-                    declaration.has_body,
-                    Some(FunctionLikeBody::Statements(&declaration.body)),
-                );
-            }
-            StatementKind::Class(declaration) => {
-                self.push_type_parameter_locals(&declaration.type_parameters);
-                self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
-                let class_scope = self.scope_for_node(statement.id, scope);
-                self.visit_optional_type(declaration.extends.as_ref(), scope);
-                for implemented in &declaration.implements {
-                    self.visit_type(implemented, scope);
-                }
-                for member in &declaration.members {
-                    let (type_parameters, parameters, return_type, body, has_body) =
-                        match &member.kind {
-                            ClassMemberKind::Property {
-                                annotation,
-                                initializer,
-                                ..
-                            } => {
-                                self.visit_optional_type(annotation.as_ref(), class_scope);
-                                self.visit_optional_expression(initializer.as_ref(), class_scope);
-                                continue;
-                            }
-                            ClassMemberKind::Constructor {
-                                parameters,
-                                body,
-                                has_body,
-                                ..
-                            } => (
-                                &[][..],
-                                parameters.as_slice(),
-                                None,
-                                body.as_slice(),
-                                *has_body,
-                            ),
-                            ClassMemberKind::Method {
-                                type_parameters,
-                                parameters,
-                                return_type,
-                                body,
-                                has_body,
-                                ..
-                            } => (
-                                type_parameters.as_slice(),
-                                parameters.as_slice(),
-                                return_type.as_ref(),
-                                body.as_slice(),
-                                *has_body,
-                            ),
-                        };
-                    self.visit_signature(
-                        member.id,
-                        class_scope,
-                        type_parameters,
-                        parameters,
-                        return_type,
-                        has_body,
-                        Some(FunctionLikeBody::Statements(body)),
-                    );
-                }
-                self.type_locals.pop();
-            }
-            StatementKind::TypeAlias(declaration) => {
-                self.push_type_parameter_locals(&declaration.type_parameters);
-                self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
-                self.visit_type(&declaration.ty, scope);
-                self.type_locals.pop();
-            }
-            StatementKind::Interface(declaration) => {
-                self.push_type_parameter_locals(&declaration.type_parameters);
-                self.visit_type_parameter_bounds(&declaration.type_parameters, scope);
-                for extended in &declaration.extends {
-                    self.visit_type(extended, scope);
-                }
-                for member in &declaration.members {
-                    self.visit_type_member(member, scope);
-                }
-                self.type_locals.pop();
-            }
-            StatementKind::Return(expression) => {
-                self.visit_optional_expression(expression.as_ref(), scope);
-            }
-            StatementKind::Block(statements) => {
-                let block_scope = self.scope_for_node(statement.id, scope);
-                self.visit_statements(statements, block_scope);
-            }
-            StatementKind::If(control_flow) => {
-                self.visit_expression(&control_flow.condition, scope, false);
-                let then_scope = self.scope_for_node(control_flow.then_statement.id, scope);
-                self.visit_statement(&control_flow.then_statement, then_scope);
-                if let Some(else_statement) = &control_flow.else_statement {
-                    let else_scope = self.scope_for_node(else_statement.id, scope);
-                    self.visit_statement(else_statement, else_scope);
-                }
-            }
-            StatementKind::Switch(control_flow) => {
-                let switch_scope = self.scope_for_node(statement.id, scope);
-                self.visit_expression(&control_flow.expression, switch_scope, false);
-                for clause in &control_flow.clauses {
-                    if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        self.visit_expression(expression, switch_scope, false);
-                    }
-                    self.visit_statements(&clause.statements, switch_scope);
-                }
-            }
-            StatementKind::Expression(expression) => {
-                self.visit_expression(expression, scope, false);
-            }
-            StatementKind::Import(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => {}
-        }
-    }
-
-    fn visit_expression(&mut self, expression: &Expression, scope: ScopeId, write: bool) {
-        match &expression.kind {
-            ExpressionKind::Identifier {
-                name,
-                name_span,
-                entity_name,
-            } => {
-                if !entity_name {
-                    return;
-                }
-                self.record_name(name, *name_span, scope, Meaning::Value, write);
-            }
-            ExpressionKind::This
-            | ExpressionKind::Literal(_)
-            | ExpressionKind::RegularExpression(_)
-            | ExpressionKind::Missing => {}
-            ExpressionKind::Object(properties) => {
-                for property in properties {
-                    self.visit_expression(&property.value, scope, write);
-                }
-            }
-            ExpressionKind::Array(elements) => {
-                for element in elements {
-                    self.visit_expression(element, scope, false);
-                }
-            }
-            ExpressionKind::Call {
-                callee,
-                type_arguments,
-                arguments,
-            } => self.visit_call_like(callee, type_arguments.iter().flatten(), arguments, scope),
-            ExpressionKind::New {
-                callee,
-                type_arguments,
-                arguments,
-            } => self.visit_call_like(callee, type_arguments.iter(), arguments, scope),
-            ExpressionKind::Member { object, .. }
-            | ExpressionKind::Unary {
-                operand: object, ..
-            } => self.visit_expression(object, scope, false),
-            ExpressionKind::ElementAccess {
-                object: left,
-                index: right,
-            }
-            | ExpressionKind::Binary { left, right, .. } => {
-                self.visit_expression(left, scope, false);
-                self.visit_expression(right, scope, false);
-            }
-            ExpressionKind::FunctionLike(function) => {
-                let function_scope = self.scope_for_node(expression.id, scope);
-                self.visit_signature(
-                    expression.id,
-                    function_scope,
-                    &function.type_parameters,
-                    &function.parameters,
-                    function.return_type.as_ref(),
-                    true,
-                    Some(function.syntax.body()),
-                );
-            }
-            ExpressionKind::Assignment { left, right, .. } => {
-                self.visit_expression(left, scope, true);
-                self.visit_expression(right, scope, false);
-            }
-            ExpressionKind::As { expression, ty } => {
-                self.visit_expression(expression, scope, false);
-                self.visit_type(ty, scope);
-            }
-            ExpressionKind::Parenthesized(expression) => {
-                self.visit_expression(expression, scope, write);
-            }
-        }
-    }
-
-    fn visit_call_like<'ast>(
-        &mut self,
-        callee: &Expression,
-        type_arguments: impl Iterator<Item = &'ast TypeNode>,
-        arguments: &[Expression],
-        scope: ScopeId,
-    ) {
-        self.visit_expression(callee, scope, false);
-        for type_argument in type_arguments {
-            self.visit_type(type_argument, scope);
-        }
-        for argument in arguments {
-            self.visit_expression(argument, scope, false);
-        }
-    }
-
-    fn visit_type(&mut self, node: &TypeNode, scope: ScopeId) {
-        match &node.kind {
-            TypeNodeKind::Keyword(_) | TypeNodeKind::Literal(_) | TypeNodeKind::Missing => {}
-            TypeNodeKind::Array(element)
-            | TypeNodeKind::KeyOf(element)
-            | TypeNodeKind::Readonly(element)
-            | TypeNodeKind::Parenthesized(element) => self.visit_type(element, scope),
-            TypeNodeKind::Tuple(elements)
-            | TypeNodeKind::Union(elements)
-            | TypeNodeKind::Intersection(elements) => {
-                for element in elements {
-                    self.visit_type(element, scope);
-                }
-            }
-            TypeNodeKind::Object(members) => {
-                for member in members {
-                    self.visit_type_member(member, scope);
-                }
-            }
-            TypeNodeKind::Function {
-                id,
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeNodeKind::Constructor {
-                id,
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            } => {
-                self.visit_signature(
-                    *id,
-                    scope,
-                    type_parameters,
-                    parameters,
-                    Some(return_type),
-                    false,
-                    None,
-                );
-            }
-            TypeNodeKind::Reference {
-                name,
-                name_span,
-                arguments,
-            } => {
-                self.record_name(name, *name_span, scope, Meaning::Type, false);
-                for argument in arguments {
-                    self.visit_type(argument, scope);
-                }
-            }
-            TypeNodeKind::TypeQuery {
-                name,
-                name_span,
-                segment_spans,
-            } => {
-                let root = name.split('.').next().unwrap_or(name);
-                let root_span = segment_spans.first().copied().unwrap_or(*name_span);
-                self.record_type_query_root(root, root_span, scope);
-            }
-            TypeNodeKind::Infer { constraint, .. } => {
-                self.visit_optional_type(constraint.as_deref(), scope);
-            }
-            TypeNodeKind::Predicate { ty, .. } => {
-                self.visit_optional_type(ty.as_deref(), scope);
-            }
-            TypeNodeKind::Conditional {
-                check_type,
-                extends_type,
-                true_type,
-                false_type,
-            } => {
-                self.visit_type(check_type, scope);
-                self.visit_type(extends_type, scope);
-                self.visit_type(true_type, scope);
-                self.visit_type(false_type, scope);
-            }
-            TypeNodeKind::Mapped {
-                parameter,
-                parameter_span,
-                constraint,
-                name_type,
-                value_type,
-                members,
-                ..
-            } => {
-                self.visit_type(constraint, scope);
-                let key = self.synthetic_type_parameter(parameter, *parameter_span);
-                self.type_locals
-                    .push(BTreeMap::from([(parameter.clone(), key)]));
-                self.visit_optional_type(name_type.as_deref(), scope);
-                self.visit_type(value_type, scope);
-                for member in members {
-                    self.visit_type_member(member, scope);
-                }
-                self.type_locals.pop();
-            }
-            TypeNodeKind::IndexedAccess { object, index } => {
-                self.visit_type(object, scope);
-                self.visit_type(index, scope);
-            }
-        }
-    }
-
-    fn visit_type_member(&mut self, member: &TypeMember, scope: ScopeId) {
-        if member.recovered {
-            return;
-        }
-        let member_scope = self.file.bindings.scope_for_node.get(&member.id).copied();
-        if let TypeMemberKind::Property {
-            name,
-            ty,
-            initializer,
-            ..
-        } = &member.kind
-        {
-            if let TypeMemberNameKind::Computed(expression) = &name.kind {
-                self.visit_expression(expression, scope, false);
-            }
-            if let Some(member_scope) = member_scope {
-                self.visit_optional_type(ty.as_ref(), member_scope);
-                self.visit_optional_expression(initializer.as_ref(), member_scope);
-            }
-            return;
-        }
-        let Some((name, type_parameters, parameters, return_type)) = member.kind.signature() else {
-            return;
-        };
-        if let Some(name) = name
-            && let TypeMemberNameKind::Computed(expression) = &name.kind
-        {
-            self.visit_expression(expression, scope, false);
-        }
-        self.visit_signature(
-            member.id,
-            scope,
-            type_parameters,
-            parameters,
-            return_type,
-            false,
-            None,
-        );
-    }
-
-    fn visit_signature(
-        &mut self,
-        owner: NodeId,
-        enclosing_scope: ScopeId,
-        type_parameters: &[TypeParameterDeclaration],
-        parameters: &[Parameter],
-        return_type: Option<&TypeNode>,
-        implementation: bool,
-        body: Option<FunctionLikeBody<'_>>,
-    ) {
-        let signature_scope = self.file.bindings.scope_for_node.get(&owner).copied();
-        if let Some(signature_scope) = signature_scope {
-            self.push_type_parameter_locals(type_parameters);
-            self.visit_type_parameter_bounds(type_parameters, enclosing_scope);
-            for parameter in parameters {
-                if let Some(annotation) = &parameter.annotation {
-                    self.visit_type(annotation, signature_scope);
-                }
-                if !implementation && let Some(initializer) = &parameter.initializer {
-                    self.visit_expression(initializer, signature_scope, false);
-                }
-            }
-            self.visit_optional_type(return_type, signature_scope);
-            if !implementation {
-                self.type_locals.pop();
-            }
-        }
-        if let Some(body) = body {
-            let body_scope = self.scope_for_node(owner, enclosing_scope);
-            if implementation {
-                for initializer in parameters
-                    .iter()
-                    .filter_map(|parameter| parameter.initializer.as_ref())
-                {
-                    self.visit_expression(initializer, body_scope, false);
-                }
-            }
-            match body {
-                FunctionLikeBody::Expression(body) => {
-                    self.visit_expression(body, body_scope, false)
-                }
-                FunctionLikeBody::Statements(body) => self.visit_bound_statements(body, body_scope),
-            }
-        }
-        if signature_scope.is_some() && implementation {
-            self.type_locals.pop();
-        }
-    }
-
-    fn push_type_parameter_locals(&mut self, parameters: &[TypeParameterDeclaration]) {
-        let mut locals = BTreeMap::new();
-        for parameter in parameters {
-            let key = self.synthetic_type_parameter(&parameter.name, parameter.name_span);
-            locals.entry(parameter.name.clone()).or_insert(key);
-        }
-        self.type_locals.push(locals);
-    }
-
-    fn visit_type_parameter_bounds(
-        &mut self,
-        parameters: &[TypeParameterDeclaration],
-        scope: ScopeId,
-    ) {
-        for parameter in parameters {
-            self.visit_optional_type(parameter.constraint.as_ref(), scope);
-            self.visit_optional_type(parameter.default.as_ref(), scope);
-        }
-    }
-
-    fn visit_optional_type(&mut self, node: Option<&TypeNode>, scope: ScopeId) {
-        if let Some(node) = node {
-            self.visit_type(node, scope);
-        }
-    }
-
-    fn visit_optional_expression(&mut self, expression: Option<&Expression>, scope: ScopeId) {
-        if let Some(expression) = expression {
-            self.visit_expression(expression, scope, false);
-        }
-    }
-
-    fn record_name(
-        &mut self,
-        name: &str,
-        span: Span,
-        scope: ScopeId,
-        meaning: Meaning,
-        write: bool,
-    ) {
-        let local = match meaning {
-            Meaning::Value => None,
-            Meaning::Type => self
-                .type_locals
-                .iter()
-                .rev()
-                .find_map(|locals| locals.get(name)),
-        };
-        let key = local.cloned().or_else(|| {
-            self.file
-                .bindings
-                .resolve(scope, name, meaning)
-                .or_else(|| self.program.resolve_global(name, meaning))
-                .and_then(|id| self.index.declaration_keys.get(&id).cloned())
-        });
-        let Some(key) = key else {
-            return;
-        };
-        self.record_occurrence(key, span, write, false);
-    }
-
-    fn record_type_query_root(&mut self, name: &str, span: Span, scope: ScopeId) {
-        let key = self
-            .program
-            .resolve_type_query_root(self.file.source.id, scope, name)
-            .map(|root| root.navigation_declaration())
-            .and_then(|declaration| self.index.declaration_keys.get(&declaration).cloned());
-        let Some(key) = key else {
-            return;
-        };
-        self.record_occurrence(key, span, false, false);
-    }
-
-    fn synthetic_type_parameter(&mut self, name: &str, span: Span) -> SymbolKey {
-        let key = SymbolKey::Synthetic {
-            file: self.file.source.id,
-            start: span.start,
-        };
-        let display = format!("(type parameter) {name} in type");
-        self.index
-            .declarations
-            .entry(key.clone())
-            .or_default()
-            .push(DeclarationMetadata {
-                file_name: self.file_name.clone(),
-                name: name.to_string(),
-                kind: "type parameter".to_string(),
-                span: text_span(span),
-                context_span: None,
-                is_local: true,
-                is_ambient: false,
-                display: display.clone(),
-                display_parts: vec![display_part(&display, "text")],
-                quick_info_kind: None,
+fn declaration_key(
+    program: &Program,
+    module_file: bool,
+    declaration: &BoundDeclaration,
+) -> SymbolKey {
+    let canonical = if declaration.scope == ScopeId(0)
+        && declaration.kind != DeclarationKind::Import
+        && !module_file
+    {
+        let has_class = program
+            .global_values
+            .get(&declaration.name)
+            .is_some_and(|declarations| {
+                declarations.iter().any(|id| {
+                    program.files[id.file.0 as usize].bindings.declarations[id.local as usize].kind
+                        == DeclarationKind::Class
+                })
             });
-        self.record_occurrence(key.clone(), span, true, true);
-        key
-    }
-
-    fn record_occurrence(
-        &mut self,
-        key: SymbolKey,
-        span: Span,
-        is_write_access: bool,
-        is_declaration: bool,
-    ) {
-        self.index.occurrences.push(Occurrence {
-            key,
-            file_name: self.file_name.clone(),
-            span: text_span(span),
-            context_span: None,
-            is_write_access,
-            is_declaration,
-        });
-    }
-}
-
-fn dual_global_names(program: &Program) -> BTreeSet<String> {
-    program
-        .files
-        .iter()
-        .filter(|file| !file.is_external_module())
-        .flat_map(|file| &file.bindings.declarations)
-        .filter(|declaration| {
-            declaration.scope == ScopeId(0) && matches!(declaration.kind, DeclarationKind::Class)
-        })
-        .map(|declaration| declaration.name.clone())
-        .collect()
-}
-
-#[derive(Debug, Clone)]
-struct SyntaxMetadata {
-    kind: String,
-    context_span: Option<TextSpan>,
-    exported: bool,
-    ambient: bool,
-    display: String,
-    display_parts: Vec<SymbolDisplayPart>,
-    quick_info_kind: Option<String>,
-}
-
-fn syntax_declaration_metadata(file: &ProgramFile) -> BTreeMap<(u32, u32), SyntaxMetadata> {
-    let mut metadata = BTreeMap::new();
-    let ambient_context = is_declaration_file(file);
-    let mut collector = SyntaxMetadataCollector {
-        metadata: &mut metadata,
+        let declarations = if has_class || declaration.kind == DeclarationKind::UnmodeledHost {
+            program.global_values.get(&declaration.name)
+        } else {
+            match declaration.meaning {
+                Meaning::Value => program.global_values.get(&declaration.name),
+                Meaning::Type => program.global_types.get(&declaration.name),
+            }
+        };
+        declarations
+            .and_then(|declarations| declarations.first())
+            .map(|id| &program.files[id.file.0 as usize].bindings.declarations[id.local as usize])
+            .unwrap_or(declaration)
+    } else {
+        declaration
     };
-    for statement in &file.syntax.statements {
-        collector.statement(ambient_context, statement);
-    }
-    metadata
-}
-
-fn is_declaration_file(file: &ProgramFile) -> bool {
-    let path = file.source.path.to_string_lossy();
-    path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
-}
-
-struct SyntaxMetadataCollector<'metadata> {
-    metadata: &'metadata mut BTreeMap<(u32, u32), SyntaxMetadata>,
-}
-
-impl SyntaxMetadataCollector<'_> {
-    fn statement(&mut self, ambient_context: bool, statement: &Statement) {
-        match &statement.kind {
-            StatementKind::Import(declaration) => {
-                for binding in &declaration.bindings {
-                    let display = format!("(alias) {}", binding.local);
-                    self.insert(
-                        (binding.local_span, statement.span),
-                        "alias",
-                        (false, ambient_context),
-                        (display.clone(), vec![display_part(&display, "text")], None),
-                    );
-                }
-            }
-            StatementKind::Variable(declaration) => {
-                let kind = match declaration.declaration_kind {
-                    VariableKind::Const => "const",
-                    VariableKind::Let => "let",
-                    VariableKind::Var => "var",
-                };
-                let ty = display_variable_type(declaration);
-                let quick_info_kind = ty.as_ref().map(|_| kind.to_string());
-                let display = ty.as_ref().map_or_else(
-                    || format!("{kind} {}", declaration.name),
-                    |ty| format!("{kind} {}: {ty}", declaration.name),
-                );
-                self.insert(
-                    (declaration.name_span, statement.span),
-                    kind,
-                    (declaration.exported, ambient_context),
-                    (
-                        display,
-                        variable_display_parts(kind, &declaration.name, ty.as_deref()),
-                        quick_info_kind,
-                    ),
-                );
-            }
-            StatementKind::Function(declaration) => {
-                let parameters = declaration
-                    .parameters
-                    .iter()
-                    .map(display_parameter)
-                    .collect::<Option<Vec<_>>>()
-                    .map(|parameters| parameters.join(", "));
-                let result = declaration.return_type.as_ref().and_then(display_type_node);
-                let display = match (&parameters, &result) {
-                    (Some(parameters), Some(result)) => {
-                        format!("function {}({parameters}): {result}", declaration.name)
-                    }
-                    _ => format!("function {}", declaration.name),
-                };
-                let quick_info_kind = (declaration.type_parameters.is_empty()
-                    && parameters.is_some()
-                    && result.is_some())
-                .then(|| "function".to_string());
-                self.insert(
-                    (declaration.name_span, statement.span),
-                    "function",
-                    (
-                        declaration.exported,
-                        ambient_context || declaration.declared,
-                    ),
-                    (
-                        display,
-                        function_display_parts(declaration),
-                        quick_info_kind,
-                    ),
-                );
-            }
-            StatementKind::Class(declaration) => {
-                let display = format!("class {}", declaration.name);
-                self.insert(
-                    (declaration.name_span, statement.span),
-                    "class",
-                    (
-                        declaration.exported || declaration.default_export,
-                        ambient_context || declaration.declared,
-                    ),
-                    (
-                        display,
-                        vec![
-                            display_part("class", "keyword"),
-                            display_part(" ", "space"),
-                            display_part(&declaration.name, "className"),
-                        ],
-                        None,
-                    ),
-                );
-            }
-            StatementKind::TypeAlias(declaration) => {
-                let rendered = display_type_node(&declaration.ty);
-                let display = rendered.as_ref().map_or_else(
-                    || format!("type {}", declaration.name),
-                    |ty| format!("type {} = {ty}", declaration.name),
-                );
-                let quick_info_kind = (declaration.type_parameters.is_empty()
-                    && rendered.is_some())
-                .then(|| "type".to_string());
-                self.insert(
-                    (declaration.name_span, statement.span),
-                    "type",
-                    (declaration.exported, ambient_context),
-                    (
-                        display.clone(),
-                        vec![display_part(&display, "text")],
-                        quick_info_kind,
-                    ),
-                );
-            }
-            StatementKind::Interface(declaration) => {
-                let display = format!("interface {}", declaration.name);
-                let quick_info_kind = declaration
-                    .type_parameters
-                    .is_empty()
-                    .then(|| "interface".to_string());
-                self.insert(
-                    (declaration.name_span, statement.span),
-                    "interface",
-                    (declaration.exported, ambient_context),
-                    (
-                        display.clone(),
-                        vec![display_part(&display, "text")],
-                        quick_info_kind,
-                    ),
-                );
-            }
-            StatementKind::Export(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Block(_)
-            | StatementKind::If(_)
-            | StatementKind::Switch(_)
-            | StatementKind::Expression(_)
-            | StatementKind::Empty
-            | StatementKind::Unknown => {}
-        }
-        walk_statement_descendants(self, &ambient_context, statement);
-    }
-
-    fn insert(
-        &mut self,
-        (name_span, context_span): (Span, Span),
-        kind: &str,
-        (exported, ambient): (bool, bool),
-        (display, display_parts, quick_info_kind): (String, Vec<SymbolDisplayPart>, Option<String>),
-    ) {
-        self.metadata.insert(
-            (name_span.start, name_span.end),
-            SyntaxMetadata {
-                kind: kind.to_string(),
-                context_span: Some(text_span(context_span)),
-                exported,
-                ambient,
-                display,
-                display_parts,
-                quick_info_kind,
-            },
-        );
-    }
-
-    fn parameters(&mut self, parameters: &[Parameter], ambient_context: bool) -> bool {
-        for parameter in parameters {
-            insert_parameter_metadata(parameter, ambient_context, self.metadata);
-        }
-        ambient_context
-    }
-}
-
-impl<'ast> DescendantAdapter<'ast> for SyntaxMetadataCollector<'_> {
-    type Context = bool;
-
-    fn context(
-        &mut self,
-        ambient_context: &Self::Context,
-        container: DescendantContainer<'ast>,
-    ) -> Self::Context {
-        match container {
-            DescendantContainer::Function(_, declaration) => self.parameters(
-                &declaration.parameters,
-                *ambient_context || declaration.declared,
-            ),
-            DescendantContainer::Class(_, declaration) => *ambient_context || declaration.declared,
-            DescendantContainer::ClassMember(member) => match &member.kind {
-                ClassMemberKind::Constructor { parameters, .. }
-                | ClassMemberKind::Method { parameters, .. } => {
-                    self.parameters(parameters, *ambient_context)
-                }
-                ClassMemberKind::Property { .. } => *ambient_context,
-            },
-            DescendantContainer::Statement(_) | DescendantContainer::FunctionLike(_, _) => {
-                *ambient_context
-            }
-        }
-    }
-
-    fn nested_statement(
-        &mut self,
-        ambient_context: &Self::Context,
-        statement: &'ast Statement,
-        _next_statement: Option<&'ast Statement>,
-    ) -> NestedStatement {
-        self.statement(*ambient_context, statement);
-        NestedStatement::Handled
-    }
-
-    fn function_like(
-        &mut self,
-        ambient_context: &Self::Context,
-        expression: &'ast Expression,
-        function: &'ast FunctionLikeExpression,
-    ) {
-        self.parameters(&function.parameters, *ambient_context);
-        walk_function_like_descendants(self, ambient_context, expression, function);
-    }
-}
-
-fn insert_parameter_metadata(
-    parameter: &Parameter,
-    ambient: bool,
-    metadata: &mut BTreeMap<(u32, u32), SyntaxMetadata>,
-) {
-    let display = display_parameter(parameter).map_or_else(
-        || format!("(parameter) {}", parameter.name),
-        |parameter| format!("(parameter) {parameter}"),
-    );
-    metadata.insert(
-        (parameter.name_span.start, parameter.name_span.end),
-        SyntaxMetadata {
-            kind: "parameter".to_string(),
-            context_span: Some(text_span(parameter.span)),
-            exported: false,
-            ambient,
-            display,
-            display_parts: parameter_display_parts(parameter),
-            quick_info_kind: None,
-        },
-    );
+    let Span { file, start, end } = canonical.name_span;
+    SymbolKey::Authored { file, start, end }
 }
 
 fn fallback_metadata(kind: DeclarationKind, name: &str) -> (&'static str, String) {
@@ -1364,6 +504,9 @@ fn fallback_metadata(kind: DeclarationKind, name: &str) -> (&'static str, String
         DeclarationKind::Class => ("class", format!("class {name}")),
         DeclarationKind::TypeAlias => ("type", format!("type {name}")),
         DeclarationKind::Interface => ("interface", format!("interface {name}")),
+        DeclarationKind::TypeParameter => {
+            ("type parameter", format!("(type parameter) {name} in type"))
+        }
         DeclarationKind::TypeMember | DeclarationKind::JavaScriptPropertyAssignment => {
             ("property", format!("(property) {name}"))
         }
@@ -1372,97 +515,89 @@ fn fallback_metadata(kind: DeclarationKind, name: &str) -> (&'static str, String
     }
 }
 
-fn variable_display_parts(kind: &str, name: &str, ty: Option<&str>) -> Vec<SymbolDisplayPart> {
-    let mut parts = vec![
-        display_part(kind, "keyword"),
-        display_part(" ", "space"),
-        display_part(name, "localName"),
-    ];
-    if let Some(ty) = ty {
-        parts.push(display_part(":", "punctuation"));
-        parts.push(display_part(" ", "space"));
-        parts.push(display_part(ty, display_type_part_kind(ty)));
-    }
-    parts
-}
-
-fn function_display_parts(
-    declaration: &crate::syntax::FunctionDeclaration,
+fn service_display_parts(
+    summary: &DeclarationDisplaySummary,
+    name: &str,
 ) -> Vec<SymbolDisplayPart> {
-    let mut parts = vec![
-        display_part("function", "keyword"),
-        display_part(" ", "space"),
-        display_part(&declaration.name, "functionName"),
-        display_part("(", "punctuation"),
-    ];
-    for (index, parameter) in declaration.parameters.iter().enumerate() {
-        if index > 0 {
-            parts.push(display_part(",", "punctuation"));
-            parts.push(display_part(" ", "space"));
+    match &summary.display_parts {
+        DeclarationDisplayParts::Text => vec![display_part(&summary.display, "text")],
+        DeclarationDisplayParts::Variable(ty) => {
+            let mut parts = vec![
+                display_part(summary.kind, "keyword"),
+                display_part(" ", "space"),
+                display_part(name, "localName"),
+            ];
+            if let Some(ty) = ty {
+                parts.extend([
+                    display_part(":", "punctuation"),
+                    display_part(" ", "space"),
+                    display_part(&ty.text, ty.part_kind),
+                ]);
+            }
+            parts
         }
-        let Some(ty) = display_parameter_type(parameter) else {
-            return fallback_function_parts(&declaration.name);
-        };
-        append_parameter_parts(&mut parts, parameter, &ty);
-    }
-    let Some(result) = declaration.return_type.as_ref().and_then(display_type_node) else {
-        return fallback_function_parts(&declaration.name);
-    };
-    parts.push(display_part(")", "punctuation"));
-    parts.push(display_part(":", "punctuation"));
-    parts.push(display_part(" ", "space"));
-    parts.push(display_part(&result, display_type_part_kind(&result)));
-    parts
-}
-
-fn fallback_function_parts(name: &str) -> Vec<SymbolDisplayPart> {
-    vec![display_part(&format!("function {name}"), "text")]
-}
-
-fn parameter_display_parts(parameter: &Parameter) -> Vec<SymbolDisplayPart> {
-    let Some(ty) = display_parameter_type(parameter) else {
-        return vec![
-            display_part("(", "punctuation"),
-            display_part("parameter", "text"),
-            display_part(")", "punctuation"),
+        DeclarationDisplayParts::Function { parameters, result } => {
+            let (Some(parameters), Some(result)) = (parameters, result) else {
+                return vec![display_part(&summary.display, "text")];
+            };
+            let mut parts = vec![
+                display_part("function", "keyword"),
+                display_part(" ", "space"),
+                display_part(name, "functionName"),
+                display_part("(", "punctuation"),
+            ];
+            for (index, parameter) in parameters.iter().enumerate() {
+                if index > 0 {
+                    parts.extend([display_part(",", "punctuation"), display_part(" ", "space")]);
+                }
+                append_parameter_parts(&mut parts, parameter);
+            }
+            parts.extend([
+                display_part(")", "punctuation"),
+                display_part(":", "punctuation"),
+                display_part(" ", "space"),
+                display_part(&result.text, result.part_kind),
+            ]);
+            parts
+        }
+        DeclarationDisplayParts::Class => vec![
+            display_part("class", "keyword"),
             display_part(" ", "space"),
-            display_part(&parameter.name, "parameterName"),
-        ];
-    };
-    let mut parts = vec![
-        display_part("(", "punctuation"),
-        display_part("parameter", "text"),
-        display_part(")", "punctuation"),
-        display_part(" ", "space"),
-    ];
-    append_parameter_parts(&mut parts, parameter, &ty);
-    parts
+            display_part(name, "className"),
+        ],
+        DeclarationDisplayParts::Parameter(parameter) => {
+            let mut parts = vec![
+                display_part("(", "punctuation"),
+                display_part("parameter", "text"),
+                display_part(")", "punctuation"),
+                display_part(" ", "space"),
+            ];
+            if let Some(parameter) = parameter {
+                append_parameter_parts(&mut parts, parameter);
+            } else {
+                parts.push(display_part(name, "parameterName"));
+            }
+            parts
+        }
+    }
 }
 
-fn append_parameter_parts(parts: &mut Vec<SymbolDisplayPart>, parameter: &Parameter, ty: &str) {
+fn append_parameter_parts(
+    parts: &mut Vec<SymbolDisplayPart>,
+    parameter: &crate::emit::display::RenderedParameter,
+) {
     if parameter.rest {
         parts.push(display_part("...", "punctuation"));
     }
     parts.push(display_part(&parameter.name, "parameterName"));
-    if parameter.optional || parameter.initializer.is_some() {
+    if parameter.optional {
         parts.push(display_part("?", "punctuation"));
     }
     parts.extend([
         display_part(":", "punctuation"),
         display_part(" ", "space"),
-        display_part(ty, display_type_part_kind(ty)),
+        display_part(&parameter.ty.text, parameter.ty.part_kind),
     ]);
-}
-
-fn display_type_part_kind(ty: &str) -> &'static str {
-    match ty {
-        "any" | "bigint" | "boolean" | "never" | "null" | "number" | "string" | "undefined"
-        | "unknown" | "void" => "keyword",
-        value if value.starts_with('"') || value.bytes().all(|byte| byte.is_ascii_digit()) => {
-            "stringLiteral"
-        }
-        _ => "text",
-    }
 }
 
 fn display_part(text: &str, kind: &str) -> SymbolDisplayPart {

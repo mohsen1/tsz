@@ -15,25 +15,13 @@ pub(super) struct Modifiers {
     invalid_sequence: bool,
 }
 
-impl Modifiers {
-    const fn has_unowned_statement_host(self, host: TokenKind) -> bool {
-        self.invalid_sequence
-            || self.default_export
-            || self.is_async
-            || self.abstract_declaration
-            || match host {
-                TokenKind::Let | TokenKind::Const | TokenKind::Var => self.declared,
-                TokenKind::Function | TokenKind::Class | TokenKind::Type | TokenKind::Interface => {
-                    false
-                }
-                _ => self.exported || self.declared,
-            }
-    }
-}
-
 impl Parser<'_> {
     pub(super) fn class_member_starts_accessor(&self) -> bool {
-        token_starts_property_name(self.peek_kind(1)) && self.peek_kind(2) == TokenKind::LeftParen
+        token_starts_property_name(self.peek_kind(1))
+            && matches!(
+                self.peek_kind(2),
+                TokenKind::LeftParen | TokenKind::LessThan
+            )
             || self.peek_kind(1) == TokenKind::LeftBracket
     }
 
@@ -50,8 +38,8 @@ impl Parser<'_> {
         self.observe_literal_syntax_boundary(family, LiteralSyntaxBoundary::LexicalRecovery);
     }
 
-    pub(super) fn observe_literal_source_context(&mut self, family: AuthoredLiteralKind) {
-        self.observe_literal_syntax_boundary(family, LiteralSyntaxBoundary::SourceContext);
+    pub(super) fn observe_literal_validation_gap(&mut self, family: AuthoredLiteralKind) {
+        self.observe_literal_syntax_boundary(family, LiteralSyntaxBoundary::SemanticValidation);
     }
 
     pub(super) fn observe_literal_unsupported_host(&mut self, family: AuthoredLiteralKind) {
@@ -113,11 +101,6 @@ impl Parser<'_> {
 
     pub(super) fn observe_statement_modifiers(&mut self, modifiers: Modifiers) {
         let host = self.kind();
-        if ((modifiers.exported || modifiers.declared) && self.statement_nesting_depth > 0)
-            || modifiers.has_unowned_statement_host(host)
-        {
-            self.has_unmodeled_top_level_syntax = true;
-        }
         if host == TokenKind::Class {
             if modifiers.is_async {
                 self.source_syntax_facts
@@ -263,6 +246,14 @@ impl Parser<'_> {
         let next = self.peek_kind(offset + 1);
         let same_line = self.tokens_are_on_same_line(self.index + offset, self.index + offset + 1);
         match kind {
+            TokenKind::Enum if next.is_identifier() => {
+                Some((offset + 1, Some(UnmodeledDeclarationHostKind::Enum)))
+            }
+            TokenKind::Const
+                if next == TokenKind::Enum && self.peek_kind(offset + 2).is_identifier() =>
+            {
+                Some((offset + 2, Some(UnmodeledDeclarationHostKind::Enum)))
+            }
             TokenKind::Module if same_line && next.is_identifier() => {
                 Some((offset + 1, Some(UnmodeledDeclarationHostKind::Module)))
             }

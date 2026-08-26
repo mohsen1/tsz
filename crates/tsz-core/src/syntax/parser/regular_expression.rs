@@ -1,38 +1,26 @@
-use super::super::{
-    AuthoredLiteralKind, Expression, ExpressionKind, SourceSyntaxFact, Statement, TokenKind,
-    comments_form_regular_expression_safe_file, statements_form_regular_expression_safe_file,
-};
+use super::super::{AuthoredLiteralKind, Expression, ExpressionKind, SourceSyntaxFact, TokenKind};
 use super::Parser;
 
 impl Parser<'_> {
-    pub(super) fn finish_regular_expression_source(&mut self, statements: &[Statement]) {
-        let has_authored_regular_expression = !self.regular_expression_literals.is_empty()
-            || self.source_syntax_facts.iter().any(|fact| {
+    pub(super) fn finish_regular_expression_source(&mut self) {
+        if self.regular_expression_literals.is_empty()
+            && !self.source_syntax_facts.iter().any(|fact| {
                 matches!(
                     fact,
                     SourceSyntaxFact::LiteralBoundary(AuthoredLiteralKind::RegularExpression, _)
                 )
-            });
-        if !has_authored_regular_expression {
+            })
+        {
             return;
         }
         self.source_syntax_facts
             .insert(SourceSyntaxFact::AuthoredRegularExpression);
-        let supported_literal_count = self
+        if self
             .regular_expression_literals
             .iter()
-            .filter(|literal| literal.syntax_literal().validation_supported())
-            .count();
-        if self.has_unmodeled_trivia
-            || self.has_unmodeled_top_level_syntax
-            || !comments_form_regular_expression_safe_file(self.source, statements, &self.comments)
-            || !statements_form_regular_expression_safe_file(
-                self.source,
-                statements,
-                supported_literal_count,
-            )
+            .any(|literal| !literal.syntax_literal().validation_supported())
         {
-            self.observe_literal_source_context(AuthoredLiteralKind::RegularExpression);
+            self.observe_literal_validation_gap(AuthoredLiteralKind::RegularExpression);
         }
     }
 
@@ -44,18 +32,17 @@ impl Parser<'_> {
             .ok()
             .map(|index| self.regular_expression_literals[index].syntax_literal());
         self.bump();
-        let Some(literal) = literal else {
-            self.observe_literal_lexical_recovery(AuthoredLiteralKind::RegularExpression);
-            return Expression {
-                id: self.alloc_node(),
-                span: token.span,
-                kind: ExpressionKind::Missing,
-            };
-        };
+        let kind = literal.map_or_else(
+            || {
+                self.observe_literal_lexical_recovery(AuthoredLiteralKind::RegularExpression);
+                ExpressionKind::Missing
+            },
+            ExpressionKind::RegularExpression,
+        );
         Expression {
             id: self.alloc_node(),
             span: token.span,
-            kind: ExpressionKind::RegularExpression(literal),
+            kind,
         }
     }
 
@@ -73,21 +60,15 @@ impl Parser<'_> {
             return;
         }
         let mut depth = 0_u32;
-        let mut header_end = None;
-        for cursor in self.index + 1..self.tokens.len() {
-            match self.tokens[cursor].kind {
-                TokenKind::LeftParen => depth += 1,
-                TokenKind::RightParen if depth > 0 => {
-                    depth -= 1;
-                    if depth == 0 {
-                        header_end = Some(cursor);
-                        break;
-                    }
-                }
-                TokenKind::EndOfFile => break,
-                _ => {}
-            }
-        }
+        let header_end = self.tokens[self.index + 1..]
+            .iter()
+            .position(|token| {
+                let closes_header = token.kind == TokenKind::RightParen && depth == 1;
+                depth += u32::from(token.kind == TokenKind::LeftParen);
+                depth = depth.saturating_sub(u32::from(token.kind == TokenKind::RightParen));
+                closes_header
+            })
+            .map(|offset| self.index + 1 + offset);
         let Some(header_end) = header_end else {
             return;
         };

@@ -1108,3 +1108,248 @@ fn nested_different_subjects_preserve_outer_flow_antecedents() {
         );
     }
 }
+
+#[test]
+fn straight_line_map_fallback_flow_is_structural_and_ordered() {
+    let prefix = "interface Holder{value:Map<string,number>;}";
+    for (path, setup, body) in [
+        ("map-direct.ts", "", "target=target||new Map();"),
+        (
+            "map-parenthesized.ts",
+            "",
+            "target=(((target))||((new Map())));",
+        ),
+        (
+            "map-renamed.ts",
+            "const Empty=Map;",
+            "target=target||new Empty();",
+        ),
+        ("map-nested.ts", "", "{target=target||new Map();}"),
+        (
+            "map-if-before.ts",
+            "",
+            "if(target){void target;}target=target||new Map();",
+        ),
+        (
+            "map-if-after.ts",
+            "",
+            "target=target||new Map();if(target){void target;}",
+        ),
+    ] {
+        let source = format!(
+            "{setup}{prefix}export function fill(target?:Map<string,number>):Holder{{{body}return{{value:target}};}}"
+        );
+        for _ in 0..2 {
+            let output = compile(path, &source);
+            assert_eq!(fingerprints(&output), [], "{path}");
+            assert_eq!(output.exit_status, CompileExitStatus::Success, "{path}");
+            assert_eq!(
+                output.semantic_completion,
+                SemanticCompletion::Complete,
+                "{path}"
+            );
+        }
+    }
+
+    for (path, parameters, body) in [
+        (
+            "map-reverse.ts",
+            "target?:Map<string,number>",
+            "target=new Map()||target;",
+        ),
+        (
+            "map-and.ts",
+            "target?:Map<string,number>",
+            "target=target&&new Map();",
+        ),
+        (
+            "map-nullish.ts",
+            "target?:Map<string,number>",
+            "target=target??new Map();",
+        ),
+        (
+            "map-nonself.ts",
+            "target?:Map<string,number>,other?:Map<string,number>",
+            "target=other||new Map();",
+        ),
+        (
+            "map-later-write.ts",
+            "target?:Map<string,number>",
+            "target=target||new Map();target=undefined;",
+        ),
+        (
+            "map-prior-write.ts",
+            "target?:Map<string,number>",
+            "target=undefined;target=target||new Map();",
+        ),
+    ] {
+        let source = format!(
+            "{prefix}export function deferred({parameters}):Holder{{{body}return{{value:target}};}}"
+        );
+        let output = compile(path, &source);
+        assert_eq!(fingerprints(&output), [], "{path}");
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{path}"
+        );
+    }
+
+    let never_target = compile(
+        "map-never.ts",
+        concat!(
+            "interface Holder{value:Map<never,unknown>;} ",
+            "export function fill(target?:Map<never,unknown>):Holder{",
+            "target=target||new Map();return{value:target};}",
+        ),
+    );
+    assert_eq!(fingerprints(&never_target), []);
+    assert_eq!(
+        never_target.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+
+    let mut fallback = "new Map()".to_string();
+    for _ in 0..105 {
+        fallback = format!("target||({fallback})");
+    }
+    let deep = compile(
+        "map-deep.ts",
+        &format!("export function fill(target?:Map<string,number>){{target={fallback};}}"),
+    );
+    assert_eq!(fingerprints(&deep), []);
+    assert_eq!(deep.semantic_completion, SemanticCompletion::Complete);
+
+    for (path, source, expected) in [
+        (
+            "map-generic.ts",
+            concat!(
+                "interface Holder<Key>{value:Map<Key,number>;} ",
+                "export function fill<Key>(target?:Map<Key,number>):Holder<Key>{",
+                "target=target||new Map();return{value:target};}",
+            ),
+            SemanticCompletion::Complete,
+        ),
+        (
+            "map-alias.ts",
+            concat!(
+                "type Bag<Key,Value>=Map<Key,Value>;interface Holder{value:Bag<string,number>;} ",
+                "export function fill(target?:Bag<string,number>):Holder{",
+                "target=target||new Map();return{value:target};}",
+            ),
+            SemanticCompletion::Complete,
+        ),
+        (
+            "map-shadow.ts",
+            concat!(
+                "class Map<Key,Value>{}interface Holder{value:Map<string,number>;} ",
+                "export function fill(target?:Map<string,number>):Holder{",
+                "target=target||new Map();return{value:target};}",
+            ),
+            SemanticCompletion::Deferred,
+        ),
+    ] {
+        let output = compile(path, source);
+        assert_eq!(fingerprints(&output), [], "{path}");
+        assert_eq!(output.semantic_completion, expected, "{path}");
+    }
+
+    let loose = Compiler::new().compile(
+        vec![SourceInput::new(
+            "map-loose.ts",
+            Arc::<str>::from(concat!(
+                "interface Holder{value:Map<string,number>;} ",
+                "export function fill(target?:Map<string,number>):Holder{",
+                "target=target||new Map();return{value:target};}",
+            )),
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            strict_null_checks: Some(false),
+            target: "es2015".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(fingerprints(&loose), []);
+    assert_eq!(loose.semantic_completion, SemanticCompletion::Complete);
+}
+
+#[test]
+fn canonical_map_flow_resolution_is_root_order_stable() {
+    let declarations = SourceInput::new(
+        "types.ts",
+        Arc::<str>::from("interface Holder{value:Map<string,number>;}"),
+    );
+    let implementation = SourceInput::new(
+        "implementation.ts",
+        Arc::<str>::from(concat!(
+            "export function fill(target?:Map<string,number>):Holder{",
+            "target=target||new Map();return{value:target};}",
+        )),
+    );
+    for roots in [
+        vec![declarations.clone(), implementation.clone()],
+        vec![implementation, declarations],
+    ] {
+        let output = Compiler::new().compile(
+            roots,
+            &CompilerOptions {
+                no_emit: true,
+                strict: true,
+                target: "es2015".to_string(),
+                ..CompilerOptions::default()
+            },
+        );
+        assert_eq!(fingerprints(&output), []);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    }
+}
+
+#[test]
+fn straight_line_modeled_sources_rebase_later_references() {
+    for (path, source) in [
+        (
+            "void-reference-chain.ts",
+            "var x:void;var y:any;var z:void;y=x;x=y;x=z;",
+        ),
+        (
+            "reference-chain.ts",
+            concat!(
+                "let source:string='';let first:string|number=0;let second:string|number=0;",
+                "first=source;second=first;const text:string=second;",
+            ),
+        ),
+        (
+            "literal-self-chain.ts",
+            concat!(
+                "let value:string|number=0;value='ready';value=value;",
+                "const text:string=value;",
+            ),
+        ),
+        (
+            "direct-call-chain.ts",
+            concat!(
+                "declare function fixed(value:string):string;let input:string='';",
+                "let value:string|number=0;value=fixed(input);const text:string=value;",
+            ),
+        ),
+    ] {
+        let output = compile(path, source);
+        assert_eq!(fingerprints(&output), [], "{path}");
+        assert_eq!(output.exit_status, CompileExitStatus::Success, "{path}");
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{path}"
+        );
+    }
+
+    let unsupported = concat!(
+        "let value:string|number=0;value='ready';value=1+1;",
+        "const text:string=value;",
+    );
+    let output = compile("unsupported-straight-line.ts", unsupported);
+    assert_eq!(fingerprints(&output), []);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+}

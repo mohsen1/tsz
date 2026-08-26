@@ -1611,7 +1611,9 @@ fn contextual_modifier_names_and_keyword_computed_names_recover_structurally() {
         },
     );
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert!(output.emitted_files.is_empty());
+    assert_eq!(output.emitted_files.len(), 1);
+    assert!(!output.emitted_files[0].declaration);
+    assert_eq!(output.emitted_files[0].text, "export {};\n");
 
     for (source, host_code) in [
         ("interface I{[this]:number}", 1169),
@@ -1646,7 +1648,9 @@ fn type_member_start_boundary_drops_bare_initializers_but_retains_started_member
     );
     assert_eq!(codes(&bare), vec![1131, 1128]);
     assert_eq!(bare.semantic_completion, SemanticCompletion::Deferred);
-    assert!(bare.emitted_files.is_empty());
+    assert_eq!(bare.emitted_files.len(), 1);
+    assert!(!bare.emitted_files[0].declaration);
+    assert_eq!(bare.emitted_files[0].text, "export {};\n");
 
     let optional = Compiler::new().compile(
         vec![SourceInput::new(
@@ -1689,13 +1693,16 @@ fn type_member_start_boundary_drops_bare_initializers_but_retains_started_member
 }
 
 #[test]
-fn nested_and_multi_tail_member_recovery_blocks_unrepresented_products() {
-    for (source, expected_codes, expected_tokens) in [
-        ("export let v:{x=1};", vec![1131, 1128], vec!["x", "}"]),
+fn recovered_type_members_preserve_claimed_javascript_products() {
+    for (source, javascript) in [
+        ("export let renamed:{x=1};", "export let renamed;\n"),
         (
-            "export function f(a:{x=1}){}",
-            vec![1131, 1005],
-            vec!["x", "}"],
+            "export interface Renamed{x=1;y:number} export const sibling=1;",
+            "export const sibling = 1;\n",
+        ),
+        (
+            "export type Outer={nested:{x=1};y:number}; export const kept=2;",
+            "export const kept = 2;\n",
         ),
     ] {
         for no_check in [false, true] {
@@ -1709,40 +1716,17 @@ fn nested_and_multi_tail_member_recovery_blocks_unrepresented_products() {
                     ..CompilerOptions::default()
                 },
             );
-            assert_eq!(codes(&output), expected_codes, "{source}");
+            assert_eq!(codes(&output), vec![1131, 1128], "{source}");
             assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
             assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-            assert!(output.emitted_files.is_empty(), "{source}");
-            for (diagnostic, expected) in output.diagnostics.iter().zip(&expected_tokens) {
-                assert_eq!(
-                    &source[diagnostic.start as usize
-                        ..(diagnostic.start + diagnostic.length) as usize],
-                    *expected
-                );
-            }
+            assert_eq!(output.emitted_files.len(), 1, "{source}");
+            assert!(!output.emitted_files[0].declaration, "{source}");
+            assert_eq!(output.emitted_files[0].text, javascript, "{source}");
         }
     }
 
     for source in [
-        "export interface I{x=1;y:number}",
-        "export type T={x=1;y:number}",
-    ] {
-        let output = Compiler::new().compile(
-            vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
-            &CompilerOptions {
-                declaration: true,
-                target: "esnext".to_string(),
-                module: "esnext".to_string(),
-                ..CompilerOptions::default()
-            },
-        );
-        assert_eq!(codes(&output), vec![1131, 1128], "{source}");
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert!(output.emitted_files.is_empty(), "{source}");
-    }
-
-    for source in [
-        "export class C{value:{x=1}}",
+        "export function f(a:{x=1}){}",
         "export function f<T extends {x=1}>(){}",
     ] {
         for no_check in [false, true] {

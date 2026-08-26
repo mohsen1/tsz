@@ -98,7 +98,7 @@ fn configured_sources_outside_the_emit_root_stay_beside_the_source() {
 }
 
 #[test]
-fn product_planning_is_root_order_independent_with_both_optional_maps() {
+fn unsupported_map_options_withhold_affected_products_in_both_root_orders() {
     let options = CompilerOptions {
         declaration: true,
         source_map: true,
@@ -128,14 +128,10 @@ fn product_planning_is_root_order_independent_with_both_optional_maps() {
         forward.has_blocked_products(),
         reverse.has_blocked_products()
     );
-    assert_eq!(
-        forward.for_file(FileId(0)).javascript.as_deref(),
-        Some(Path::new("dist/one.js"))
-    );
-    assert_eq!(
-        forward.for_file(FileId(1)).declaration.as_deref(),
-        Some(Path::new("types/nested/two.d.ts"))
-    );
+    assert!(forward.for_file(FileId(0)).javascript.is_none());
+    assert!(forward.for_file(FileId(1)).declaration.is_none());
+    assert!(!forward.has_blocked_products());
+    assert!(forward.diagnostics().is_empty());
 }
 
 #[test]
@@ -170,7 +166,7 @@ fn capability_and_collision_gates_leave_independent_primary_products() {
 }
 
 #[test]
-fn map_collisions_block_only_the_auxiliary_products_in_either_root_order() {
+fn unsupported_map_products_do_not_publish_collision_diagnostics() {
     let options = CompilerOptions {
         declaration: true,
         source_map: true,
@@ -193,23 +189,14 @@ fn map_collisions_block_only_the_auxiliary_products_in_either_root_order() {
         ],
     ] {
         let plan = plan(&files, &options);
-        assert_eq!(
-            plan.for_file(FileId(0)).javascript.as_deref(),
-            Some(Path::new("dist/value.js"))
+        assert!(plan.for_file(FileId(0)).javascript.is_none());
+        assert!(plan.for_file(FileId(0)).declaration.is_none());
+        assert!(!plan.has_blocked_products());
+        assert_eq!(plan.diagnostics().len(), 2);
+        assert!(
+            plan.diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.code == 6059)
         );
-        assert_eq!(
-            plan.for_file(FileId(0)).declaration.as_deref(),
-            Some(Path::new("types/value.d.ts"))
-        );
-        assert!(plan.has_blocked_products());
-        for target in ["dist/value.js.map", "types/value.d.ts.map"] {
-            assert!(
-                plan.diagnostics().iter().any(|diagnostic| {
-                    diagnostic.code == 5055 && diagnostic.message_text.contains(target)
-                }),
-                "missing map collision for {target}: {:#?}",
-                plan.diagnostics()
-            );
-        }
     }
 }

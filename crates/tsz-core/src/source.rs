@@ -25,16 +25,21 @@ pub struct DeclId {
 pub struct SymbolId(pub u32);
 
 /// Normalize path components without filesystem access or case folding.
-fn normalize_path_lexically(path: &Path, preserve_prefix_parent: bool) -> PathBuf {
+fn normalize_path_lexically(path: &Path, preserve_prefix: bool, collapse_parents: bool) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match (component, normalized.components().next_back()) {
             (Component::CurDir, _) => continue,
+            (Component::ParentDir, _) if collapse_parents => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
             (Component::ParentDir, Some(Component::Normal(_))) => {
                 normalized.pop();
             }
             (Component::ParentDir, Some(Component::RootDir)) => {}
-            (Component::ParentDir, Some(Component::Prefix(_))) if !preserve_prefix_parent => {}
+            (Component::ParentDir, Some(Component::Prefix(_))) if !preserve_prefix => {}
             (Component::ParentDir, Some(Component::CurDir)) => {
                 unreachable!("current directories are removed eagerly")
             }
@@ -46,11 +51,15 @@ fn normalize_path_lexically(path: &Path, preserve_prefix_parent: bool) -> PathBu
 }
 
 pub(crate) fn normalize_clamped_path_lexically(path: &Path) -> PathBuf {
-    normalize_path_lexically(path, false)
+    normalize_path_lexically(path, false, false)
 }
 
 pub(crate) fn normalize_import_path_lexically(path: &Path) -> PathBuf {
-    normalize_path_lexically(path, true)
+    normalize_path_lexically(path, true, false)
+}
+
+pub(crate) fn normalize_project_path_lexically(path: &Path) -> PathBuf {
+    normalize_path_lexically(path, false, true)
 }
 
 pub(crate) fn display_path(path: &Path) -> String {
@@ -156,14 +165,6 @@ impl SourceText {
             Some("tsx") => SourceKind::TypeScriptJsx,
             _ => SourceKind::TypeScript,
         }
-    }
-
-    /// True for ordinary `.ts` inputs, excluding declaration and
-    /// extension-selected module/JSX source families.
-    #[must_use]
-    pub(crate) fn is_regular_typescript_source(&self) -> bool {
-        self.path.extension().and_then(std::ffi::OsStr::to_str) == Some("ts")
-            && !self.is_declaration_source()
     }
 
     #[must_use]

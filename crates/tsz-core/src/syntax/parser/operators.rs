@@ -40,23 +40,26 @@ pub(super) const fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, 
         TokenKind::QuestionQuestion => (BinaryOperator::NullishCoalesce, 1),
         TokenKind::AmpersandAmpersand => (BinaryOperator::LogicalAnd, 2),
         TokenKind::Bar => (BinaryOperator::BitwiseOr, 3),
-        TokenKind::Ampersand => (BinaryOperator::BitwiseAnd, 4),
-        TokenKind::EqualsEquals => (BinaryOperator::Equals, 5),
-        TokenKind::BangEquals => (BinaryOperator::NotEquals, 5),
-        TokenKind::EqualsEqualsEquals => (BinaryOperator::StrictEquals, 5),
-        TokenKind::BangEqualsEquals => (BinaryOperator::StrictNotEquals, 5),
-        TokenKind::LessThan => (BinaryOperator::LessThan, 6),
-        TokenKind::LessThanEquals => (BinaryOperator::LessThanEquals, 6),
-        TokenKind::GreaterThan => (BinaryOperator::GreaterThan, 6),
-        TokenKind::GreaterThanEquals => (BinaryOperator::GreaterThanEquals, 6),
-        TokenKind::In => (BinaryOperator::In, 6),
-        TokenKind::InstanceOf => (BinaryOperator::InstanceOf, 6),
-        TokenKind::GreaterThanGreaterThanGreaterThan => (BinaryOperator::UnsignedRightShift, 7),
-        TokenKind::Plus => (BinaryOperator::Add, 8),
-        TokenKind::Minus => (BinaryOperator::Subtract, 8),
-        TokenKind::Star => (BinaryOperator::Multiply, 9),
-        TokenKind::Slash => (BinaryOperator::Divide, 9),
-        TokenKind::Percent => (BinaryOperator::Remainder, 9),
+        TokenKind::Caret => (BinaryOperator::BitwiseXor, 4),
+        TokenKind::Ampersand => (BinaryOperator::BitwiseAnd, 5),
+        TokenKind::EqualsEquals => (BinaryOperator::Equals, 6),
+        TokenKind::BangEquals => (BinaryOperator::NotEquals, 6),
+        TokenKind::EqualsEqualsEquals => (BinaryOperator::StrictEquals, 6),
+        TokenKind::BangEqualsEquals => (BinaryOperator::StrictNotEquals, 6),
+        TokenKind::LessThan => (BinaryOperator::LessThan, 7),
+        TokenKind::LessThanEquals => (BinaryOperator::LessThanEquals, 7),
+        TokenKind::GreaterThan => (BinaryOperator::GreaterThan, 7),
+        TokenKind::GreaterThanEquals => (BinaryOperator::GreaterThanEquals, 7),
+        TokenKind::In => (BinaryOperator::In, 7),
+        TokenKind::InstanceOf => (BinaryOperator::InstanceOf, 7),
+        TokenKind::LessThanLessThan => (BinaryOperator::LeftShift, 8),
+        TokenKind::GreaterThanGreaterThan => (BinaryOperator::SignedRightShift, 8),
+        TokenKind::GreaterThanGreaterThanGreaterThan => (BinaryOperator::UnsignedRightShift, 8),
+        TokenKind::Plus => (BinaryOperator::Add, 9),
+        TokenKind::Minus => (BinaryOperator::Subtract, 9),
+        TokenKind::Star => (BinaryOperator::Multiply, 10),
+        TokenKind::Slash => (BinaryOperator::Divide, 10),
+        TokenKind::Percent => (BinaryOperator::Remainder, 10),
         _ => return None,
     };
     Some(operator)
@@ -70,6 +73,7 @@ pub(super) fn expression_has_recovered_left_edge(expression: &Expression) -> boo
         }
         ExpressionKind::Member { object, .. }
         | ExpressionKind::ElementAccess { object, .. }
+        | ExpressionKind::NonNull(object)
         | ExpressionKind::Unary {
             operand: object, ..
         }

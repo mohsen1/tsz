@@ -54,8 +54,6 @@ fn canonical_tsz_boundary_has_no_result_repair_hooks() {
         ("test_parser.rs", include_str!("../src/test_parser.rs")),
         ("text_decode.rs", include_str!("../src/text_decode.rs")),
         ("tsc_results.rs", include_str!("../src/tsc_results.rs")),
-        ("server_pool.rs", include_str!("../src/server_pool.rs")),
-        ("batch_pool.rs", include_str!("../src/batch_pool.rs")),
         (
             "bin/generate-tsc-cache.rs",
             include_str!("../src/bin/generate-tsc-cache.rs"),
@@ -148,13 +146,20 @@ fn canonical_tsz_boundary_has_no_result_repair_hooks() {
 }
 
 #[test]
-fn canonical_runner_is_fresh_process_only() {
+fn canonical_runner_retains_only_the_fresh_process_contract() {
     let runner = include_str!("../src/runner.rs");
     let production = runner.split("#[cfg(test)]").next().unwrap_or(runner);
     let cli = include_str!("../src/cli.rs");
+    let source_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    assert!(!source_dir.join("server_pool.rs").exists());
+    assert!(!source_dir.join("batch_pool.rs").exists());
+    assert!(!source_dir.join("options_convert.rs").exists());
+    assert!(!source_dir.join("process_rss.rs").exists());
     assert!(!production.contains("ProcessPool"));
     assert!(!production.contains("ServerPool"));
     assert!(!production.contains("parse_batch_output"));
+    assert!(production.contains("tokio::process::Command::new(tsz_binary)"));
+    assert!(production.contains("child.wait_with_output()"));
     assert!(cli.contains("Fresh"));
     assert!(cli.contains("noncanonical performance transport and cannot score conformance"));
 }

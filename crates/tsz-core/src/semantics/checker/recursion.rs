@@ -5,8 +5,8 @@ use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind, TypeStore};
 use crate::source::DeclId;
 use crate::syntax::{
-    Parameter, TypeAliasDeclaration, TypeMember, TypeMemberKind, TypeNode, TypeNodeKind,
-    TypeParameterDeclaration,
+    AuthoredTypeEdge, AuthoredTypeItem, TypeAliasDeclaration, TypeMember, TypeMemberKind, TypeNode,
+    TypeNodeKind, TypeParameterDeclaration,
 };
 
 use super::object_shape::{plain_required_property, plain_type_parameters};
@@ -418,186 +418,122 @@ impl Checker<'_> {
             .iter()
             .map(|parameter| parameter.name.as_str())
             .collect::<Vec<_>>();
-        let mut pending = vec![(root, AliasPathKind::Neutral, shadows)];
-        while let Some((node, path, shadows)) = pending.pop() {
+        let mut pending = vec![AliasPending::Type(root, AliasPathKind::Neutral, shadows)];
+        while let Some(item) = pending.pop() {
+            let (node, path, shadows) = match item {
+                AliasPending::Type(node, path, shadows) => (node, path, shadows),
+                AliasPending::Member(member, path, shadows) => {
+                    let member_shadows = member.kind.signature().map_or_else(
+                        || shadows.clone(),
+                        |(_, parameters, _, _)| with_alias_type_parameters(&shadows, parameters),
+                    );
+                    let mut children = Vec::new();
+                    member.push_authored_children(&mut children);
+                    push_alias_children(
+                        children,
+                        path,
+                        &member_shadows,
+                        &member_shadows,
+                        &mut pending,
+                    );
+                    continue;
+                }
+            };
             if edges.len() >= MAX_ALIAS_RECURSION_GRAPH {
                 return false;
             }
+            let mut child_path = path;
+            let mut child_shadows = shadows.clone();
+            let mut edge_shadows = shadows.clone();
             match &node.kind {
-                TypeNodeKind::Array(inner) => {
-                    pending.push((inner, path.through_productive_boundary(), shadows));
+                TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_) | TypeNodeKind::Object(_) => {
+                    child_path = path.through_productive_boundary();
                 }
-                TypeNodeKind::Tuple(elements) => {
-                    pending.extend(elements.iter().map(|element| {
-                        (element, path.through_productive_boundary(), shadows.clone())
-                    }));
-                }
-                TypeNodeKind::Union(elements) | TypeNodeKind::Intersection(elements) => {
-                    pending.extend(
-                        elements
-                            .iter()
-                            .map(|element| (element, path, shadows.clone())),
-                    );
-                }
-                TypeNodeKind::Object(members) => push_alias_member_types(
-                    members,
-                    path.through_productive_boundary(),
-                    &shadows,
-                    &mut pending,
-                ),
                 TypeNodeKind::Function {
-                    type_parameters,
-                    parameters,
-                    return_type,
-                    ..
+                    type_parameters, ..
                 }
                 | TypeNodeKind::Constructor {
-                    type_parameters,
-                    parameters,
-                    return_type,
-                    ..
+                    type_parameters, ..
                 } => {
-                    let productive = path.through_productive_boundary();
-                    let signature_shadows = with_alias_type_parameters(&shadows, type_parameters);
-                    push_alias_type_parameter_types(
-                        type_parameters,
-                        productive,
-                        &signature_shadows,
-                        &mut pending,
-                    );
-                    push_alias_parameter_types(
-                        parameters,
-                        productive,
-                        &signature_shadows,
-                        &mut pending,
-                    );
-                    pending.push((return_type, productive, signature_shadows));
+                    child_path = path.through_productive_boundary();
+                    child_shadows = with_alias_type_parameters(&shadows, type_parameters);
                 }
-                TypeNodeKind::Reference {
-                    name, arguments, ..
-                } => {
+                TypeNodeKind::Reference { name, .. } => {
                     if shadows.iter().any(|shadow| *shadow == name) {
-                        pending.extend(arguments.iter().map(|argument| {
-                            (argument, AliasPathKind::Unsupported, shadows.clone())
-                        }));
-                        continue;
+                        child_path = AliasPathKind::Unsupported;
+                    } else {
+                        let target = self.resolve_name(file, scope, name, Meaning::Type);
+                        child_path = match target.and_then(|target| {
+                            self.models
+                                .get(&target)
+                                .copied()
+                                .map(|model| (target, model))
+                        }) {
+                            Some((target, DeclarationModel::TypeAlias { .. })) => {
+                                let edge_path = if self.is_single_type_symbol_declaration(target) {
+                                    path
+                                } else {
+                                    AliasPathKind::Unsupported
+                                };
+                                edges.push(AliasEdge {
+                                    source,
+                                    target,
+                                    path: edge_path,
+                                });
+                                edge_path
+                            }
+                            Some((
+                                _,
+                                DeclarationModel::Interface { .. } | DeclarationModel::Class { .. },
+                            )) => path.through_productive_boundary(),
+                            None if target.is_some_and(|target| {
+                                self.program.standard_library.is_rest_array_type(target)
+                            }) =>
+                            {
+                                path.through_productive_boundary()
+                            }
+                            Some((_, _)) | None => path.through_unsupported_boundary(),
+                        };
                     }
-                    let target = self.resolve_name(file, scope, name, Meaning::Type);
-                    let argument_path = match target.and_then(|target| {
-                        self.models
-                            .get(&target)
-                            .copied()
-                            .map(|model| (target, model))
-                    }) {
-                        Some((target, DeclarationModel::TypeAlias { .. })) => {
-                            let edge_path = if self.is_single_type_symbol_declaration(target) {
-                                path
-                            } else {
-                                AliasPathKind::Unsupported
-                            };
-                            edges.push(AliasEdge {
-                                source,
-                                target,
-                                path: edge_path,
-                            });
-                            edge_path
+                }
+                TypeNodeKind::Infer { name, .. } => {
+                    child_path = AliasPathKind::Unsupported;
+                    child_shadows.push(name);
+                }
+                TypeNodeKind::Conditional { extends_type, .. } => {
+                    child_path = AliasPathKind::Unsupported;
+                    extends_type.for_each_conditional_infer(&mut |name, _| {
+                        if !edge_shadows.contains(&name) {
+                            edge_shadows.push(name);
                         }
-                        Some((
-                            _,
-                            DeclarationModel::Interface { .. } | DeclarationModel::Class { .. },
-                        )) => path.through_productive_boundary(),
-                        None if target.is_some_and(|target| {
-                            self.program.standard_library.is_rest_array_type(target)
-                        }) =>
-                        {
-                            path.through_productive_boundary()
-                        }
-                        Some((_, _)) | None => path.through_unsupported_boundary(),
-                    };
-                    pending.extend(
-                        arguments
-                            .iter()
-                            .map(|argument| (argument, argument_path, shadows.clone())),
-                    );
+                    });
                 }
-                TypeNodeKind::Readonly(inner) | TypeNodeKind::Parenthesized(inner) => {
-                    pending.push((inner, path, shadows));
+                TypeNodeKind::Mapped { parameter, .. } => {
+                    child_path = AliasPathKind::Unsupported;
+                    child_shadows.push(parameter);
                 }
-                TypeNodeKind::Infer {
-                    name, constraint, ..
-                } => {
-                    let mut infer_shadows = shadows;
-                    infer_shadows.push(name);
-                    pending.extend(constraint.iter().map(|constraint| {
-                        (
-                            constraint.as_ref(),
-                            AliasPathKind::Unsupported,
-                            infer_shadows.clone(),
-                        )
-                    }));
-                }
-                TypeNodeKind::Predicate { ty, .. } => pending.extend(
-                    ty.iter()
-                        .map(|ty| (ty.as_ref(), AliasPathKind::Unsupported, shadows.clone())),
-                ),
-                TypeNodeKind::KeyOf(inner) => {
-                    pending.push((inner, AliasPathKind::Unsupported, shadows));
-                }
-                TypeNodeKind::Conditional {
-                    check_type,
-                    extends_type,
-                    true_type,
-                    false_type,
-                } => {
-                    pending.push((check_type, AliasPathKind::Unsupported, shadows.clone()));
-                    pending.push((extends_type, AliasPathKind::Unsupported, shadows.clone()));
-                    let mut true_shadows = shadows.clone();
-                    collect_conditional_infer_names(extends_type, &mut true_shadows);
-                    pending.push((true_type, AliasPathKind::Unsupported, true_shadows));
-                    pending.push((false_type, AliasPathKind::Unsupported, shadows));
-                }
-                TypeNodeKind::Mapped {
-                    parameter,
-                    constraint,
-                    name_type,
-                    value_type,
-                    members,
-                    ..
-                } => {
-                    pending.push((constraint, AliasPathKind::Unsupported, shadows.clone()));
-                    let mut mapped_shadows = shadows;
-                    mapped_shadows.push(parameter);
-                    pending.extend(name_type.iter().map(|ty| {
-                        (
-                            ty.as_ref(),
-                            AliasPathKind::Unsupported,
-                            mapped_shadows.clone(),
-                        )
-                    }));
-                    pending.push((
-                        value_type,
-                        AliasPathKind::Unsupported,
-                        mapped_shadows.clone(),
-                    ));
-                    push_alias_member_types(
-                        members,
-                        AliasPathKind::Unsupported,
-                        &mapped_shadows,
-                        &mut pending,
-                    );
-                }
-                TypeNodeKind::IndexedAccess { object, index } => {
-                    pending.extend(
-                        [object, index]
-                            .into_iter()
-                            .map(|ty| (ty.as_ref(), AliasPathKind::Unsupported, shadows.clone())),
-                    );
-                }
+                TypeNodeKind::Predicate { .. }
+                | TypeNodeKind::KeyOf(_)
+                | TypeNodeKind::IndexedAccess { .. } => child_path = AliasPathKind::Unsupported,
+                TypeNodeKind::Union(_)
+                | TypeNodeKind::Intersection(_)
+                | TypeNodeKind::Readonly(_)
+                | TypeNodeKind::Parenthesized(_) => {}
                 TypeNodeKind::Keyword(_)
                 | TypeNodeKind::Literal(_)
+                | TypeNodeKind::This
                 | TypeNodeKind::TypeQuery { .. }
-                | TypeNodeKind::Missing => {}
+                | TypeNodeKind::Missing => continue,
             }
+            let mut children = Vec::new();
+            node.push_authored_children(&mut children);
+            push_alias_children(
+                children,
+                child_path,
+                &child_shadows,
+                &edge_shadows,
+                &mut pending,
+            );
         }
         true
     }
@@ -738,7 +674,10 @@ impl Checker<'_> {
     }
 }
 
-type AliasPending<'a> = (&'a TypeNode, AliasPathKind, Vec<&'a str>);
+enum AliasPending<'a> {
+    Type(&'a TypeNode, AliasPathKind, Vec<&'a str>),
+    Member(&'a TypeMember, AliasPathKind, Vec<&'a str>),
+}
 
 fn with_alias_type_parameters<'a>(
     outer: &[&'a str],
@@ -751,170 +690,35 @@ fn with_alias_type_parameters<'a>(
         .collect()
 }
 
-fn push_alias_type_parameter_types<'a>(
-    parameters: &'a [TypeParameterDeclaration],
-    _path: AliasPathKind,
-    shadows: &[&'a str],
-    pending: &mut Vec<AliasPending<'a>>,
-) {
-    for parameter in parameters {
-        pending.extend(
-            parameter
-                .constraint
-                .iter()
-                .chain(&parameter.default)
-                .map(|ty| (ty, AliasPathKind::Unsupported, shadows.to_vec())),
-        );
-    }
-}
-
-fn push_alias_parameter_types<'a>(
-    parameters: &'a [Parameter],
+fn push_alias_children<'a>(
+    children: Vec<AuthoredTypeItem<'a>>,
     path: AliasPathKind,
     shadows: &[&'a str],
+    edge_shadows: &[&'a str],
     pending: &mut Vec<AliasPending<'a>>,
 ) {
-    pending.extend(
-        parameters
-            .iter()
-            .filter_map(|parameter| parameter.annotation.as_ref())
-            .map(|annotation| (annotation, path, shadows.to_vec())),
-    );
-}
-
-fn push_alias_member_types<'a>(
-    members: &'a [TypeMember],
-    path: AliasPathKind,
-    shadows: &[&'a str],
-    pending: &mut Vec<AliasPending<'a>>,
-) {
-    for member in members {
-        match &member.kind {
-            TypeMemberKind::Property { ty, .. } => {
-                pending.extend(ty.iter().map(|ty| (ty, path, shadows.to_vec())));
+    for child in children {
+        match child {
+            AuthoredTypeItem::Type(node, edge) => {
+                let child_path = if edge == AuthoredTypeEdge::TypeParameterDeclaration {
+                    AliasPathKind::Unsupported
+                } else {
+                    path
+                };
+                let child_shadows = match edge {
+                    AuthoredTypeEdge::ConditionalTrue | AuthoredTypeEdge::MappedConstraint => {
+                        edge_shadows
+                    }
+                    AuthoredTypeEdge::Nested | AuthoredTypeEdge::TypeParameterDeclaration => {
+                        shadows
+                    }
+                };
+                pending.push(AliasPending::Type(node, child_path, child_shadows.to_vec()));
             }
-            TypeMemberKind::Method {
-                type_parameters,
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Call {
-                type_parameters,
-                parameters,
-                return_type,
-            }
-            | TypeMemberKind::Construct {
-                type_parameters,
-                parameters,
-                return_type,
-            } => {
-                let member_shadows = with_alias_type_parameters(shadows, type_parameters);
-                push_alias_type_parameter_types(type_parameters, path, &member_shadows, pending);
-                push_alias_parameter_types(parameters, path, &member_shadows, pending);
-                pending.extend(
-                    return_type
-                        .iter()
-                        .map(|ty| (ty, path, member_shadows.clone())),
-                );
-            }
-            TypeMemberKind::Accessor {
-                parameters,
-                return_type,
-                ..
-            } => {
-                push_alias_parameter_types(parameters, path, shadows, pending);
-                pending.extend(return_type.iter().map(|ty| (ty, path, shadows.to_vec())));
-            }
-            TypeMemberKind::Index {
-                parameters,
-                value_type,
-            } => {
-                push_alias_parameter_types(parameters, path, shadows, pending);
-                pending.extend(value_type.iter().map(|ty| (ty, path, shadows.to_vec())));
+            AuthoredTypeItem::Member(member) => {
+                pending.push(AliasPending::Member(member, path, shadows.to_vec()));
             }
         }
-    }
-}
-
-fn collect_conditional_infer_names<'a>(root: &'a TypeNode, names: &mut Vec<&'a str>) {
-    let mut pending = vec![root];
-    while let Some(node) = pending.pop() {
-        match &node.kind {
-            TypeNodeKind::Infer { name, .. } => {
-                if !names.iter().any(|candidate| *candidate == name) {
-                    names.push(name);
-                }
-            }
-            TypeNodeKind::Array(child)
-            | TypeNodeKind::KeyOf(child)
-            | TypeNodeKind::Readonly(child)
-            | TypeNodeKind::Parenthesized(child) => pending.push(child),
-            TypeNodeKind::Tuple(children)
-            | TypeNodeKind::Union(children)
-            | TypeNodeKind::Intersection(children) => pending.extend(children),
-            TypeNodeKind::Object(members) => push_infer_member_nodes(members, &mut pending),
-            TypeNodeKind::Function {
-                parameters,
-                return_type,
-                ..
-            }
-            | TypeNodeKind::Constructor {
-                parameters,
-                return_type,
-                ..
-            } => {
-                pending.extend(
-                    parameters
-                        .iter()
-                        .filter_map(|parameter| parameter.annotation.as_ref()),
-                );
-                pending.push(return_type);
-            }
-            TypeNodeKind::Reference { arguments, .. } => pending.extend(arguments),
-            TypeNodeKind::Predicate { ty, .. } => {
-                pending.extend(ty.iter().map(Box::as_ref));
-            }
-            TypeNodeKind::Mapped {
-                constraint,
-                name_type,
-                value_type,
-                members,
-                ..
-            } => {
-                pending.push(constraint);
-                pending.extend(name_type.iter().map(Box::as_ref));
-                pending.push(value_type);
-                push_infer_member_nodes(members, &mut pending);
-            }
-            TypeNodeKind::IndexedAccess { object, index } => {
-                pending.extend([object.as_ref(), index.as_ref()]);
-            }
-            // A nested conditional owns its own inferred parameters.
-            TypeNodeKind::Conditional { .. }
-            | TypeNodeKind::Keyword(_)
-            | TypeNodeKind::Literal(_)
-            | TypeNodeKind::TypeQuery { .. }
-            | TypeNodeKind::Missing => {}
-        }
-    }
-}
-
-fn push_infer_member_nodes<'a>(members: &'a [TypeMember], pending: &mut Vec<&'a TypeNode>) {
-    for member in members {
-        if let TypeMemberKind::Property { ty, .. } = &member.kind {
-            pending.extend(ty);
-            continue;
-        }
-        let Some((_, _, parameters, return_type)) = member.kind.signature() else {
-            continue;
-        };
-        pending.extend(
-            parameters
-                .iter()
-                .filter_map(|parameter| parameter.annotation.as_ref()),
-        );
-        pending.extend(return_type);
     }
 }
 
@@ -923,31 +727,25 @@ fn graph_root_has_cycle(
     edges: &[AliasEdge],
     include: impl Fn(&AliasEdge) -> bool,
 ) -> bool {
-    let mut pending = edges
-        .iter()
-        .filter(|edge| edge.source == root && include(edge))
-        .map(|edge| edge.target)
-        .collect::<Vec<_>>();
-    let mut seen = HashSet::new();
-    while let Some(current) = pending.pop() {
-        if current == root {
-            return true;
-        }
-        if seen.insert(current) {
-            pending.extend(
-                edges
-                    .iter()
-                    .filter(|edge| edge.source == current && include(edge))
-                    .map(|edge| edge.target),
-            );
-        }
-    }
-    false
+    graph_edge_path_exists(root, root, edges, include)
 }
 
 fn graph_path_exists(start: DeclId, target: DeclId, edges: &[AliasEdge]) -> bool {
-    let mut pending = vec![start];
-    let mut seen = HashSet::new();
+    start == target || graph_edge_path_exists(start, target, edges, |_| true)
+}
+
+fn graph_edge_path_exists(
+    start: DeclId,
+    target: DeclId,
+    edges: &[AliasEdge],
+    include: impl Fn(&AliasEdge) -> bool,
+) -> bool {
+    let mut pending = edges
+        .iter()
+        .filter(|edge| edge.source == start && include(edge))
+        .map(|edge| edge.target)
+        .collect::<Vec<_>>();
+    let mut seen = HashSet::from([start]);
     while let Some(current) = pending.pop() {
         if current == target {
             return true;
@@ -956,7 +754,7 @@ fn graph_path_exists(start: DeclId, target: DeclId, edges: &[AliasEdge]) -> bool
             pending.extend(
                 edges
                     .iter()
-                    .filter(|edge| edge.source == current)
+                    .filter(|edge| edge.source == current && include(edge))
                     .map(|edge| edge.target),
             );
         }

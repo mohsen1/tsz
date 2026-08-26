@@ -2,6 +2,7 @@ use crate::diagnostics::Diagnostic;
 use crate::source::{NodeId, SourceText, Span};
 
 mod arrows;
+mod classes;
 mod declarations;
 mod element_access;
 mod functions;
@@ -22,15 +23,15 @@ mod type_parameters;
 use self::{arrows::ParenthesizedArrowToken, modifiers::Modifiers};
 use super::numeric_literal::{ScannedNumericLiteral, ScannedSeparatedNumberLiteral};
 use super::regular_expression::ScannedRegularExpressionLiteral;
-use super::string_literal::{ScannedLineContinuationStringLiteral, ScannedStringLiteral};
+use super::scanner::ScannedIdentifierValue;
+use super::string_literal::{ScannedCookedStringLiteral, ScannedStringLiteral};
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
-    AccessorKind, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
-    CommentTrivia, ExportDeclaration, ExportSpecifier, Expression, ExpressionKind, ImportBinding,
-    ImportDeclaration, InterfaceDeclaration, ParameterModifier, ParserRecoveryKind,
-    PropertyNameKind, SourceSyntaxFact, Statement, StatementKind, Token, TokenKind,
-    TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator, UnmodeledDeclarationHostFact,
-    scan_source,
+    CommentTrivia, ContextualGrammarFact, ContextualGrammarKind, ExportDeclaration,
+    ExportSpecifier, Expression, ExpressionKind, ImportBinding, ImportDeclaration,
+    InterfaceDeclaration, PropertyNameKind, SourceSyntaxFact, Statement, StatementKind, Token,
+    TokenKind, TypeAliasDeclaration, TypeNode, TypeNodeKind, UnaryOperator,
+    UnmodeledDeclarationHostFact, scan_source,
 };
 use operators::{binary_operator, expression_has_recovered_left_edge};
 
@@ -47,62 +48,85 @@ pub fn parse_source(source: &SourceText) -> ParseOutput {
 struct Parser<'a> {
     source: &'a SourceText,
     tokens: Vec<Token>,
+    identifier_values: Vec<ScannedIdentifierValue>,
     index: usize,
     next_node: u32,
     diagnostics: Vec<Diagnostic>,
     template_literals: Vec<ScannedTemplateLiteral>,
     string_literals: Vec<ScannedStringLiteral>,
-    line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
+    cooked_string_literals: Vec<ScannedCookedStringLiteral>,
     regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     numeric_literals: Vec<ScannedNumericLiteral>,
     separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
     numeric_separator_spans: Vec<Span>,
     has_unmodeled_numeric_separator: bool,
-    numeric_parser_diagnostics: Vec<Diagnostic>,
     comments: Vec<CommentTrivia>,
     has_unicode_line_comment_terminator: bool,
-    has_unmodeled_trivia: bool,
     speculating: bool,
     not_parenthesized_arrows: std::collections::BTreeSet<usize>,
     speculative_token_rewrites: Vec<(usize, Token)>,
     type_member_recovery_code: u32,
     statement_nesting_depth: usize,
-    has_unmodeled_top_level_syntax: bool,
+    in_yield_context: bool,
+    in_await_context: bool,
+    arrow_parameter_keyword_context: bool,
+    await_binding_reserved: bool,
+    yield_binding_reserved: bool,
+    class_yield_binding_reserved: bool,
+    pending_stray_statement_closes: usize,
+    pending_stray_statement_closes_after_block: usize,
     parser_recovery_facts: Vec<recovery::PendingParserRecoveryFact>,
     unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
     source_syntax_facts: std::collections::BTreeSet<SourceSyntaxFact>,
+    contextual_grammar_facts: Vec<ContextualGrammarFact>,
 }
 
 impl<'a> Parser<'a> {
     fn new(source: &'a SourceText, scanned: super::ScanOutput) -> Self {
+        let in_await_context = source_unit::source_is_external_module(source, &scanned.tokens);
         Self {
             source,
             tokens: scanned.tokens,
+            identifier_values: scanned.identifier_values,
             index: 0,
             next_node: 0,
             diagnostics: scanned.diagnostics,
             template_literals: scanned.template_literals,
             string_literals: scanned.string_literals,
-            line_continuation_string_literals: scanned.line_continuation_string_literals,
+            cooked_string_literals: scanned.cooked_string_literals,
             regular_expression_literals: scanned.regular_expression_literals,
             numeric_literals: scanned.numeric_literals,
             separated_numeric_literals: scanned.separated_numeric_literals,
             numeric_separator_spans: scanned.numeric_separator_spans,
             has_unmodeled_numeric_separator: scanned.has_unmodeled_numeric_separator,
-            numeric_parser_diagnostics: Vec::new(),
             comments: scanned.comments,
             has_unicode_line_comment_terminator: scanned.has_unicode_line_comment_terminator,
-            has_unmodeled_trivia: scanned.has_unmodeled_trivia,
             speculating: false,
             not_parenthesized_arrows: std::collections::BTreeSet::new(),
             speculative_token_rewrites: Vec::new(),
             type_member_recovery_code: 1128,
             statement_nesting_depth: 0,
-            has_unmodeled_top_level_syntax: false,
+            in_yield_context: false,
+            in_await_context,
+            arrow_parameter_keyword_context: false,
+            await_binding_reserved: false,
+            yield_binding_reserved: false,
+            class_yield_binding_reserved: false,
+            pending_stray_statement_closes: 0,
+            pending_stray_statement_closes_after_block: 0,
             parser_recovery_facts: Vec::new(),
             unmodeled_declaration_hosts: Vec::new(),
             source_syntax_facts: std::collections::BTreeSet::new(),
+            contextual_grammar_facts: Vec::new(),
         }
+    }
+
+    fn record_contextual_grammar(&mut self, span: Span, kind: ContextualGrammarKind) {
+        if self.speculating {
+            return;
+        }
+        self.contextual_grammar_facts
+            .push(ContextualGrammarFact { span, kind });
     }
 
     fn parse_statement(&mut self) -> Statement {
@@ -116,9 +140,6 @@ impl<'a> Parser<'a> {
         let start = self.current().span.start as usize;
         self.observe_regular_expression_in_unsupported_statement();
         if self.starts_import_declaration() {
-            if self.statement_nesting_depth > 0 {
-                self.has_unmodeled_top_level_syntax = true;
-            }
             let kind = StatementKind::Import(self.parse_import_declaration());
             let end = self.previous_end().max(start);
             return Statement {
@@ -128,9 +149,6 @@ impl<'a> Parser<'a> {
             };
         }
         if self.starts_export_declaration() {
-            if self.statement_nesting_depth > 0 {
-                self.has_unmodeled_top_level_syntax = true;
-            }
             let kind = StatementKind::Export(self.parse_export_declaration());
             let end = self.previous_end().max(start);
             return Statement {
@@ -143,6 +161,10 @@ impl<'a> Parser<'a> {
         let modifiers = self.parse_modifiers(start);
         self.observe_statement_modifiers(modifiers);
         let kind = match self.kind() {
+            _ if self.starts_unmodeled_enum_declaration() => {
+                self.parse_unmodeled_enum_declaration();
+                StatementKind::Unknown
+            }
             TokenKind::Let | TokenKind::Const | TokenKind::Var => {
                 StatementKind::Variable(self.parse_variable(modifiers, has_leading_jsdoc))
             }
@@ -151,7 +173,6 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Class => {
                 let declaration = self.parse_class(modifiers);
-                self.observe_class_template_semantics(&declaration);
                 StatementKind::Class(declaration)
             }
             TokenKind::Type if self.starts_type_alias_declaration() => {
@@ -189,6 +210,7 @@ impl<'a> Parser<'a> {
                 StatementKind::Return(expression)
             }
             TokenKind::LeftBrace => StatementKind::Block(self.parse_block().0),
+            _ if self.recover_stray_statement_close() => StatementKind::Unknown,
             TokenKind::Semicolon => {
                 self.bump();
                 StatementKind::Empty
@@ -236,6 +258,7 @@ impl<'a> Parser<'a> {
             let (local, local_span) = self.parse_name();
             bindings.push(ImportBinding {
                 imported: Some("default".to_string()),
+                imported_span: None,
                 local,
                 local_span,
                 type_only,
@@ -262,6 +285,7 @@ impl<'a> Parser<'a> {
             let (local, local_span) = self.parse_name();
             bindings.push(ImportBinding {
                 imported: None,
+                imported_span: None,
                 local,
                 local_span,
                 type_only,
@@ -278,6 +302,7 @@ impl<'a> Parser<'a> {
                 };
                 bindings.push(ImportBinding {
                     imported: Some(imported),
+                    imported_span: Some(imported_span),
                     local,
                     local_span,
                     type_only: specifier_type_only,
@@ -426,232 +451,6 @@ impl<'a> Parser<'a> {
             },
             _ => true,
         }
-    }
-
-    fn parse_class(&mut self, modifiers: Modifiers) -> ClassDeclaration {
-        let diagnostic_count = self.diagnostics.len();
-        let recovery_fact_start = self.parser_recovery_facts.len();
-        self.expect(TokenKind::Class, "'class' expected.", 1005);
-        let (name, name_span) = self.parse_name();
-        let type_parameters = self.parse_type_parameters();
-        let extends = if self.eat(TokenKind::Extends) {
-            Some(self.parse_type())
-        } else {
-            None
-        };
-        let mut implements = Vec::new();
-        if self.eat(TokenKind::Implements) {
-            loop {
-                implements.push(self.parse_type());
-                if !self.eat(TokenKind::Comma) {
-                    break;
-                }
-            }
-        }
-        let has_opening_brace = self.at(TokenKind::LeftBrace);
-        let authored_body_extent = has_opening_brace
-            .then(|| self.balanced_recovery_brace_extent(self.index))
-            .flatten();
-        let opening_brace = self.current().span;
-        self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
-        let mut members = Vec::new();
-        while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
-            if self.eat(TokenKind::Semicolon) {
-                continue;
-            }
-            let before = self.index;
-            if let Some(member) = self.parse_class_member() {
-                members.push(member);
-            }
-            if self.index == before {
-                self.bump();
-            }
-        }
-        let has_closing_brace = self.at(TokenKind::RightBrace);
-        let closing_brace = self.current().span;
-        self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
-        if let Some(extent) = authored_body_extent
-            && self.previous().span.end < extent.end
-        {
-            self.promote_parser_recovery_extent(recovery_fact_start, extent);
-        }
-        let member_syntax_recovery_free = self.diagnostics.len() == diagnostic_count;
-        ClassDeclaration {
-            name,
-            name_span,
-            type_parameters,
-            extends,
-            implements,
-            members,
-            body_span: (has_opening_brace && has_closing_brace)
-                .then(|| opening_brace.merge(closing_brace)),
-            exported: modifiers.exported,
-            default_export: modifiers.default_export,
-            declared: modifiers.declared,
-            abstract_class: modifiers.abstract_declaration,
-            member_syntax_recovery_free,
-        }
-    }
-
-    fn parse_class_member(&mut self) -> Option<ClassMember> {
-        let diagnostic_count = self.diagnostics.len();
-        let start = self.current().span;
-        let mut modifiers = ClassMemberModifiers::default();
-        loop {
-            match self.kind() {
-                TokenKind::Public => modifiers.observe(ParameterModifier::Public),
-                TokenKind::Protected => modifiers.observe(ParameterModifier::Protected),
-                TokenKind::Private => modifiers.observe(ParameterModifier::Private),
-                TokenKind::Readonly => modifiers.observe(ParameterModifier::Readonly),
-                TokenKind::Static => modifiers.observe(ParameterModifier::Static),
-                TokenKind::Abstract => modifiers.observe(ParameterModifier::Abstract),
-                TokenKind::Declare => modifiers.observe(ParameterModifier::Declare),
-                TokenKind::Async => modifiers.observe(ParameterModifier::Async),
-                TokenKind::Override => modifiers.observe(ParameterModifier::Override),
-                TokenKind::Accessor => modifiers.observe(ParameterModifier::Accessor),
-                _ => break,
-            }
-            self.bump();
-        }
-        if self.at(TokenKind::Constructor) {
-            let name_span = self.bump().span;
-            let parameters = self.parse_parameters();
-            let has_body = self.at(TokenKind::LeftBrace);
-            let (body, body_span) = if has_body {
-                self.parse_block()
-            } else {
-                self.eat(TokenKind::Semicolon);
-                (Vec::new(), None)
-            };
-            return Some(ClassMember {
-                id: self.alloc_node(),
-                name: "constructor".to_string(),
-                name_span,
-                name_kind: PropertyNameKind::Identifier,
-                span: start.merge(self.previous().span),
-                overload_completion_supported: !modifiers.unsupported_for_overload_completion
-                    && self.diagnostics.len() == diagnostic_count,
-                emit_products_supported: modifiers.constructor_products_supported()
-                    && self.diagnostics.len() == diagnostic_count,
-                modifiers,
-                kind: ClassMemberKind::Constructor {
-                    parameters,
-                    body,
-                    has_body,
-                    body_span,
-                },
-            });
-        }
-        let generator_span = self.at(TokenKind::Star).then(|| self.bump().span);
-        let generator_recovery = ParserRecoveryKind::GeneratorFunctionLike;
-        let accessor = match self.kind() {
-            TokenKind::Get if generator_span.is_none() && self.class_member_starts_accessor() => {
-                self.bump();
-                Some(AccessorKind::Get)
-            }
-            TokenKind::Set if generator_span.is_none() && self.class_member_starts_accessor() => {
-                self.bump();
-                Some(AccessorKind::Set)
-            }
-            _ => None,
-        };
-        let (name, name_span, name_kind) = self.parse_property_name();
-        let (optional, definite) = (self.eat(TokenKind::Question), self.eat(TokenKind::Bang));
-        let type_parameters = self.parse_type_parameters();
-        if self.at(TokenKind::LeftParen) || accessor.is_some() {
-            let parameters = self.parse_parameters();
-            let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
-            let has_body = self.at(TokenKind::LeftBrace);
-            let generator_body_extent = generator_span.filter(|_| has_body).and_then(|generator| {
-                self.balanced_recovery_brace_extent(self.index)
-                    .map(|body| generator.merge(body))
-            });
-            if let (Some(generator), Some(extent)) = (generator_span, generator_body_extent) {
-                self.retain_parser_recovery(generator_recovery, generator, extent);
-            }
-            let (body, body_span) = if has_body {
-                self.parse_block()
-            } else {
-                self.eat(TokenKind::Semicolon);
-                (Vec::new(), None)
-            };
-            let member = ClassMember {
-                id: self.alloc_node(),
-                name,
-                name_span,
-                name_kind,
-                span: start.merge(self.previous().span),
-                overload_completion_supported: matches!(name_kind, PropertyNameKind::Identifier)
-                    && generator_span.is_none()
-                    && !optional
-                    && !definite
-                    && self.diagnostics.len() == diagnostic_count,
-                emit_products_supported: modifiers.method_products_supported()
-                    && name_kind != PropertyNameKind::Unsupported
-                    && generator_span.is_none()
-                    && !optional
-                    && !definite
-                    && self.diagnostics.len() == diagnostic_count,
-                modifiers,
-                kind: ClassMemberKind::Method {
-                    type_parameters,
-                    parameters,
-                    return_type,
-                    body,
-                    has_body,
-                    body_span,
-                    accessor,
-                },
-            };
-            if let Some(generator_span) = generator_span
-                && generator_body_extent.is_none()
-            {
-                self.retain_parser_recovery(generator_recovery, generator_span, member.span);
-            }
-            if name_kind == PropertyNameKind::Computed {
-                self.record_parser_recovery_for_analysis(
-                    ParserRecoveryKind::ComputedPropertyName,
-                    name_span,
-                    member.span,
-                );
-            }
-            return Some(member);
-        }
-        let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
-        let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
-        self.eat(TokenKind::Semicolon);
-        let member = ClassMember {
-            id: self.alloc_node(),
-            name,
-            name_span,
-            name_kind,
-            span: start.merge(self.previous().span),
-            overload_completion_supported: matches!(name_kind, PropertyNameKind::Identifier)
-                && generator_span.is_none()
-                && self.diagnostics.len() == diagnostic_count,
-            emit_products_supported: modifiers.property_products_supported()
-                && name_kind != PropertyNameKind::Unsupported
-                && generator_span.is_none()
-                && self.diagnostics.len() == diagnostic_count,
-            modifiers,
-            kind: ClassMemberKind::Property {
-                annotation,
-                initializer,
-                optional,
-                definite,
-            },
-        };
-        if let Some(generator_span) = generator_span {
-            self.retain_parser_recovery(generator_recovery, generator_span, member.span);
-        }
-        if name_kind == PropertyNameKind::Computed {
-            self.record_parser_recovery_for_analysis(
-                ParserRecoveryKind::ComputedPropertyName,
-                name_span,
-                member.span,
-            );
-        }
-        Some(member)
     }
 
     fn parse_type_alias(&mut self, exported: bool) -> TypeAliasDeclaration {
@@ -910,7 +709,14 @@ impl<'a> Parser<'a> {
                     },
                 }
             }
-            _ if token.kind == TokenKind::This || token.kind.is_identifier() => {
+            TokenKind::This => {
+                self.bump();
+                TypeNode {
+                    span: token.span,
+                    kind: TypeNodeKind::This,
+                }
+            }
+            _ if token.kind.is_identifier() => {
                 let (name, name_span, _) = self.parse_entity_name();
                 let has_arguments = self.at(TokenKind::LessThan);
                 let arguments = self.parse_type_arguments();
@@ -1041,8 +847,13 @@ impl<'a> Parser<'a> {
     fn parse_assignment_expression(&mut self) -> Expression {
         let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let left = self.parse_binary_expression_with_shift_assignment_recovery();
-        if self.eat(TokenKind::Equals) {
-            self.observe_template_expression_semantics(&left);
+        let operator = match self.kind() {
+            TokenKind::Equals => Some(crate::syntax::AssignmentOperator::Assign),
+            TokenKind::PlusEquals => Some(crate::syntax::AssignmentOperator::AddAssign),
+            _ => None,
+        };
+        if let Some(operator) = operator {
+            let operator_span = self.bump().span;
             let right = self.parse_assignment_expression();
             let span = left.span.merge(right.span);
             Expression {
@@ -1050,6 +861,8 @@ impl<'a> Parser<'a> {
                 span,
                 kind: ExpressionKind::Assignment {
                     left: Box::new(left),
+                    operator,
+                    operator_span,
                     right: Box::new(right),
                     has_leading_jsdoc,
                 },
@@ -1080,7 +893,6 @@ impl<'a> Parser<'a> {
                     right: Box::new(right),
                 },
             };
-            self.observe_template_expression_semantics(&expression);
         }
         expression
     }
@@ -1098,7 +910,11 @@ impl<'a> Parser<'a> {
             TokenKind::TypeOf => Some(UnaryOperator::TypeOf),
             TokenKind::Void => Some(UnaryOperator::Void),
             TokenKind::Delete => Some(UnaryOperator::Delete),
-            TokenKind::Await => Some(UnaryOperator::Await),
+            TokenKind::Await
+                if self.in_await_context || self.identifier_value(token.span).is_none() =>
+            {
+                Some(UnaryOperator::Await)
+            }
             _ => None,
         };
         let Some(operator) = operator else {
@@ -1106,16 +922,14 @@ impl<'a> Parser<'a> {
         };
         self.bump();
         let operand = self.parse_unary_expression();
-        let expression = Expression {
+        Expression {
             id: self.alloc_node(),
             span: token.span.merge(operand.span),
             kind: ExpressionKind::Unary {
                 operator,
                 operand: Box::new(operand),
             },
-        };
-        self.observe_template_expression_semantics(&expression);
-        expression
+        }
     }
 
     fn parse_postfix_expression(&mut self) -> Expression {
@@ -1189,17 +1003,20 @@ impl<'a> Parser<'a> {
                 expression = self.parse_member_access(expression);
             } else if self.eat(TokenKind::As) {
                 let ty = self.parse_type();
-                let span = expression.span.merge(ty.span);
                 expression = Expression {
                     id: self.alloc_node(),
-                    span,
+                    span: expression.span.merge(ty.span),
                     kind: ExpressionKind::As {
                         expression: Box::new(expression),
                         ty,
                     },
                 };
-                self.observe_template_expression_semantics(&expression);
-            } else if self.consume_non_null_postfix() {
+            } else if let Some(bang) = self.consume_non_null_postfix() {
+                expression = Expression {
+                    id: self.alloc_node(),
+                    span: expression.span.merge(bang),
+                    kind: ExpressionKind::NonNull(Box::new(expression)),
+                };
             } else {
                 self.observe_unmodeled_postfix_expression(expression.span);
                 break;
@@ -1211,7 +1028,31 @@ impl<'a> Parser<'a> {
     fn parse_name(&mut self) -> (String, Span) {
         let token = *self.current();
         if token.kind.is_identifier() {
-            self.bump();
+            if self.arrow_parameter_keyword_context
+                && (token.kind == TokenKind::Await && self.in_await_context
+                    || token.kind == TokenKind::Yield && self.in_yield_context)
+            {
+                self.bump();
+                return (self.text(token.span).to_string(), token.span);
+            }
+            if token.kind == TokenKind::Await && self.await_binding_reserved {
+                self.record_contextual_grammar(token.span, ContextualGrammarKind::AwaitBinding);
+            } else if token.kind == TokenKind::Yield && self.yield_binding_reserved {
+                self.diagnose_strict_yield_identifier(token);
+            }
+            self.bump_identifier();
+            (self.text(token.span).to_string(), token.span)
+        } else if token.kind.is_identifier_name() && self.identifier_value(token.span).is_some() {
+            let authored = self.source.slice(token.span);
+            self.diagnostics.push(Diagnostic::at(
+                self.source,
+                token.span,
+                format!(
+                    "Identifier expected. '{authored}' is a reserved word that cannot be used here."
+                ),
+                1359,
+            ));
+            self.bump_identifier();
             (self.text(token.span).to_string(), token.span)
         } else {
             self.error_current("Identifier expected.", 1003);
@@ -1221,6 +1062,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_entity_name(&mut self) -> (String, Span, Vec<Span>) {
+        let first = *self.current();
+        self.diagnose_class_strict_yield(first);
         let (mut name, mut span) = self.parse_identifier_name();
         let mut segment_spans = vec![span];
         while self.eat(TokenKind::Dot) {
@@ -1233,10 +1076,25 @@ impl<'a> Parser<'a> {
         (name, span, segment_spans)
     }
 
+    fn diagnose_class_strict_yield(&mut self, token: Token) -> bool {
+        if token.kind != TokenKind::Yield || !self.class_yield_binding_reserved {
+            return false;
+        }
+        self.record_contextual_grammar(token.span, ContextualGrammarKind::ClassStrictYieldBinding);
+        true
+    }
+
+    fn diagnose_strict_yield_identifier(&mut self, token: Token) {
+        if self.diagnose_class_strict_yield(token) {
+            return;
+        }
+        self.record_contextual_grammar(token.span, ContextualGrammarKind::StrictYieldBinding);
+    }
+
     fn parse_identifier_name(&mut self) -> (String, Span) {
         let token = *self.current();
         if token.kind.is_identifier_name() {
-            self.bump();
+            self.bump_identifier();
             (self.text(token.span).to_string(), token.span)
         } else {
             self.error_current("Identifier expected.", 1003);
@@ -1274,7 +1132,7 @@ impl<'a> Parser<'a> {
                 PropertyNameKind::Computed,
             ),
             _ if token.kind.is_identifier_name() => {
-                self.bump();
+                self.bump_identifier();
                 (
                     self.text(token.span).to_string(),
                     token.span,
@@ -1285,24 +1143,6 @@ impl<'a> Parser<'a> {
                 let (name, span) = self.parse_name();
                 (name, span, PropertyNameKind::Unsupported)
             }
-        }
-    }
-
-    fn error_current(&mut self, message: &str, code: u32) {
-        self.diagnostics.push(Diagnostic::at(
-            self.source,
-            self.current().span,
-            message.to_string(),
-            code,
-        ));
-    }
-
-    fn expect(&mut self, kind: TokenKind, message: &str, code: u32) -> bool {
-        if self.eat(kind) {
-            true
-        } else {
-            self.error_current(message, code);
-            false
         }
     }
 
@@ -1393,10 +1233,36 @@ impl<'a> Parser<'a> {
     }
 
     fn text(&self, span: Span) -> &str {
-        self.source.slice(span)
+        self.identifier_value(span).map_or_else(
+            || self.source.slice(span),
+            |identifier| identifier.cooked.as_str(),
+        )
+    }
+
+    fn identifier_value(&self, span: Span) -> Option<&ScannedIdentifierValue> {
+        self.identifier_values
+            .binary_search_by_key(&span.start, |identifier| identifier.span.start)
+            .ok()
+            .and_then(|index| {
+                let identifier = &self.identifier_values[index];
+                (identifier.span == span).then_some(identifier)
+            })
     }
 
     fn bump(&mut self) -> Token {
+        let token = *self.current();
+        if token.kind != TokenKind::Identifier
+            && token.kind.is_identifier_name()
+            && self.identifier_value(token.span).is_some()
+        {
+            self.error_current("Keywords cannot contain escape characters.", 1260);
+        }
+        self.bump_identifier()
+    }
+
+    /// Identifier nodes advance without TS1260; escaped keywords are illegal
+    /// only when the surrounding grammar consumes them as keywords.
+    fn bump_identifier(&mut self) -> Token {
         let token = *self.current();
         if token.kind != TokenKind::EndOfFile {
             self.index += 1;

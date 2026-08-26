@@ -1,175 +1,15 @@
 use std::sync::Arc;
 
-use tsz::diagnostics::{DiagnosticCategory, RelatedInformation};
+use tsz::diagnostics::DiagnosticCategory;
 use tsz::service::LanguageService;
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
-fn roots() -> Vec<SourceInput> {
-    vec![
-        SourceInput::new("gap.ts", Arc::<str>::from("const local = `plain`;")),
-        SourceInput::new(
-            "sibling.ts",
-            Arc::<str>::from("const sibling: string = missingOwned;"),
-        ),
-    ]
-}
-
-fn roots_with_cross_file_demand() -> Vec<SourceInput> {
-    vec![
-        SourceInput::new(
-            "gap.ts",
-            Arc::<str>::from("const shared: string = 1; const local = `plain`;"),
-        ),
-        SourceInput::new(
-            "sibling.ts",
-            Arc::<str>::from("const copy: string = shared; const sibling: string = missingOwned;"),
-        ),
-    ]
-}
-
-fn roots_with_partially_nonclaimed_global_group() -> Vec<SourceInput> {
-    vec![
-        SourceInput::new(
-            "declared.ts",
-            Arc::<str>::from("function shared(value: string): string;"),
-        ),
-        SourceInput::new(
-            "gap.ts",
-            Arc::<str>::from("function shared(value: string) { return `plain`; }"),
-        ),
-        SourceInput::new(
-            "consumer.ts",
-            Arc::<str>::from("const value = shared(1); const kept: MissingOwned = 1;"),
-        ),
-    ]
-}
-
-type DiagnosticFingerprint = (
-    String,
-    u32,
-    u32,
-    u32,
-    DiagnosticCategory,
-    String,
-    Vec<(String, u32, u32, u32, String, u32)>,
-);
-
-fn related_fingerprint(
-    related: &[RelatedInformation],
-) -> Vec<(String, u32, u32, u32, String, u32)> {
-    related
-        .iter()
-        .map(|related| {
-            (
-                related.file.clone(),
-                related.code,
-                related.start,
-                related.length,
-                related.message_text.clone(),
-                related.depth,
-            )
-        })
-        .collect()
-}
-
-fn diagnostic_fingerprint(output: &tsz::CompileOutput) -> Vec<DiagnosticFingerprint> {
-    output
-        .diagnostics
-        .iter()
-        .map(|diagnostic| {
-            (
-                diagnostic.file.clone(),
-                diagnostic.code,
-                diagnostic.start,
-                diagnostic.length,
-                diagnostic.category,
-                diagnostic.message_text.clone(),
-                related_fingerprint(&diagnostic.related_information),
-            )
-        })
-        .collect()
-}
-
-fn semantic_fingerprint(
-    result: &tsz::service::SemanticDiagnosticResult,
-) -> Vec<DiagnosticFingerprint> {
-    result
-        .diagnostics
-        .iter()
-        .map(|diagnostic| {
-            (
-                diagnostic.file.clone(),
-                diagnostic.code,
-                diagnostic.start,
-                diagnostic.length,
-                diagnostic.category,
-                diagnostic.message_text.clone(),
-                related_fingerprint(&diagnostic.related_information),
-            )
-        })
-        .collect()
-}
-
-fn semantic_options() -> CompilerOptions {
-    CompilerOptions {
-        target: "es2015".to_string(),
-        no_emit: true,
-        ..CompilerOptions::default()
-    }
-}
-
-fn assert_named_sibling_survives(source: &str) {
-    let options = CompilerOptions::default();
-    let output = Compiler::new().compile(
-        vec![SourceInput::new(
-            "mixed.ts",
-            Arc::<str>::from(source.to_string()),
-        )],
-        &options,
-    );
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert!(
-        output.stats.types > 0,
-        "the claimed sibling must be checked"
-    );
-    let missing_start = source.find("MissingOwned").expect("missing name") as u32;
-    let missing = output
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code == 2304)
-        .collect::<Vec<_>>();
-    assert_eq!(missing.len(), 1, "{:#?}", output.diagnostics);
-    let missing = missing[0];
-    assert_eq!(missing.start, missing_start);
-    assert_eq!(missing.file, "mixed.ts");
-    assert_eq!(missing.length, "MissingOwned".len() as u32);
-    assert_eq!(missing.category, DiagnosticCategory::Error);
-    assert_eq!(missing.message_text, "Cannot find name 'MissingOwned'.");
-    assert!(missing.related_information.is_empty());
-
-    let no_check = Compiler::new().compile(
-        vec![SourceInput::new(
-            "mixed.ts",
-            Arc::<str>::from(source.to_string()),
-        )],
-        &CompilerOptions {
-            no_check: true,
-            ..options
-        },
-    );
-    assert_eq!(no_check.semantic_completion, SemanticCompletion::Deferred);
-    assert_eq!(no_check.stats.types, 0);
-    assert!(
-        no_check
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != 2304)
-    );
-}
+#[path = "capability_analysis_parts/support.rs"]
+mod support;
+use support::*;
 
 #[test]
-fn file_local_nonclaim_preserves_unrelated_sibling_diagnostic() {
+fn plain_template_file_is_complete_and_preserves_unrelated_sibling_diagnostic() {
     let compiler = Compiler::new();
     let mut reversed = roots();
     reversed.reverse();
@@ -177,9 +17,26 @@ fn file_local_nonclaim_preserves_unrelated_sibling_diagnostic() {
     let forward = compiler.compile(roots(), &CompilerOptions::default());
     let reverse = compiler.compile(reversed, &CompilerOptions::default());
 
-    assert_eq!(forward.semantic_completion, SemanticCompletion::Deferred);
-    assert_eq!(forward.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert!(forward.emitted_files.is_empty());
+    assert_eq!(forward.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        forward.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsGenerated
+    );
+    assert_eq!(
+        emitted_fingerprint(&forward),
+        vec![
+            (
+                "gap.js".to_string(),
+                "\"use strict\";\nconst local = `plain`;\n".to_string(),
+                false,
+            ),
+            (
+                "sibling.js".to_string(),
+                "\"use strict\";\nconst sibling = missingOwned;\n".to_string(),
+                false,
+            ),
+        ]
+    );
     assert!(forward.stats.types > 0, "the owned sibling must be checked");
     assert_eq!(
         diagnostic_fingerprint(&forward),
@@ -201,7 +58,7 @@ fn file_local_nonclaim_preserves_unrelated_sibling_diagnostic() {
 }
 
 #[test]
-fn no_check_disables_semantics_without_changing_the_scoped_nonclaim() {
+fn no_check_keeps_owned_plain_template_program_complete() {
     let output = Compiler::new().compile(
         roots(),
         &CompilerOptions {
@@ -212,9 +69,31 @@ fn no_check_disables_semantics_without_changing_the_scoped_nonclaim() {
 
     assert!(output.diagnostics.is_empty());
     assert_eq!(output.stats.types, 0);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert!(output.emitted_files.is_empty());
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(output.exit_status, CompileExitStatus::Success);
+    assert_eq!(
+        output
+            .emitted_files
+            .iter()
+            .map(|file| (
+                file.path.to_string_lossy().into_owned(),
+                file.text.clone(),
+                file.declaration,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "gap.js".to_string(),
+                "\"use strict\";\nconst local = `plain`;\n".to_string(),
+                false,
+            ),
+            (
+                "sibling.js".to_string(),
+                "\"use strict\";\nconst sibling = missingOwned;\n".to_string(),
+                false,
+            ),
+        ]
+    );
 }
 
 #[test]
@@ -291,16 +170,34 @@ fn missing_essential_library_universe_keeps_aggregate_diagnostics_complete() {
 }
 
 #[test]
-fn cross_file_demands_do_not_consume_a_nonclaimed_declaration() {
+fn plain_template_cross_file_demands_are_complete_and_keep_exact_diagnostics() {
     let compiler = Compiler::new();
     let mut reversed = roots_with_cross_file_demand();
     reversed.reverse();
 
     for roots in [roots_with_cross_file_demand(), reversed] {
         let output = compiler.compile(roots, &CompilerOptions::default());
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-        assert!(output.emitted_files.is_empty());
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsGenerated
+        );
+        assert_eq!(
+            emitted_fingerprint(&output),
+            vec![
+                (
+                    "gap.js".to_string(),
+                    "\"use strict\";\nconst shared = 1;\nconst local = `plain`;\n".to_string(),
+                    false,
+                ),
+                (
+                    "sibling.js".to_string(),
+                    "\"use strict\";\nconst copy = shared;\nconst sibling = missingOwned;\n"
+                        .to_string(),
+                    false,
+                ),
+            ]
+        );
         assert!(output.stats.types > 0, "the sibling must still be checked");
         assert_eq!(
             diagnostic_fingerprint(&output),
@@ -467,7 +364,7 @@ fn flow_region_keeps_cross_file_binding_identity_but_defers_its_value() {
 }
 
 #[test]
-fn global_groups_defer_as_a_unit_without_changing_root_order_identity() {
+fn global_groups_publish_independent_adjacency_without_selecting_a_nonclaimed_peer() {
     let compiler = Compiler::new();
     let mut reversed = roots_with_partially_nonclaimed_global_group();
     reversed.reverse();
@@ -496,15 +393,27 @@ fn global_groups_defer_as_a_unit_without_changing_root_order_identity() {
         } else {
             assert_eq!(
                 current,
-                vec![(
-                    "consumer.ts".to_string(),
-                    2304,
-                    37,
-                    12,
-                    DiagnosticCategory::Error,
-                    "Cannot find name 'MissingOwned'.".to_string(),
-                    Vec::new(),
-                )]
+                vec![
+                    (
+                        "consumer.ts".to_string(),
+                        2304,
+                        37,
+                        12,
+                        DiagnosticCategory::Error,
+                        "Cannot find name 'MissingOwned'.".to_string(),
+                        Vec::new(),
+                    ),
+                    (
+                        "declared.ts".to_string(),
+                        2391,
+                        9,
+                        6,
+                        DiagnosticCategory::Error,
+                        "Function implementation is missing or not immediately following the declaration."
+                            .to_string(),
+                        Vec::new(),
+                    ),
+                ]
             );
             fingerprints = Some(current);
         }
@@ -512,7 +421,7 @@ fn global_groups_defer_as_a_unit_without_changing_root_order_identity() {
 }
 
 #[test]
-fn statement_region_nonclaim_preserves_a_same_file_sibling() {
+fn plain_template_statement_is_complete_and_preserves_a_same_file_sibling() {
     let source = "const local = `plain`; const sibling: string = missingOwned;";
     for text in [
         source.to_string(),
@@ -522,7 +431,7 @@ fn statement_region_nonclaim_preserves_a_same_file_sibling() {
             vec![SourceInput::new("mixed.ts", Arc::<str>::from(text))],
             &CompilerOptions::default(),
         );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
         let diagnostic = output
             .diagnostics
             .iter()
@@ -905,7 +814,7 @@ fn incomplete_element_access_switch_defers_exhaustiveness_relation_only() {
 }
 
 #[test]
-fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
+fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_siblings() {
     let mut service = LanguageService::new(CompilerOptions::default());
     service.open("gap.ts", Arc::<str>::from("const local = `plain`;"));
     service.open(
@@ -913,7 +822,10 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
         Arc::<str>::from("const sibling: string = missingOwned;"),
     );
 
-    assert!(service.quick_info("gap.ts", 7).is_none());
+    let gap = service
+        .quick_info("gap.ts", 7)
+        .expect("plain template quick info is definitive");
+    assert_eq!(gap.display, "const local: \"plain\"");
     let sibling = service
         .quick_info("sibling.ts", 7)
         .expect("unrelated sibling quick info remains definitive");
@@ -936,7 +848,7 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
     let mut completion_service = LanguageService::new(CompilerOptions::default());
     completion_service.open(
         "deferred.ts",
-        Arc::<str>::from("let direct:{value:keyof number};"),
+        Arc::<str>::from("let direct:{value:number[string]};"),
     );
     completion_service.open(
         "safe.ts",
@@ -968,7 +880,13 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
     mixed_service.open("mixed.ts", Arc::<str>::from(mixed));
     let local_offset = mixed.find("local").expect("local") as u32;
     let sibling_offset = mixed.find("sibling").expect("sibling") as u32;
-    assert!(mixed_service.quick_info("mixed.ts", local_offset).is_none());
+    assert_eq!(
+        mixed_service
+            .quick_info("mixed.ts", local_offset)
+            .expect("plain template quick info")
+            .display,
+        "const local: \"plain\""
+    );
     assert_eq!(
         mixed_service
             .quick_info("mixed.ts", sibling_offset)
@@ -979,7 +897,7 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
     assert!(
         mixed_service
             .definition_and_bound_span("mixed.ts", local_offset)
-            .is_none()
+            .is_some()
     );
     assert!(
         mixed_service
@@ -987,7 +905,7 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
             .is_some()
     );
     assert!(
-        mixed_service
+        !mixed_service
             .references("mixed.ts", local_offset)
             .is_empty()
     );
@@ -997,7 +915,7 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
             .is_empty()
     );
     assert!(
-        mixed_service
+        !mixed_service
             .document_highlights("mixed.ts", local_offset, &["mixed.ts".to_string()])
             .is_empty()
     );
@@ -1007,7 +925,7 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
             .is_empty()
     );
     assert!(
-        !mixed_service
+        mixed_service
             .rename("mixed.ts", local_offset)
             .info
             .can_rename
@@ -1089,8 +1007,8 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
     assert!(
         declaration_scope_service
             .definition_and_bound_span("declaration.ts", use_gap)
-            .is_none(),
-        "a claimed query cannot publish a definition owned by an unclaimed node"
+            .is_some(),
+        "a plain template declaration publishes its owned definition"
     );
 
     let module_group = concat!(
@@ -1104,11 +1022,11 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
     assert!(
         module_group_service
             .definition_and_bound_span("module.ts", signature)
-            .is_none(),
-        "module-local binder groups inherit a peer nonclaim before navigation"
+            .is_some(),
+        "a modeled implementation keeps module-local binder navigation claimed"
     );
     assert!(
-        !module_group_service
+        module_group_service
             .rename("module.ts", signature)
             .info
             .can_rename
@@ -1116,7 +1034,7 @@ fn quick_info_uses_the_compiled_file_claim_without_poisoning_its_sibling() {
 }
 
 #[test]
-fn service_completion_attributes_nonclaimed_cross_file_demands_to_the_consumer() {
+fn plain_template_service_completion_is_complete_across_file_orders() {
     for (gap_path, consumer_path) in [("a-gap.ts", "z-consumer.ts"), ("z-gap.ts", "a-consumer.ts")]
     {
         let mut service = LanguageService::new(CompilerOptions::default());
@@ -1134,11 +1052,11 @@ fn service_completion_attributes_nonclaimed_cross_file_demands_to_the_consumer()
         );
 
         let gap = service.semantic_diagnostics(gap_path);
-        assert_eq!(gap.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(gap.semantic_completion, SemanticCompletion::Complete);
         assert!(gap.diagnostics.is_empty());
 
         let consumer = service.semantic_diagnostics(consumer_path);
-        assert_eq!(consumer.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(consumer.semantic_completion, SemanticCompletion::Complete);
         assert!(consumer.diagnostics.is_empty());
 
         let safe = service.semantic_diagnostics("m-safe.ts");
@@ -1805,10 +1723,20 @@ fn opaque_namespace_body_is_closed_without_poisoning_a_following_sibling() {
 }
 
 #[test]
-fn assertion_declarator_tail_withholds_only_its_file_emit_products() {
-    for affected in [
-        "export const x = value as T, y = 1;",
-        "export const renamed = <Renamed>value, changed = 1;",
+fn assertion_declarator_lists_emit_the_authored_assertion_type() {
+    for (affected, expected_js, expected_declaration, expected_completion) in [
+        (
+            "export const x = value as T, y = 1;",
+            "export const x = value, y = 1;\n",
+            "export declare const x: T, y = 1;\n",
+            SemanticCompletion::Complete,
+        ),
+        (
+            "export const renamed = <Renamed>value, changed = 1;",
+            "export const renamed = value, changed = 1;\n",
+            "export declare const renamed: Renamed, changed = 1;\n",
+            SemanticCompletion::Deferred,
+        ),
     ] {
         let output = Compiler::new().compile(
             vec![
@@ -1829,10 +1757,38 @@ fn assertion_declarator_tail_withholds_only_its_file_emit_products() {
             .map(|file| file.path.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         paths.sort();
-        assert_eq!(paths, ["stable.d.ts", "stable.js"], "{affected}");
+        assert_eq!(
+            paths,
+            ["affected.d.ts", "affected.js", "stable.d.ts", "stable.js"],
+            "{affected}",
+        );
+        let emitted = |path: &str| {
+            output
+                .emitted_files
+                .iter()
+                .find(|file| file.path.to_str() == Some(path))
+                .map(|file| file.text.as_str())
+        };
+        assert_eq!(emitted("affected.js"), Some(expected_js), "{affected}");
+        assert_eq!(
+            emitted("affected.d.ts"),
+            Some(expected_declaration),
+            "{affected}",
+        );
         assert!(output.diagnostics.is_empty(), "{affected}: {output:#?}");
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert_eq!(
+            output.semantic_completion, expected_completion,
+            "{affected}"
+        );
+        assert_eq!(
+            output.exit_status,
+            if expected_completion.is_complete() {
+                CompileExitStatus::Success
+            } else {
+                CompileExitStatus::SemanticIncomplete
+            },
+            "{affected}",
+        );
     }
 
     let source = concat!(

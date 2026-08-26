@@ -7,6 +7,9 @@ use tsz::syntax::{
 };
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
+#[path = "angle_assertion_products.rs"]
+mod angle_assertion_products;
+
 fn compile(source: &str, no_emit: bool, no_check: bool) -> tsz::CompileOutput {
     compile_with_comments(source, no_emit, no_check, false)
 }
@@ -66,7 +69,7 @@ fn variable_initializer(parsed: &tsz::syntax::ParseOutput) -> &Expression {
     else {
         panic!("expected a variable declaration");
     };
-    declaration
+    declaration.declarators[0]
         .initializer
         .as_ref()
         .expect("expected a variable initializer")
@@ -532,7 +535,7 @@ fn void_aliases_and_unions_are_omittable_but_absorbing_unions_are_not() {
 }
 
 #[test]
-fn absorbing_aliases_decide_arity_on_both_sides_of_a_deferred_member() {
+fn absorbing_aliases_decide_arity_around_a_proven_constrained_reference() {
     let source = concat!(
         "type Hard<Item extends string> = Item;\n",
         "type FirstAbsorber = any;\n",
@@ -564,7 +567,7 @@ fn absorbing_aliases_decide_arity_on_both_sides_of_a_deferred_member() {
             ),
         ]
     );
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
 }
 
 #[test]
@@ -858,7 +861,8 @@ fn missing_function_body_does_not_consume_the_following_statement() {
     );
     assert!(matches!(
         &parsed.unit.statements[1].kind,
-        StatementKind::Variable(declaration) if declaration.name == "sibling"
+        StatementKind::Variable(statement)
+            if statement.declarators.iter().any(|declaration| declaration.name == "sibling")
     ));
 }
 
@@ -1568,24 +1572,6 @@ fn rejected_generic_arrow_prefix_withholds_only_the_affected_file_products() {
     assert_eq!(output.emitted_files.len(), 2, "{:#?}", output.emitted_files);
     assert!(output.emitted_files.iter().any(|file| !file.declaration));
     assert!(output.emitted_files.iter().any(|file| file.declaration));
-
-    let assertion = compile("const value = <Cedar>(renamed);", false, true);
-    assert_eq!(assertion.semantic_completion, SemanticCompletion::Deferred);
-    assert!(assertion.emitted_files.is_empty(), "{assertion:#?}");
-}
-
-#[test]
-fn angle_assertion_type_names_remain_typed_nonclaims() {
-    for source in [
-        "type Cedar = number; const renamed = 0; const value = <Cedar>renamed;",
-        "const Cedar = 1; const renamed = 0; const value = <Cedar>renamed;",
-        "const renamed = 0; const value = <MissingType>renamed;",
-    ] {
-        let output = compile(source, true, false);
-        assert!(output.diagnostics.is_empty(), "{source}: {output:#?}");
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert!(output.emitted_files.is_empty(), "{source}: {output:#?}");
-    }
 }
 
 #[test]
@@ -1910,9 +1896,11 @@ fn negative_parenthesized_arrow_lookahead_is_memoized_without_hiding_nested_arro
     assert!(parsed.unit.statements.iter().any(|statement| {
         matches!(
             &statement.kind,
-            StatementKind::Variable(declaration)
-                if declaration.initializer.as_ref().is_some_and(|expression| {
-                    matches!(expression.kind, ExpressionKind::FunctionLike(_))
+            StatementKind::Variable(statement)
+                if statement.declarators.iter().any(|declaration| {
+                    declaration.initializer.as_ref().is_some_and(|expression| {
+                        matches!(expression.kind, ExpressionKind::FunctionLike(_))
+                    })
                 })
         )
     }));

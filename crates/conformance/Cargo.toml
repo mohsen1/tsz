@@ -49,4 +49,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Temporary files for compilation
 tempfile = "3"
-libc = "0.2.183"

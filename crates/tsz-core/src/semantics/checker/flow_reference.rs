@@ -159,6 +159,9 @@ impl Checker<'_> {
         depth: usize,
     ) -> Completion<TypeId> {
         let declared = completed!(self.force_operand(declared, depth));
+        if let FlowAssignmentSource::LogicalOrConstruct(references) = &source {
+            return self.flow_logical_or_construct(file, *references, declared, depth + 1);
+        }
         if !matches!(self.store.kind(declared), TypeKind::Union(_)) {
             return Completion::Complete(declared);
         }
@@ -169,11 +172,8 @@ impl Checker<'_> {
             return Completion::Complete(self.store.union([left, right], UnionPolicy::Canonical));
         }
         let (source, alternate) = match source {
-            FlowAssignmentSource::Reference {
-                expression,
-                declaration,
-            } => (
-                completed!(self.flow_source(file, (expression, declaration), depth + 1)),
+            FlowAssignmentSource::Reference(reference) => (
+                completed!(self.flow_source(file, reference, depth + 1)),
                 None,
             ),
             FlowAssignmentSource::Literal(literal) => {
@@ -197,7 +197,9 @@ impl Checker<'_> {
                 ));
                 (source, None)
             }
-            FlowAssignmentSource::Join(_) => return Completion::Deferred,
+            FlowAssignmentSource::LogicalOrConstruct(_) | FlowAssignmentSource::Join(_) => {
+                return Completion::Deferred;
+            }
         };
         if matches!(self.store.kind(source), TypeKind::Never) {
             return Completion::Complete(source);
@@ -216,6 +218,60 @@ impl Checker<'_> {
             }
         }
         Completion::Complete(declared)
+    }
+
+    fn flow_logical_or_construct(
+        &mut self,
+        file: FileId,
+        references: [(NodeId, DeclId); 2],
+        declared: TypeId,
+        depth: usize,
+    ) -> Completion<TypeId> {
+        let [reference, callee] = references;
+        let reference = completed!(self.flow_source(file, reference, depth + 1));
+        let callee = completed!(self.flow_source(file, callee, depth + 1));
+        let constructed = completed!(self.evaluate_construct(callee, &[], &[], depth + 1));
+        let [member, forced] =
+            completed!(self.canonical_map_fallback_member(declared, constructed, depth + 1,));
+        if reference == declared || reference == member || reference == forced {
+            Completion::Complete(member)
+        } else {
+            Completion::Deferred
+        }
+    }
+
+    pub(super) fn canonical_map_fallback_member(
+        &mut self,
+        declared: TypeId,
+        constructed: TypeId,
+        depth: usize,
+    ) -> Completion<[TypeId; 2]> {
+        let declared = completed!(self.force_operand(declared, depth));
+        let member = completed!(self.store.non_nullable(declared));
+        let forced = completed!(self.force_operand(member, depth + 1));
+        let TypeKind::LibraryReference { declaration, .. } = self.store.kind(forced) else {
+            return Completion::Deferred;
+        };
+        let declaration = *declaration;
+        if !self.program.standard_library.is_map_type(declaration)
+            || self
+                .program
+                .standard_library_type_has_authored_declarations(declaration)
+        {
+            return Completion::Deferred;
+        }
+        let constructed = completed!(self.force_operand(constructed, depth + 1));
+        let any = self.store.builtins.any;
+        match self.store.kind(constructed) {
+            TypeKind::LibraryReference {
+                declaration: constructed,
+                arguments,
+                ..
+            } if *constructed == declaration && arguments.as_slice() == [any, any] => {
+                Completion::Complete([member, forced])
+            }
+            _ => Completion::Deferred,
+        }
     }
 
     fn flow_source(
@@ -401,8 +457,8 @@ impl Checker<'_> {
             never
         } else if source.len() == 1
             && candidates.len() == 1
-            && (self.predicate_type_is_structural(source[0])
-                || self.predicate_type_is_structural(candidates[0]))
+            && (Self::flow_type_domain(self.store.kind(source[0])).1
+                || Self::flow_type_domain(self.store.kind(candidates[0])).1)
         {
             self.store.intersection([ty, asserted])
         } else {
@@ -444,44 +500,47 @@ impl Checker<'_> {
         }
     }
 
-    fn predicate_type_is_structural(&self, ty: TypeId) -> bool {
-        matches!(
-            self.store.kind(ty),
-            TypeKind::ObjectKeyword
-                | TypeKind::Array(_)
-                | TypeKind::Tuple(_)
-                | TypeKind::Object(_)
-                | TypeKind::ClassInstance { .. }
-                | TypeKind::ClassConstructor { .. }
-                | TypeKind::Function(_)
-                | TypeKind::ShapeFunction(_)
-        )
-    }
-
     fn predicate_types_are_disjoint(&self, left: TypeId, right: TypeId) -> bool {
         use TypeKind::*;
         match (self.store.kind(left), self.store.kind(right)) {
             (LiteralBoolean(left, _), LiteralBoolean(right, _)) => left != right,
             (LiteralNumber(left, _), LiteralNumber(right, _)) => left != right,
             (LiteralString(left, _), LiteralString(right, _)) => left != right,
-            (left, right) => matches!(
-                (Self::predicate_scalar_domain(left), Self::predicate_scalar_domain(right)),
-                (Some(left), Some(right)) if left != right
-            ),
+            (left, right) => {
+                let scalar = |kind| match Self::flow_type_domain(kind) {
+                    (witness, false) => witness,
+                    _ => None,
+                };
+                matches!((scalar(left), scalar(right)), (Some(left), Some(right)) if left != right)
+            }
         }
     }
 
-    const fn predicate_scalar_domain(kind: &TypeKind) -> Option<TypeofWitness> {
+    const fn flow_type_domain(kind: &TypeKind) -> (Option<TypeofWitness>, bool) {
         use TypeKind::*;
         match kind {
-            String | LiteralString(_, _) => Some(TypeofWitness::String),
-            Number | LiteralNumber(_, _) => Some(TypeofWitness::Number),
-            BigInt => Some(TypeofWitness::BigInt),
-            Boolean | LiteralBoolean(_, _) => Some(TypeofWitness::Boolean),
-            Symbol => Some(TypeofWitness::Symbol),
-            Null => Some(TypeofWitness::Object),
-            Undefined => Some(TypeofWitness::Undefined),
-            _ => None,
+            String | LiteralString(_, _) => (Some(TypeofWitness::String), false),
+            Number | LiteralNumber(_, _) => (Some(TypeofWitness::Number), false),
+            BigInt => (Some(TypeofWitness::BigInt), false),
+            Boolean | LiteralBoolean(_, _) => (Some(TypeofWitness::Boolean), false),
+            Symbol => (Some(TypeofWitness::Symbol), false),
+            Null => (Some(TypeofWitness::Object), false),
+            Undefined => (Some(TypeofWitness::Undefined), false),
+            ObjectKeyword => (None, true),
+            Array(_) | Tuple(_) | ClassInstance { .. } => (Some(TypeofWitness::Object), true),
+            Object(shape) => {
+                let witness =
+                    if shape.call_signatures.is_empty() && shape.construct_signatures.is_empty() {
+                        TypeofWitness::Object
+                    } else {
+                        TypeofWitness::Function
+                    };
+                (Some(witness), true)
+            }
+            ClassConstructor { .. } | Function(_) | ShapeFunction(_) => {
+                (Some(TypeofWitness::Function), true)
+            }
+            _ => (None, false),
         }
     }
 
@@ -519,27 +578,11 @@ impl Checker<'_> {
         values: TypeofWitnessSet,
         depth: usize,
     ) -> Completion<TypeId> {
-        self.filter_flow_type(ty, depth, |this, member, depth| {
-            let member = completed!(this.force_operand(member, depth));
-            let kind = this.store.kind(member);
-            let witness = Self::predicate_scalar_domain(kind).or(match kind {
-                TypeKind::Array(_) | TypeKind::Tuple(_) | TypeKind::ClassInstance { .. } => {
-                    Some(TypeofWitness::Object)
-                }
-                TypeKind::Object(shape) => Some(
-                    if shape.call_signatures.is_empty() && shape.construct_signatures.is_empty() {
-                        TypeofWitness::Object
-                    } else {
-                        TypeofWitness::Function
-                    },
-                ),
-                TypeKind::ClassConstructor { .. }
-                | TypeKind::Function(_)
-                | TypeKind::ShapeFunction(_) => Some(TypeofWitness::Function),
-                _ => None,
-            });
+        self.map_flow_type(ty, depth, |this, member, depth| {
+            let forced = completed!(this.force_operand(member, depth));
+            let witness = Self::flow_type_domain(this.store.kind(forced)).0;
             witness.map_or(Completion::Deferred, |witness| {
-                Completion::Complete(values.contains(witness) == include)
+                Completion::Complete((values.contains(witness) == include).then_some(member))
             })
         })
     }
@@ -553,9 +596,9 @@ impl Checker<'_> {
         depth: usize,
     ) -> Completion<TypeId> {
         if let Some(name) = property {
-            return self.filter_flow_type(ty, depth, |this, member, depth| {
-                let member = completed!(this.force_operand(member, depth));
-                let shape = match this.store.kind(member) {
+            return self.map_flow_type(ty, depth, |this, member, depth| {
+                let forced = completed!(this.force_operand(member, depth));
+                let shape = match this.store.kind(forced) {
                     TypeKind::Object(shape)
                     | TypeKind::ClassInstance {
                         properties: shape, ..
@@ -571,67 +614,53 @@ impl Checker<'_> {
                 let TypeKind::LiteralString(value, _) = this.store.kind(value) else {
                     return Completion::Deferred;
                 };
-                Completion::Complete(values.contains(value) == include)
+                Completion::Complete((values.contains(value) == include).then_some(member))
             });
         }
-        let ty = completed!(self.force_operand(ty, depth));
-        if let TypeKind::Union(members) = self.store.kind(ty).clone() {
-            let mut narrowed = Vec::new();
-            for member in members {
-                let member = completed!(self.narrow_string_literals(
-                    member,
-                    None,
-                    include,
-                    values,
-                    depth + 1,
-                ));
-                if member != self.store.builtins.never {
-                    narrowed.push(member);
+        self.map_flow_type(ty, depth, |this, ty, depth| {
+            let ty = completed!(this.force_operand(ty, depth));
+            let top = matches!(this.store.kind(ty), TypeKind::Unknown | TypeKind::String)
+                || matches!(this.store.kind(ty), TypeKind::Object(shape) if shape == &Default::default());
+            if top {
+                if !include {
+                    return Completion::Complete(Some(ty));
                 }
+                let literals = values
+                    .iter()
+                    .cloned()
+                    .map(|value| {
+                        this.store
+                            .intern(TypeKind::LiteralString(value, LiteralProvenance::Regular))
+                    })
+                    .collect::<Vec<_>>();
+                let narrowed = this.store.union(literals, UnionPolicy::Canonical);
+                return Completion::Complete(Some(narrowed));
             }
-            return Completion::Complete(self.store.union(narrowed, UnionPolicy::Canonical));
-        }
-        let top = matches!(self.store.kind(ty), TypeKind::Unknown | TypeKind::String)
-            || matches!(self.store.kind(ty), TypeKind::Object(shape) if shape == &Default::default());
-        if top {
-            if !include {
-                return Completion::Complete(ty);
+            let select = |matched| Completion::Complete((matched == include).then_some(ty));
+            match this.store.kind(ty).clone() {
+                TypeKind::LiteralString(value, _) => select(values.contains(&value)),
+                TypeKind::Any | TypeKind::Never | TypeKind::Error | TypeKind::Invalid(_) => {
+                    Completion::Complete(Some(ty))
+                }
+                TypeKind::Void
+                | TypeKind::Undefined
+                | TypeKind::Null
+                | TypeKind::Boolean
+                | TypeKind::Number
+                | TypeKind::BigInt
+                | TypeKind::Symbol
+                | TypeKind::LiteralBoolean(_, _)
+                | TypeKind::LiteralNumber(_, _) => select(false),
+                _ => Completion::Deferred,
             }
-            let literals = values
-                .iter()
-                .cloned()
-                .map(|value| {
-                    self.store
-                        .intern(TypeKind::LiteralString(value, LiteralProvenance::Regular))
-                })
-                .collect::<Vec<_>>();
-            return Completion::Complete(self.store.union(literals, UnionPolicy::Canonical));
-        }
-        let never = self.store.builtins.never;
-        let select = |matched| Completion::Complete(if matched == include { ty } else { never });
-        match self.store.kind(ty).clone() {
-            TypeKind::LiteralString(value, _) => select(values.contains(&value)),
-            TypeKind::Any | TypeKind::Never | TypeKind::Error | TypeKind::Invalid(_) => {
-                Completion::Complete(ty)
-            }
-            TypeKind::Void
-            | TypeKind::Undefined
-            | TypeKind::Null
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::BigInt
-            | TypeKind::Symbol
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _) => select(false),
-            _ => Completion::Deferred,
-        }
+        })
     }
 
-    fn filter_flow_type(
+    fn map_flow_type(
         &mut self,
         ty: TypeId,
         depth: usize,
-        mut retain: impl FnMut(&mut Self, TypeId, usize) -> Completion<bool>,
+        mut map: impl FnMut(&mut Self, TypeId, usize) -> Completion<Option<TypeId>>,
     ) -> Completion<TypeId> {
         let ty = completed!(self.force_operand(ty, depth));
         let members = match self.store.kind(ty).clone() {
@@ -641,12 +670,12 @@ impl Checker<'_> {
             }
             _ => vec![ty],
         };
-        let mut retained = Vec::new();
+        let mut mapped = Vec::new();
         for member in members {
-            if completed!(retain(self, member, depth + 1)) {
-                retained.push(member);
+            if let Some(member) = completed!(map(self, member, depth + 1)) {
+                mapped.push(member);
             }
         }
-        Completion::Complete(self.store.union(retained, UnionPolicy::Canonical))
+        Completion::Complete(self.store.union(mapped, UnionPolicy::Canonical))
     }
 }

@@ -8,37 +8,27 @@ use std::time::{Duration, Instant};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::bind::{BoundFile, DeclarationKind, Meaning, bind_source_with_kind};
+use crate::bind::{BoundFile, DeclarationKind, Meaning, TypeMemberSymbol, bind_source_with_kind};
 use crate::config::{CompilerOptionKey, ProjectProvenance, ResolvedProject};
 use crate::diagnostics::{Diagnostic, DiagnosticCategory, sort_and_deduplicate};
 use crate::emit::emit_file_with_plan;
 use crate::emit_paths::EmitPlan;
-use crate::semantics::{CheckResult, check_program};
+use crate::semantics::{
+    CheckResult, DeclarationDisplaySummaries, check_program, summarize_program,
+};
 use crate::source::{DeclId, FileId, SourceText};
 use crate::standard_library::{StandardLibraryDeclaration, StandardLibraryEnvironment};
-use crate::syntax::{
-    AuthoredLiteralKind, SourceUnit, StatementKind, TypeMemberKind, TypeMemberNameKind,
-    parse_source, statements_form_no_substitution_template_expression_file,
-    statements_form_no_substitution_template_variable_file,
-};
+use crate::syntax::{SourceUnit, StatementKind, parse_source};
 
 mod capabilities;
 mod import_aliases;
 mod javascript_assignments;
-mod literal_products;
-mod numeric_literal;
-mod regular_expression;
-mod string_literal;
 
 pub(crate) use capabilities::{
     CapabilityAnalysis, CapabilityContext, CapabilityScope, CapabilityTarget,
     is_declaration_source, is_effective_commonjs,
 };
 pub(crate) use javascript_assignments::{JavaScriptAssignmentDisposition, JavaScriptAssignments};
-use literal_products::{
-    LiteralProductFamily, exact_option_value, roots_are_homogeneous_literal_products,
-    unique_top_level_value_bindings_supported,
-};
 
 #[derive(Debug, Clone)]
 pub struct SourceInput {
@@ -98,6 +88,8 @@ pub struct CompilerOptions {
     pub source_map: bool,
     pub inline_source_map: bool,
     pub remove_comments: bool,
+    /// `None` uses the target-dependent TypeScript default.
+    pub use_define_for_class_fields: Option<bool>,
     pub target: String,
     pub module: String,
     pub root_dir: Option<PathBuf>,
@@ -126,6 +118,7 @@ impl Default for CompilerOptions {
             source_map: false,
             inline_source_map: false,
             remove_comments: false,
+            use_define_for_class_fields: None,
             target: "es2025".to_string(),
             module: "preserve".to_string(),
             root_dir: None,
@@ -194,56 +187,6 @@ impl ProgramFile {
     }
 }
 
-pub(crate) fn has_unmodeled_no_substitution_template_program_products(
-    files: &[ProgramFile],
-    options: &CompilerOptions,
-) -> bool {
-    let has_authored_template = files.iter().any(|file| {
-        file.syntax
-            .has_authored_literal(AuthoredLiteralKind::Template)
-    });
-    has_authored_template
-        && (!no_substitution_template_program_options_supported(options)
-            || options.source_map
-            || options.inline_source_map
-            || options.declaration_map
-            || options.declaration_dir.is_some()
-            || !roots_are_homogeneous_literal_products(
-                files,
-                LiteralProductFamily::NoSubstitutionTemplate,
-            )
-            || !no_substitution_template_program_sources_supported(files, options))
-}
-
-fn no_substitution_template_program_sources_supported(
-    files: &[ProgramFile],
-    options: &CompilerOptions,
-) -> bool {
-    if files.iter().all(|file| {
-        statements_form_no_substitution_template_expression_file(&file.syntax.statements)
-    }) {
-        return true;
-    }
-    files.iter().all(|file| {
-        statements_form_no_substitution_template_variable_file(
-            &file.source,
-            &file.syntax.statements,
-        )
-    }) && !options.declaration
-        && unique_top_level_value_bindings_supported(files, options)
-}
-
-fn no_substitution_template_program_options_supported(options: &CompilerOptions) -> bool {
-    exact_option_value(
-        &options.target,
-        &[
-            "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021", "es2022",
-            "es2023", "es2024", "es2025", "esnext",
-        ],
-    ) && exact_option_value(&options.module, &["commonjs", "esnext", "preserve"])
-        && options.lib.is_none()
-}
-
 #[derive(Debug)]
 pub struct Program {
     /// Program traversal order, independent from path-sorted `FileId` storage.
@@ -256,6 +199,7 @@ pub struct Program {
     pub global_values: BTreeMap<String, Vec<DeclId>>,
     pub global_types: BTreeMap<String, Vec<DeclId>>,
     pub standard_library: StandardLibraryEnvironment,
+    pub(crate) standard_library_type_alias_collisions: Vec<(DeclId, DeclId)>,
     pub(crate) javascript_assignments: JavaScriptAssignments,
     import_aliases: import_aliases::ImportAliases,
 }
@@ -339,17 +283,15 @@ impl Program {
                         if member.recovered || member.recovery_incomplete {
                             return true;
                         }
-                        let name = match &member.kind {
-                            TypeMemberKind::Property { name, .. }
-                            | TypeMemberKind::Method { name, .. }
-                            | TypeMemberKind::Accessor { name, .. } => name,
-                            TypeMemberKind::Call { .. }
-                            | TypeMemberKind::Construct { .. }
-                            | TypeMemberKind::Index { .. } => return false,
-                        };
-                        match &name.kind {
-                            TypeMemberNameKind::Identifier(name) => name == member_name,
-                            _ => true,
+                        match file
+                            .bindings
+                            .type_members
+                            .get(&member.id)
+                            .and_then(|member| member.symbol.as_ref())
+                        {
+                            Some(TypeMemberSymbol::Named(name)) => name == member_name,
+                            Some(_) => false,
+                            None => true,
                         }
                     })
                 })
@@ -409,6 +351,7 @@ pub struct CompileOutput {
     pub exit_status: CompileExitStatus,
     pub(crate) capabilities: CapabilityAnalysis,
     pub(crate) check_file_completions: Vec<SemanticCompletion>,
+    pub(crate) declaration_display_summaries: DeclarationDisplaySummaries,
 }
 
 /// Whether every required semantic operation reached a definitive result.
@@ -607,7 +550,6 @@ impl Compiler {
             .collect();
 
         let option_diagnostics = compiler_option_diagnostics(options, &provenance);
-        let has_compiler_option_error = !option_diagnostics.is_empty();
         let has_fatal_option_error = option_diagnostics
             .iter()
             .any(|diagnostic| matches!(diagnostic.code, 5108 | 6046))
@@ -643,23 +585,24 @@ impl Compiler {
             &program.files,
             options,
             CapabilityContext {
-                has_compiler_option_error,
                 has_fatal_option_error,
                 has_missing_essential_types,
             },
             &program.javascript_assignments,
         );
-        let has_checkable_file = program.files.iter().any(|file| {
-            capabilities.semantic_check_file_is_enabled(file.source.id)
-                && (file.syntax.statements.iter().any(|statement| {
-                    let mut checkable = false;
-                    statement.for_each_statement(&mut |statement| {
-                        checkable |= capabilities
-                            .semantic_check_node_is_claimed(file.source.id, statement.id);
-                    });
-                    checkable
-                }) || capabilities.has_claimed_function_like(file.source.id))
-        });
+        let has_checkable_file = !program.standard_library_type_alias_collisions.is_empty()
+            || program.files.iter().any(|file| {
+                !file.syntax.contextual_grammar_facts().is_empty()
+                    || capabilities.semantic_check_file_is_enabled(file.source.id)
+                        && (file.syntax.statements.iter().any(|statement| {
+                            let mut checkable = false;
+                            statement.for_each_statement(&mut |statement| {
+                                checkable |= capabilities
+                                    .semantic_check_node_is_claimed(file.source.id, statement.id);
+                            });
+                            checkable
+                        }) || capabilities.has_claimed_function_like(file.source.id))
+            });
 
         let check_start = Instant::now();
         let CheckResult {
@@ -667,12 +610,14 @@ impl Compiler {
             type_count,
             mut semantic_completion,
             file_semantic_completions,
+            declaration_display_summaries,
         } = if options.no_check || !has_checkable_file {
             CheckResult {
                 diagnostics: Vec::new(),
                 type_count: 0,
                 semantic_completion: SemanticCompletion::Complete,
                 file_semantic_completions: vec![SemanticCompletion::Complete; program.files.len()],
+                declaration_display_summaries: summarize_program(&program, options, &capabilities),
             }
         } else {
             check_program(&program, options, &capabilities)
@@ -684,7 +629,7 @@ impl Compiler {
                 .map(|name| Diagnostic::global(format!("Cannot find global type '{name}'."), 2318)),
         );
         diagnostics.extend(semantic_diagnostics);
-        if !has_fatal_option_error && !capabilities.semantic_diagnostics_are_claimed() {
+        if !has_fatal_option_error && !capabilities.semantic_diagnostics_are_claimed(options) {
             semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
         }
         let emit_start = Instant::now();
@@ -806,6 +751,7 @@ impl Compiler {
             exit_status,
             capabilities,
             check_file_completions: file_semantic_completions,
+            declaration_display_summaries,
         }
     }
 }
@@ -918,20 +864,44 @@ fn build_program(
             }
         }
     }
+    let mut standard_library = StandardLibraryEnvironment::from_options(options);
     for file in &mut files {
         file.bindings.finalize_flow(&file.syntax, |name| {
             global_values
                 .get(name)
                 .and_then(|declarations| declarations.first().copied())
+                .or_else(|| standard_library.resolve(name, Meaning::Value))
         });
     }
     let javascript_assignments = JavaScriptAssignments::build(&files, &global_values);
+    let standard_library_type_alias_collisions = global_types
+        .iter()
+        .filter_map(|(name, declarations)| {
+            let [authored] = declarations.as_slice() else {
+                return None;
+            };
+            let bound = files[authored.file.0 as usize]
+                .bindings
+                .declaration(*authored)?;
+            if !matches!(
+                bound.kind,
+                DeclarationKind::Interface | DeclarationKind::TypeAlias
+            ) {
+                return None;
+            }
+            let library = standard_library.resolve(name, Meaning::Type)?;
+            standard_library.homogeneous_record_origin(library)?;
+            standard_library.hide_homogeneous_record_type(library);
+            Some((*authored, library))
+        })
+        .collect();
     Program {
         source_order,
         files,
         global_values,
         global_types,
-        standard_library: StandardLibraryEnvironment::from_options(options),
+        standard_library,
+        standard_library_type_alias_collisions,
         javascript_assignments,
         import_aliases,
     }

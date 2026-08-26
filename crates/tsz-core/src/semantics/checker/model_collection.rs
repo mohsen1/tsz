@@ -5,7 +5,8 @@ use crate::source::FileId;
 use crate::syntax::{
     ClassDeclaration, DescendantAdapter, DescendantContainer, Expression, FunctionDeclaration,
     FunctionLikeSyntax, InterfaceDeclaration, NestedStatement, Parameter, Statement, StatementKind,
-    TypeAliasDeclaration, VariableDeclaration, walk_statement_descendants,
+    TypeAliasDeclaration, TypeParameterDeclaration, VariableDeclarator, VariableKind,
+    walk_statement_descendants,
 };
 
 use super::Checker;
@@ -13,7 +14,8 @@ use super::Checker;
 #[derive(Clone, Copy)]
 pub(super) enum DeclarationModel<'a> {
     Variable {
-        declaration: &'a VariableDeclaration,
+        declaration: &'a VariableDeclarator,
+        declaration_kind: VariableKind,
         scope: ScopeId,
     },
     Parameter {
@@ -38,6 +40,20 @@ pub(super) enum DeclarationModel<'a> {
         scope: ScopeId,
     },
     JavaScriptProperty(&'a Expression, ScopeId),
+}
+
+impl<'a> DeclarationModel<'a> {
+    pub(super) fn type_parameters(self) -> Option<(&'a [TypeParameterDeclaration], ScopeId)> {
+        match self {
+            Self::Function { declaration, scope } => Some((&declaration.type_parameters, scope)),
+            Self::TypeAlias { declaration, scope } => Some((&declaration.type_parameters, scope)),
+            Self::Interface { declaration, scope } => Some((&declaration.type_parameters, scope)),
+            Self::Class {
+                declaration, scope, ..
+            } => Some((&declaration.type_parameters, scope)),
+            Self::Variable { .. } | Self::Parameter { .. } | Self::JavaScriptProperty(..) => None,
+        }
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -67,15 +83,15 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let model = match (&statement.kind, candidate.kind) {
-                (StatementKind::Variable(declaration), DeclarationKind::Variable)
-                    if !primary_modeled && candidate.name == declaration.name =>
-                {
-                    primary_modeled = true;
-                    Some(DeclarationModel::Variable {
+                (StatementKind::Variable(statement), DeclarationKind::Variable) => statement
+                    .declarators
+                    .iter()
+                    .find(|declarator| declarator.name_span == candidate.name_span)
+                    .map(|declaration| DeclarationModel::Variable {
                         declaration,
+                        declaration_kind: statement.declaration_kind,
                         scope: candidate.scope,
-                    })
-                }
+                    }),
                 (StatementKind::Function(declaration), DeclarationKind::Function)
                     if !primary_modeled && candidate.name == declaration.name =>
                 {

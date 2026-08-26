@@ -580,13 +580,15 @@ fn jsdoc_attachment_is_node_scoped_and_captured_before_async() {
         _ => panic!("expected function declaration at {index}"),
     };
     let expression_jsdoc = |index: usize| match &parsed.unit.statements[index].kind {
-        StatementKind::Variable(declaration) => match declaration.initializer.as_ref() {
-            Some(expression) => match &expression.kind {
-                ExpressionKind::FunctionLike(function) => function.has_leading_jsdoc,
-                _ => panic!("expected function-like initializer at {index}"),
-            },
-            None => panic!("expected initializer at {index}"),
-        },
+        StatementKind::Variable(declaration) => {
+            match declaration.declarators[0].initializer.as_ref() {
+                Some(expression) => match &expression.kind {
+                    ExpressionKind::FunctionLike(function) => function.has_leading_jsdoc,
+                    _ => panic!("expected function-like initializer at {index}"),
+                },
+                None => panic!("expected initializer at {index}"),
+            }
+        }
         _ => panic!("expected variable declaration at {index}"),
     };
 

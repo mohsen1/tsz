@@ -6,8 +6,10 @@ use crate::semantics::types::{
     TypeKind, UnionPolicy,
 };
 use crate::source::FileId;
-use crate::standard_library::{StandardLibraryMemberKind, StandardLibraryValueMemberLookup};
-use crate::syntax::{Expression, ExpressionKind, ObjectProperty, parse_number_literal};
+use crate::standard_library::{LibraryCallMember, LibraryMemberLookup, LibraryReceiver};
+use crate::syntax::{
+    AssignmentOperator, Expression, ExpressionKind, ObjectProperty, parse_number_literal,
+};
 
 use super::call_model::InferredCallCallee;
 use super::relation_diagnostic::RelationDiagnosticStyle;
@@ -95,6 +97,7 @@ impl Checker<'_> {
         object: &Expression,
         index: &Expression,
     ) -> InferredCallCallee {
+        let authored_readonly = self.authored_readonly_array_receiver(file, scope, object);
         let object = self.infer_expression(file, scope, object, None);
         let index = self.infer_expression(file, scope, index, None);
         let query = self
@@ -105,7 +108,7 @@ impl Checker<'_> {
                 mode: ElementAccessMode::Read,
             }));
         if let TypeKind::LiteralString(name, _) = self.store.kind(index).clone() {
-            match self.array_search_call_projection(object, &name) {
+            match self.standard_library_call_projection(object, &name, authored_readonly) {
                 Completion::Complete(Some((ty, id))) => {
                     return InferredCallCallee {
                         ty,
@@ -208,7 +211,13 @@ impl Checker<'_> {
         scope: ScopeId,
         expression: &Expression,
     ) -> Option<TypeId> {
-        let ExpressionKind::Assignment { left, right, .. } = &expression.kind else {
+        let ExpressionKind::Assignment {
+            left,
+            operator: AssignmentOperator::Assign,
+            right,
+            ..
+        } = &expression.kind
+        else {
             if let ExpressionKind::Parenthesized(inner) = &expression.kind {
                 return self.infer_destructuring_target(file, scope, inner);
             }
@@ -506,35 +515,26 @@ impl Checker<'_> {
         index: TypeId,
     ) -> Completion<TypeId> {
         let lookup = match self.store.kind(index) {
-            TypeKind::LiteralString(name, _) => self.program.standard_library.value_member(
-                declaration,
-                name,
-                |owner, member_name| {
-                    self.program
-                        .standard_library_type_has_authored_member(owner, member_name)
-                },
-            ),
-            _ => StandardLibraryValueMemberLookup::Missing,
+            TypeKind::LiteralString(name, _) => {
+                self.standard_library_call_member(LibraryReceiver::Declaration(declaration), name)
+            }
+            _ => LibraryMemberLookup::Missing,
         };
         match lookup {
-            StandardLibraryValueMemberLookup::Found {
-                kind: StandardLibraryMemberKind::ZeroArgumentStringMethod,
-                ..
-            } => Completion::Complete(self.store.function(
-                None,
-                false,
-                Vec::new(),
-                self.store.builtins.string,
-            )),
-            StandardLibraryValueMemberLookup::Missing
+            LibraryMemberLookup::Found(LibraryCallMember::ToString) => Completion::Complete(
+                self.store
+                    .function(None, false, Vec::new(), self.store.builtins.string),
+            ),
+            LibraryMemberLookup::Missing
                 if self.program.standard_library.is_array_value(declaration)
                     && !self.options.effective_no_implicit_any()
                     && is_property_key_like(self.store.kind(index)) =>
             {
                 Completion::Complete(self.store.builtins.any)
             }
-            StandardLibraryValueMemberLookup::DeferredUntilMemberMerging
-            | StandardLibraryValueMemberLookup::Missing => Completion::Deferred,
+            LibraryMemberLookup::Found(_)
+            | LibraryMemberLookup::DeferredUntilMemberMerging
+            | LibraryMemberLookup::Missing => Completion::Deferred,
         }
     }
 }
@@ -635,7 +635,14 @@ fn collect_paired_assignment_leaves<'a>(
                     })
             })
         }
-        (ExpressionKind::Assignment { left, .. }, _) if is_plain_assignment_target(left) => {
+        (
+            ExpressionKind::Assignment {
+                left,
+                operator: AssignmentOperator::Assign,
+                ..
+            },
+            _,
+        ) if is_plain_assignment_target(left) => {
             leaves.push((target, source));
             true
         }
@@ -662,7 +669,7 @@ fn unique_property<'a>(properties: &'a [ObjectProperty], name: &str) -> Option<&
     matches.next().is_none().then_some(property)
 }
 
-const fn is_property_key_like(kind: &TypeKind) -> bool {
+pub(super) const fn is_property_key_like(kind: &TypeKind) -> bool {
     matches!(
         kind,
         TypeKind::String

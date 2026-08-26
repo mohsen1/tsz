@@ -5,8 +5,7 @@ use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
 use crate::source::{DeclId, FileId, NodeId};
 use crate::syntax::{
-    ExpressionKind, KeywordType, Parameter, ParameterModifier, ParameterModifierNode, TypeMember,
-    TypeMemberKind, TypeNode, TypeNodeKind,
+    ExpressionKind, KeywordType, Parameter, TypeMember, TypeMemberKind, TypeNode, TypeNodeKind,
 };
 
 use super::{Checker, DeclarationModel};
@@ -20,12 +19,13 @@ macro_rules! d {
     };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Ordered by the diagnostic precedence used for authored unions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum IndexKeySyntax {
     Valid,
-    LiteralOrGeneric,
-    Invalid,
     Unknown,
+    Invalid,
+    LiteralOrGeneric,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,7 +215,7 @@ impl Checker<'_> {
             if parameter.rest && parameter.initializer.is_some() {
                 d!(self, file, parameter.name_span, 1048);
             }
-            let has_property_modifier = parameter.modifiers.iter().any(is_property_modifier);
+            let has_property_modifier = parameter.is_property();
             if has_property_modifier
                 && !matches!(
                     host,
@@ -232,7 +232,7 @@ impl Checker<'_> {
             if parameter
                 .modifiers
                 .iter()
-                .any(|modifier| !is_property_modifier(modifier))
+                .any(|modifier| !modifier.kind.is_property())
             {
                 let _ = self.require_completion(Completion::<()>::Deferred);
             }
@@ -264,13 +264,8 @@ impl Checker<'_> {
         report_optional: bool,
     ) {
         let declared_array_like = parameter.annotation.as_ref().map(|annotation| {
-            self.rest_type_semantics(
-                file,
-                scope,
-                annotation,
-                type_parameters,
-                &mut HashSet::new(),
-            )
+            let ty = self.resolve_type_node(file, scope, annotation, type_parameters);
+            self.rest_type_id(ty, &mut HashSet::new())
         });
         let optional_breaks_array = parameter.optional
             && self.options.effective_strict_null_checks()
@@ -288,16 +283,23 @@ impl Checker<'_> {
         }
     }
 
-    fn rest_type_semantics(
+    fn begin_alias_walk(
         &mut self,
-        file: FileId,
-        scope: ScopeId,
-        node: &TypeNode,
-        type_parameters: &HashMap<String, TypeId>,
+        declaration: DeclId,
         active_aliases: &mut HashSet<DeclId>,
-    ) -> RestTypeSyntax {
-        let ty = self.resolve_type_node(file, scope, node, type_parameters);
-        self.rest_type_id(ty, active_aliases)
+    ) -> Option<bool> {
+        if !self.semantic_declaration_is_claimed(declaration) {
+            let _ = self.require_completion(Completion::<()>::Deferred);
+            return None;
+        }
+        let is_alias = matches!(
+            self.models.get(&declaration),
+            Some(DeclarationModel::TypeAlias { .. })
+        );
+        if is_alias && !active_aliases.insert(declaration) {
+            return None;
+        }
+        Some(is_alias)
     }
 
     fn rest_type_id(&mut self, ty: TypeId, active_aliases: &mut HashSet<DeclId>) -> RestTypeSyntax {
@@ -305,84 +307,54 @@ impl Checker<'_> {
             TypeKind::Any => RestTypeSyntax::Any,
             TypeKind::Never => RestTypeSyntax::Bottom,
             TypeKind::Array(_) | TypeKind::Tuple(_) => RestTypeSyntax::ArrayLike,
-            TypeKind::Union(members) => {
-                let mut result = RestTypeSyntax::ArrayLike;
-                for member in members {
-                    match self.rest_type_id(member, active_aliases) {
-                        RestTypeSyntax::NonArray => return RestTypeSyntax::NonArray,
-                        RestTypeSyntax::Unknown => result = RestTypeSyntax::Unknown,
-                        RestTypeSyntax::Any
-                        | RestTypeSyntax::Bottom
-                        | RestTypeSyntax::ErrorCascade
-                        | RestTypeSyntax::ArrayLike => {}
-                    }
-                }
-                result
-            }
-            TypeKind::Intersection(members) => {
-                let mut saw_unknown = false;
-                for member in members {
-                    match self.rest_type_id(member, active_aliases) {
-                        RestTypeSyntax::Any
-                        | RestTypeSyntax::Bottom
-                        | RestTypeSyntax::ErrorCascade
-                        | RestTypeSyntax::ArrayLike => return RestTypeSyntax::ArrayLike,
-                        RestTypeSyntax::Unknown => saw_unknown = true,
-                        RestTypeSyntax::NonArray => {}
-                    }
-                }
-                if saw_unknown {
-                    RestTypeSyntax::Unknown
-                } else {
-                    RestTypeSyntax::NonArray
-                }
-            }
+            TypeKind::Union(members) => combine_rest_types(
+                members,
+                RestTypeSyntax::NonArray,
+                RestTypeSyntax::ArrayLike,
+                |member| self.rest_type_id(member, active_aliases),
+            ),
+            TypeKind::Intersection(members) => combine_rest_types(
+                members,
+                RestTypeSyntax::ArrayLike,
+                RestTypeSyntax::NonArray,
+                |member| self.rest_type_id(member, active_aliases),
+            ),
             TypeKind::Deferred(DeferredType::Reference {
                 declaration,
                 arguments,
             }) => {
-                if !self.semantic_declaration_is_claimed(declaration) {
-                    let _ = self.require_completion(Completion::<()>::Deferred);
+                let Some(remove_alias) = self.begin_alias_walk(declaration, active_aliases) else {
                     return RestTypeSyntax::Unknown;
-                }
-                if self
+                };
+                let result = if self
                     .program
                     .standard_library
                     .is_rest_array_type(declaration)
                     && arguments.len() == 1
                 {
-                    return RestTypeSyntax::ArrayLike;
-                }
-                if !active_aliases.insert(declaration) {
-                    return RestTypeSyntax::Unknown;
-                }
-                let result = match self.models.get(&declaration).copied() {
-                    Some(DeclarationModel::TypeAlias {
-                        declaration: alias,
-                        scope,
-                    }) => {
-                        let substitutions =
-                            self.substitution(declaration, &alias.type_parameters, &arguments);
-                        let alias_ty = self.resolve_type_node(
-                            declaration.file,
+                    RestTypeSyntax::ArrayLike
+                } else {
+                    match self.models.get(&declaration).copied() {
+                        Some(DeclarationModel::TypeAlias {
+                            declaration: alias,
                             scope,
-                            &alias.ty,
-                            &substitutions,
-                        );
-                        self.rest_type_id(alias_ty, active_aliases)
+                        }) => {
+                            let substitutions =
+                                self.substitution(declaration, &alias.type_parameters, &arguments);
+                            let alias_ty = self.resolve_type_node(
+                                declaration.file,
+                                scope,
+                                &alias.ty,
+                                &substitutions,
+                            );
+                            self.rest_type_id(alias_ty, active_aliases)
+                        }
+                        _ => RestTypeSyntax::Unknown,
                     }
-                    Some(DeclarationModel::Interface { .. } | DeclarationModel::Class { .. }) => {
-                        RestTypeSyntax::Unknown
-                    }
-                    Some(
-                        DeclarationModel::Variable { .. }
-                        | DeclarationModel::Parameter { .. }
-                        | DeclarationModel::Function { .. }
-                        | DeclarationModel::JavaScriptProperty(..),
-                    )
-                    | None => RestTypeSyntax::Unknown,
                 };
-                active_aliases.remove(&declaration);
+                if remove_alias {
+                    active_aliases.remove(&declaration);
+                }
                 result
             }
             TypeKind::Deferred(DeferredType::IndexedAccess { .. }) => {
@@ -414,6 +386,7 @@ impl Checker<'_> {
             | TypeKind::Object(_)
             | TypeKind::ClassInstance { .. }
             | TypeKind::ClassConstructor { .. }
+            | TypeKind::LibraryReference { .. }
             | TypeKind::Function(_)
             | TypeKind::ShapeFunction(_) => RestTypeSyntax::NonArray,
         }
@@ -426,17 +399,10 @@ impl Checker<'_> {
             .filter(|member| !member.recovered)
             .map(|member| (member.id, member))
             .collect::<HashMap<NodeId, &TypeMember>>();
-        let mut checked = HashSet::<DeclId>::new();
         for member in members.iter().filter(|member| !member.recovered) {
             let TypeMemberKind::Method { .. } = member.kind else {
                 continue;
             };
-            let Some(canonical) = bound.canonical_type_member_declaration(member.id) else {
-                continue;
-            };
-            if !checked.insert(canonical) {
-                continue;
-            }
             let Some(group) = bound.type_member_group(member.id) else {
                 continue;
             };
@@ -445,22 +411,21 @@ impl Checker<'_> {
                 .filter_map(|declaration| bound.declaration(*declaration))
                 .filter_map(|declaration| by_node.get(&declaration.owner).copied())
                 .filter_map(|candidate| match &candidate.kind {
-                    TypeMemberKind::Method { name, optional, .. } => Some((name.span, *optional)),
+                    TypeMemberKind::Method { name, optional, .. } => {
+                        Some((candidate.id, name.span, *optional))
+                    }
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            let Some((_, canonical_optional)) = methods.first().copied() else {
+            let Some((first, _, canonical_optional)) = methods.first().copied() else {
                 continue;
             };
-            if methods.len() > 1
-                && methods
-                    .iter()
-                    .any(|(_, optional)| *optional != canonical_optional)
-            {
-                for (span, optional) in methods {
-                    if optional != canonical_optional {
-                        d!(self, file, span, 2386);
-                    }
+            if first != member.id {
+                continue;
+            }
+            for (_, span, optional) in methods {
+                if optional != canonical_optional {
+                    d!(self, file, span, 2386);
                 }
             }
         }
@@ -488,7 +453,7 @@ impl Checker<'_> {
             return;
         }
         if !parameter.modifiers.is_empty() {
-            if parameter.modifiers.iter().any(is_property_modifier) {
+            if parameter.is_property() {
                 d!(self, file, parameter.span, 2369);
             }
             d!(self, file, parameter.name_span, 1018);
@@ -551,7 +516,8 @@ impl Checker<'_> {
             | TypeNodeKind::Constructor { .. }
             | TypeNodeKind::Object(_)
             | TypeNodeKind::Tuple(_)
-            | TypeNodeKind::Array(_) => IndexKeySyntax::Invalid,
+            | TypeNodeKind::Array(_)
+            | TypeNodeKind::This => IndexKeySyntax::Invalid,
             TypeNodeKind::Literal(_) | TypeNodeKind::Infer { .. } => {
                 IndexKeySyntax::LiteralOrGeneric
             }
@@ -565,28 +531,22 @@ impl Checker<'_> {
                 else {
                     return IndexKeySyntax::Unknown;
                 };
-                if !self.semantic_declaration_is_claimed(declaration_id) {
-                    let _ = self.require_completion(Completion::<()>::Deferred);
+                let Some(remove_alias) = self.begin_alias_walk(declaration_id, active_aliases)
+                else {
                     return IndexKeySyntax::Unknown;
-                }
-                match self.models.get(&declaration_id) {
+                };
+                let result = match self.models.get(&declaration_id).copied() {
                     Some(DeclarationModel::TypeAlias {
                         declaration: alias,
                         scope: alias_scope,
-                    }) if alias.type_parameters.is_empty() && arguments.is_empty() => {
-                        if !active_aliases.insert(declaration_id) {
-                            return IndexKeySyntax::Unknown;
-                        }
-                        let result = self.index_key_syntax(
+                    }) if alias.type_parameters.is_empty() && arguments.is_empty() => self
+                        .index_key_syntax(
                             file,
-                            *alias_scope,
+                            alias_scope,
                             &alias.ty,
                             type_parameters,
                             active_aliases,
-                        );
-                        active_aliases.remove(&declaration_id);
-                        result
-                    }
+                        ),
                     Some(DeclarationModel::Interface { .. } | DeclarationModel::Class { .. }) => {
                         IndexKeySyntax::Invalid
                     }
@@ -597,20 +557,22 @@ impl Checker<'_> {
                     {
                         IndexKeySyntax::Invalid
                     }
-                    Some(DeclarationModel::TypeAlias { .. })
-                    | Some(DeclarationModel::Variable { .. })
-                    | Some(DeclarationModel::Parameter { .. })
-                    | Some(DeclarationModel::Function { .. })
-                    | Some(DeclarationModel::JavaScriptProperty(..))
-                    | None => IndexKeySyntax::Unknown,
+                    _ => IndexKeySyntax::Unknown,
+                };
+                if remove_alias {
+                    active_aliases.remove(&declaration_id);
                 }
+                result
             }
             TypeNodeKind::Union(members) => {
                 members.iter().fold(IndexKeySyntax::Valid, |state, member| {
-                    combine_index_key_syntax(
-                        state,
-                        self.index_key_syntax(file, scope, member, type_parameters, active_aliases),
-                    )
+                    state.max(self.index_key_syntax(
+                        file,
+                        scope,
+                        member,
+                        type_parameters,
+                        active_aliases,
+                    ))
                 })
             }
             TypeNodeKind::Parenthesized(inner) => {
@@ -629,26 +591,25 @@ impl Checker<'_> {
     }
 }
 
-const fn combine_index_key_syntax(left: IndexKeySyntax, right: IndexKeySyntax) -> IndexKeySyntax {
-    match (left, right) {
-        (IndexKeySyntax::LiteralOrGeneric, _) | (_, IndexKeySyntax::LiteralOrGeneric) => {
-            IndexKeySyntax::LiteralOrGeneric
+fn combine_rest_types(
+    members: Vec<TypeId>,
+    decisive: RestTypeSyntax,
+    mut result: RestTypeSyntax,
+    mut classify: impl FnMut(TypeId) -> RestTypeSyntax,
+) -> RestTypeSyntax {
+    for member in members {
+        match classify(member) {
+            value if value == decisive => return decisive,
+            RestTypeSyntax::Any | RestTypeSyntax::Bottom | RestTypeSyntax::ErrorCascade
+                if decisive == RestTypeSyntax::ArrayLike =>
+            {
+                return decisive;
+            }
+            RestTypeSyntax::Unknown => result = RestTypeSyntax::Unknown,
+            _ => {}
         }
-        (IndexKeySyntax::Invalid, _) | (_, IndexKeySyntax::Invalid) => IndexKeySyntax::Invalid,
-        (IndexKeySyntax::Unknown, _) | (_, IndexKeySyntax::Unknown) => IndexKeySyntax::Unknown,
-        (IndexKeySyntax::Valid, IndexKeySyntax::Valid) => IndexKeySyntax::Valid,
     }
-}
-
-const fn is_property_modifier(modifier: &ParameterModifierNode) -> bool {
-    matches!(
-        modifier.kind,
-        ParameterModifier::Public
-            | ParameterModifier::Protected
-            | ParameterModifier::Private
-            | ParameterModifier::Readonly
-            | ParameterModifier::Override
-    )
+    result
 }
 
 const fn grammar_message(code: u32) -> &'static str {

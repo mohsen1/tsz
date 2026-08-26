@@ -156,8 +156,7 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             | "moduledetection"
             | "importsnotusedasvalues"
             | "baseurl"
-            | "outfile"
-            | "usedefineforclassfields" => {
+            | "outfile" => {
                 let _ = take_value()?;
             }
             _ => invocation.unknown_options.push(raw_name.to_string()),

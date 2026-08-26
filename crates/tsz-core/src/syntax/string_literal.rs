@@ -1,13 +1,6 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
-use super::scanner::is_plain_strict_binding_identifier;
-use super::{
-    CommentTrivia, Expression, ExpressionKind, Literal, Statement, StatementKind, VariableKind,
-    comments_form_contiguous_plain_leading_run, source_is_ascii_outside_comments,
-    source_uses_supported_line_breaks, statement_starts_at_supported_column,
-};
-
 /// An ECMAScript string value represented as exact UTF-16 code units.
 ///
 /// Rust `String` cannot represent authored escapes for lone surrogate code
@@ -19,6 +12,10 @@ impl Utf16String {
     #[must_use]
     pub fn units(&self) -> &[u16] {
         &self.0
+    }
+
+    pub(crate) fn as_string(&self) -> Option<String> {
+        String::from_utf16(&self.0).ok()
     }
 }
 
@@ -34,16 +31,6 @@ pub struct ExtendedUnicodeStringLiteral {
     pub terminated: bool,
     pub contains_invalid_escape: bool,
     pub contains_extended_unicode_escape: bool,
-    ownership: ExtendedUnicodeStringOwnership,
-}
-
-impl ExtendedUnicodeStringLiteral {
-    /// Whether scanner recovery and semantic/product ownership are proven for
-    /// this token shape. Invalid and unterminated escapes can still be owned.
-    #[must_use]
-    pub const fn validation_supported(&self) -> bool {
-        !matches!(self.ownership, ExtendedUnicodeStringOwnership::Unowned)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,24 +39,22 @@ pub enum StringLiteral {
     Extended(ExtendedUnicodeStringLiteral),
 }
 
+/// Structural result of scanning one authored escape. String and template
+/// consumers retain their distinct recovery diagnostics and value domains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExtendedUnicodeStringOwnership {
-    ValidTerminatedRun,
-    ValidUnterminatedSingle,
-    HomogeneousInvalid(EscapeRecoveryClass),
-    Unowned,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EscapeRecoveryClass {
-    OverRangeClosed,
-    EmptyClosed,
-    NegativeClosed,
-    IdentifierUnitClosed,
-    EmptyAtQuote,
-    UnterminatedDigitsAtQuote,
-    UnexpectedEndDigits,
-    UnterminatedDigitsAtLineBreak,
+pub(super) enum AuthoredEscape {
+    Empty,
+    CodePoint(u32),
+    LegacyOctal(u8),
+    NonOctalDecimal(u8),
+    MissingFixedHex,
+    ExtendedUnicode {
+        digits_start: usize,
+        digits_end: usize,
+        value: u64,
+        closed: bool,
+    },
+    MissingCharacter,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,10 +64,10 @@ struct StringDiagnosticEvent {
 }
 
 impl StringDiagnosticEvent {
-    fn new(source: &SourceText, span: Span, message: &'static str, code: u32) -> Self {
+    fn new(source: &SourceText, span: Span, message: impl Into<String>, code: u32) -> Self {
         Self {
             byte_span: span,
-            diagnostic: Diagnostic::at(source, span, message.to_string(), code),
+            diagnostic: Diagnostic::at(source, span, message.into(), code),
         }
     }
 }
@@ -91,23 +76,11 @@ impl StringDiagnosticEvent {
 pub(super) struct ScannedStringLiteral {
     pub span: Span,
     literal: ExtendedUnicodeStringLiteral,
-    diagnostic_events: Vec<StringDiagnosticEvent>,
 }
 
 impl ScannedStringLiteral {
     pub(super) fn syntax_literal(&self) -> ExtendedUnicodeStringLiteral {
         self.literal.clone()
-    }
-
-    /// The scanner creates each diagnostic identity once. Parser recovery may
-    /// only graduate the file when its complete diagnostic vector is exactly
-    /// this token's ordered event vector, with no speculative re-emission.
-    pub(super) fn owns_all_diagnostics(&self, diagnostics: &[Diagnostic]) -> bool {
-        diagnostics.len() == self.diagnostic_events.len()
-            && diagnostics
-                .iter()
-                .zip(&self.diagnostic_events)
-                .all(|(diagnostic, event)| diagnostic == &event.diagnostic)
     }
 }
 
@@ -115,16 +88,16 @@ pub(super) struct ScannedStringToken {
     pub end: usize,
     pub diagnostics: Vec<Diagnostic>,
     pub extended_literal: Option<ScannedStringLiteral>,
-    pub line_continuation_literal: Option<ScannedLineContinuationStringLiteral>,
+    pub cooked_literal: Option<ScannedCookedStringLiteral>,
 }
 
-/// Sparse scanner-owned semantic value for the exact ordinary-string subset
-/// whose only escapes are line continuations. The authored token remains in
-/// source text for emit; parser consumers use this cooked value for identity.
+/// Scanner-owned semantic value for a terminated string. The authored token
+/// remains in source text for emit; parser consumers use this cooked value for
+/// identity, including lone UTF-16 surrogate units.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ScannedLineContinuationStringLiteral {
+pub(super) struct ScannedCookedStringLiteral {
     pub span: Span,
-    pub cooked: String,
+    pub cooked: Utf16String,
 }
 
 pub(super) fn scan_ordinary_string_literal(
@@ -134,29 +107,30 @@ pub(super) fn scan_ordinary_string_literal(
 ) -> ScannedStringToken {
     let bytes = source.text.as_bytes();
     let probe = probe_ordinary_string_literal(source, start, quote);
+    let mut ordinary_events = scan_ordinary_escape_diagnostics(source, start, probe);
     if !probe.has_extended_escape {
-        let line_continuation_literal = (probe.terminated
-            && probe.has_line_continuation
-            && !probe.has_non_line_continuation_escape)
-            .then(|| ScannedLineContinuationStringLiteral {
-                span: Span::new(source.id, start, probe.end),
-                cooked: cook_line_continuation_string(&source.text[start..probe.end]),
-            });
+        let span = Span::new(source.id, start, probe.end);
+        let cooked_literal = probe
+            .terminated
+            .then(|| cook_terminated_ordinary_string(source.slice(span)))
+            .flatten()
+            .map(|cooked| ScannedCookedStringLiteral { span, cooked });
+        if !probe.terminated {
+            ordinary_events.push(StringDiagnosticEvent::new(
+                source,
+                span,
+                "Unterminated string literal.",
+                1002,
+            ));
+        }
         return ScannedStringToken {
             end: probe.end,
-            diagnostics: (!probe.terminated)
-                .then(|| {
-                    Diagnostic::at(
-                        source,
-                        Span::new(source.id, start, probe.end),
-                        "Unterminated string literal.".to_string(),
-                        1002,
-                    )
-                })
+            diagnostics: ordinary_events
                 .into_iter()
+                .map(|event| event.diagnostic)
                 .collect(),
             extended_literal: None,
-            line_continuation_literal,
+            cooked_literal,
         };
     }
 
@@ -167,7 +141,6 @@ pub(super) fn scan_ordinary_string_literal(
     let mut contains_invalid_escape = false;
     let mut contains_extended_unicode_escape = false;
     let mut terminated = false;
-    let mut recovery_at_line_break = false;
 
     while let Some(byte) = bytes.get(offset).copied() {
         if byte == quote {
@@ -178,7 +151,6 @@ pub(super) fn scan_ordinary_string_literal(
         }
         if matches!(byte, b'\n' | b'\r') {
             append_utf16(&source.text[segment_start..offset], &mut cooked);
-            recovery_at_line_break = true;
             break;
         }
         if bytes.get(offset..offset + 3) == Some(b"\\u{") {
@@ -224,12 +196,18 @@ pub(super) fn scan_ordinary_string_literal(
         );
     }
 
+    ordinary_events.extend(events);
+    ordinary_events.sort_by_key(|event| event.byte_span.start);
+    let events = ordinary_events;
+
     let span = Span::new(source.id, start, offset);
     debug_assert_eq!(probe.end, offset);
     debug_assert_eq!(probe.terminated, terminated);
     let raw = source.slice(span).to_string();
-    let ownership =
-        classify_extended_unicode_string(&raw, quote, terminated, recovery_at_line_break);
+    let cooked_literal = terminated
+        .then(|| cook_terminated_ordinary_string(&raw))
+        .flatten()
+        .map(|cooked| ScannedCookedStringLiteral { span, cooked });
     let diagnostics = events
         .iter()
         .map(|event| event.diagnostic.clone())
@@ -245,11 +223,9 @@ pub(super) fn scan_ordinary_string_literal(
                 terminated,
                 contains_invalid_escape,
                 contains_extended_unicode_escape,
-                ownership,
             },
-            diagnostic_events: events,
         }),
-        line_continuation_literal: None,
+        cooked_literal,
     }
 }
 
@@ -258,24 +234,18 @@ struct StringProbe {
     end: usize,
     terminated: bool,
     has_extended_escape: bool,
-    has_line_continuation: bool,
-    has_non_line_continuation_escape: bool,
 }
 
 fn probe_ordinary_string_literal(source: &SourceText, start: usize, quote: u8) -> StringProbe {
     let bytes = source.text.as_bytes();
     let mut offset = start + 1;
     let mut has_extended_escape = false;
-    let mut has_line_continuation = false;
-    let mut has_non_line_continuation_escape = false;
     while let Some(byte) = bytes.get(offset).copied() {
         if byte == quote {
             return StringProbe {
                 end: offset + 1,
                 terminated: true,
                 has_extended_escape,
-                has_line_continuation,
-                has_non_line_continuation_escape,
             };
         }
         if matches!(byte, b'\n' | b'\r') {
@@ -285,14 +255,10 @@ fn probe_ordinary_string_literal(source: &SourceText, start: usize, quote: u8) -
             let escape_start = offset;
             offset += 1;
             if let Some(length) = line_continuation_len_at(bytes, offset) {
-                has_line_continuation = true;
                 offset += length;
             } else if let Some(character) = source.text[offset..].chars().next() {
                 has_extended_escape |= bytes.get(escape_start..escape_start + 3) == Some(b"\\u{");
-                has_non_line_continuation_escape = true;
                 offset += character.len_utf8();
-            } else {
-                has_non_line_continuation_escape = true;
             }
             continue;
         }
@@ -305,36 +271,141 @@ fn probe_ordinary_string_literal(source: &SourceText, start: usize, quote: u8) -
         end: offset,
         terminated: false,
         has_extended_escape,
-        has_line_continuation,
-        has_non_line_continuation_escape,
     }
 }
 
-fn cook_line_continuation_string(raw: &str) -> String {
-    debug_assert!(raw.len() >= 2);
-    let bytes = raw.as_bytes();
-    let body_end = raw.len() - 1;
-    let mut cooked = String::with_capacity(body_end.saturating_sub(1));
-    let mut offset = 1;
-    let mut segment_start = offset;
+fn scan_ordinary_escape_diagnostics(
+    source: &SourceText,
+    start: usize,
+    probe: StringProbe,
+) -> Vec<StringDiagnosticEvent> {
+    let bytes = source.text.as_bytes();
+    let body_end = probe.end.saturating_sub(usize::from(probe.terminated));
+    let mut offset = start + 1;
+    let mut diagnostics = Vec::new();
     while offset < body_end {
-        if bytes[offset] == b'\\' {
-            cooked.push_str(&raw[segment_start..offset]);
-            offset += 1;
-            let length = line_continuation_len_at(bytes, offset)
-                .expect("sparse string metadata contains only line-continuation escapes");
-            offset += length;
-            segment_start = offset;
-        } else {
-            let character = raw[offset..]
+        if bytes[offset] != b'\\' {
+            offset += source.text[offset..]
                 .chars()
                 .next()
-                .expect("offset remains on a character boundary");
-            offset += character.len_utf8();
+                .map_or(1, char::len_utf8);
+            continue;
+        }
+        let escape_start = offset;
+        match decode_authored_escape(&source.text, &mut offset, body_end) {
+            AuthoredEscape::LegacyOctal(value) => diagnostics.push(StringDiagnosticEvent::new(
+                source,
+                Span::new(source.id, escape_start, offset),
+                format!("Octal escape sequences are not allowed. Use the syntax '\\x{value:02x}'."),
+                1487,
+            )),
+            AuthoredEscape::NonOctalDecimal(digit) => diagnostics.push(StringDiagnosticEvent::new(
+                source,
+                Span::new(source.id, escape_start, offset),
+                format!("Escape sequence '\\{}' is not allowed.", char::from(digit)),
+                1488,
+            )),
+            AuthoredEscape::MissingFixedHex => diagnostics.push(StringDiagnosticEvent::new(
+                source,
+                Span::new(source.id, offset, offset),
+                "Hexadecimal digit expected.",
+                1125,
+            )),
+            _ => {}
         }
     }
-    cooked.push_str(&raw[segment_start..body_end]);
-    cooked
+    diagnostics
+}
+
+pub(super) fn decode_authored_escape(
+    text: &str,
+    offset: &mut usize,
+    limit: usize,
+) -> AuthoredEscape {
+    let bytes = text.as_bytes();
+    debug_assert_eq!(bytes.get(*offset), Some(&b'\\'));
+    *offset += 1;
+    if let Some(length) = line_continuation_len_at(bytes, *offset)
+        && *offset + length <= limit
+    {
+        *offset += length;
+        return AuthoredEscape::Empty;
+    }
+    let Some(escaped) = bytes.get(*offset).copied().filter(|_| *offset < limit) else {
+        return AuthoredEscape::MissingCharacter;
+    };
+    *offset += 1;
+    let fixed_hex = |offset: &mut usize, width| {
+        let mut value = 0;
+        for _ in 0..width {
+            let digit = (*offset < limit)
+                .then(|| bytes[*offset])
+                .and_then(hex_value)?;
+            value = value * 16 + digit;
+            *offset += 1;
+        }
+        Some(value)
+    };
+    match escaped {
+        b'0' if *offset >= limit || !bytes[*offset].is_ascii_digit() => {
+            AuthoredEscape::CodePoint(0)
+        }
+        b'0'..=b'7' => {
+            let digit_start = *offset - 1;
+            if escaped <= b'3' && *offset < limit && matches!(bytes[*offset], b'0'..=b'7') {
+                *offset += 1;
+            }
+            if *offset < limit && matches!(bytes[*offset], b'0'..=b'7') {
+                *offset += 1;
+            }
+            let value = bytes[digit_start..*offset]
+                .iter()
+                .fold(0_u8, |value, digit| value * 8 + (*digit - b'0'));
+            AuthoredEscape::LegacyOctal(value)
+        }
+        b'8' | b'9' => AuthoredEscape::NonOctalDecimal(escaped),
+        b'b' => AuthoredEscape::CodePoint(0x08),
+        b'f' => AuthoredEscape::CodePoint(0x0c),
+        b'n' => AuthoredEscape::CodePoint(u32::from(b'\n')),
+        b'r' => AuthoredEscape::CodePoint(u32::from(b'\r')),
+        b't' => AuthoredEscape::CodePoint(u32::from(b'\t')),
+        b'v' => AuthoredEscape::CodePoint(0x0b),
+        b'x' => {
+            fixed_hex(offset, 2).map_or(AuthoredEscape::MissingFixedHex, AuthoredEscape::CodePoint)
+        }
+        b'u' if *offset >= limit || bytes[*offset] != b'{' => {
+            fixed_hex(offset, 4).map_or(AuthoredEscape::MissingFixedHex, AuthoredEscape::CodePoint)
+        }
+        b'u' => {
+            *offset += 1;
+            let digits_start = *offset;
+            let mut value = 0_u64;
+            while *offset < limit {
+                let Some(digit) = hex_value(bytes[*offset]) else {
+                    break;
+                };
+                value = value.saturating_mul(16).saturating_add(u64::from(digit));
+                *offset += 1;
+            }
+            let digits_end = *offset;
+            let closed = *offset < limit && bytes[*offset] == b'}';
+            *offset += usize::from(closed);
+            AuthoredEscape::ExtendedUnicode {
+                digits_start,
+                digits_end,
+                value,
+                closed,
+            }
+        }
+        _ => {
+            let character = text[*offset - 1..limit]
+                .chars()
+                .next()
+                .expect("the escaped source byte starts a character");
+            *offset += character.len_utf8() - 1;
+            AuthoredEscape::CodePoint(character as u32)
+        }
+    }
 }
 
 fn line_continuation_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
@@ -353,120 +424,52 @@ fn is_unicode_line_separator_at(bytes: &[u8], offset: usize) -> bool {
     )
 }
 
-fn classify_extended_unicode_string(
-    raw: &str,
-    quote: u8,
-    terminated: bool,
-    recovery_at_line_break: bool,
-) -> ExtendedUnicodeStringOwnership {
-    if quote != b'"' || !raw.is_ascii() || raw.as_bytes().first() != Some(&quote) {
-        return ExtendedUnicodeStringOwnership::Unowned;
-    }
-    let body_end = if terminated {
-        if raw.as_bytes().last() != Some(&quote) {
-            return ExtendedUnicodeStringOwnership::Unowned;
+fn push_decoded_escape(escape: AuthoredEscape, cooked: &mut Vec<u16>) -> Option<()> {
+    let value = match escape {
+        AuthoredEscape::Empty => return Some(()),
+        AuthoredEscape::CodePoint(value) => value,
+        AuthoredEscape::LegacyOctal(value) | AuthoredEscape::NonOctalDecimal(value) => {
+            u32::from(value)
         }
-        raw.len() - 1
-    } else {
-        raw.len()
+        AuthoredEscape::ExtendedUnicode {
+            digits_start,
+            digits_end,
+            value,
+            closed: true,
+        } if digits_start < digits_end && value <= 0x10_ffff => value as u32,
+        AuthoredEscape::MissingFixedHex
+        | AuthoredEscape::ExtendedUnicode { .. }
+        | AuthoredEscape::MissingCharacter => return None,
     };
-    let body = &raw.as_bytes()[1..body_end];
-    let mut offset = 0;
-    let mut valid_count = 0_usize;
-    let mut invalid_count = 0_usize;
-    let mut invalid_class = None;
-    while offset < body.len() {
-        if body.get(offset..offset + 3) != Some(b"\\u{") {
-            return ExtendedUnicodeStringOwnership::Unowned;
-        }
-        offset += 3;
-        let digits_start = offset;
-        let mut value = 0_u64;
-        while let Some(digit) = body.get(offset).copied().and_then(hex_value) {
-            value = value.saturating_mul(16).saturating_add(u64::from(digit));
-            offset += 1;
-        }
-        let outcome = if offset > digits_start {
-            if body.get(offset) == Some(&b'}') {
-                offset += 1;
-                if value <= 0x10_ffff {
-                    None
-                } else {
-                    Some(EscapeRecoveryClass::OverRangeClosed)
-                }
-            } else if offset == body.len() && value <= 0x10_ffff {
-                Some(if terminated {
-                    EscapeRecoveryClass::UnterminatedDigitsAtQuote
-                } else if recovery_at_line_break {
-                    EscapeRecoveryClass::UnterminatedDigitsAtLineBreak
-                } else {
-                    EscapeRecoveryClass::UnexpectedEndDigits
-                })
-            } else {
-                return ExtendedUnicodeStringOwnership::Unowned;
-            }
-        } else if body.get(offset) == Some(&b'}') {
-            offset += 1;
-            Some(EscapeRecoveryClass::EmptyClosed)
-        } else if offset == body.len() && terminated {
-            Some(EscapeRecoveryClass::EmptyAtQuote)
-        } else if body.get(offset) == Some(&b'-') {
-            offset += 1;
-            let negative_digits = offset;
-            while body.get(offset).is_some_and(u8::is_ascii_hexdigit) {
-                offset += 1;
-            }
-            if offset == negative_digits || body.get(offset) != Some(&b'}') {
-                return ExtendedUnicodeStringOwnership::Unowned;
-            }
-            offset += 1;
-            Some(EscapeRecoveryClass::NegativeClosed)
-        } else if body
-            .get(offset)
-            .is_some_and(|byte| is_ascii_nonhex_alpha(*byte))
-            && body.get(offset + 1) == Some(&b'}')
-        {
-            offset += 2;
-            Some(EscapeRecoveryClass::IdentifierUnitClosed)
-        } else {
-            return ExtendedUnicodeStringOwnership::Unowned;
-        };
-
-        match outcome {
-            None if invalid_class.is_none() => valid_count += 1,
-            Some(class) if valid_count == 0 && invalid_class.is_none_or(|owned| owned == class) => {
-                invalid_count += 1;
-                invalid_class = Some(class);
-            }
-            None | Some(_) => return ExtendedUnicodeStringOwnership::Unowned,
-        }
-    }
-
-    if let Some(class) = invalid_class {
-        if invalid_count > 1 && class != EscapeRecoveryClass::IdentifierUnitClosed {
-            return ExtendedUnicodeStringOwnership::Unowned;
-        }
-        if !terminated
-            && !matches!(
-                class,
-                EscapeRecoveryClass::UnexpectedEndDigits
-                    | EscapeRecoveryClass::UnterminatedDigitsAtLineBreak
-            )
-        {
-            return ExtendedUnicodeStringOwnership::Unowned;
-        }
-        ExtendedUnicodeStringOwnership::HomogeneousInvalid(class)
-    } else if valid_count > 0 && terminated {
-        ExtendedUnicodeStringOwnership::ValidTerminatedRun
-    } else if valid_count == 1 {
-        ExtendedUnicodeStringOwnership::ValidUnterminatedSingle
-    } else {
-        ExtendedUnicodeStringOwnership::Unowned
-    }
+    push_code_point(value, cooked);
+    Some(())
 }
 
-const fn is_ascii_nonhex_alpha(byte: u8) -> bool {
-    matches!(byte, b'g'..=b'z' | b'G'..=b'Z')
+fn cook_terminated_ordinary_string(raw: &str) -> Option<Utf16String> {
+    if raw.len() < 2 || raw.as_bytes().first() != raw.as_bytes().last() {
+        return None;
+    }
+    let bytes = raw.as_bytes();
+    let body_end = bytes.len() - 1;
+    let mut cooked = Vec::with_capacity(body_end.saturating_sub(1));
+    let mut offset = 1;
+    let mut segment_start = offset;
+    while offset < body_end {
+        if bytes[offset] == b'\\' {
+            append_utf16(&raw[segment_start..offset], &mut cooked);
+            let escape = decode_authored_escape(raw, &mut offset, body_end);
+            push_decoded_escape(escape, &mut cooked)?;
+            segment_start = offset;
+        } else {
+            let character = raw[offset..]
+                .chars()
+                .next()
+                .expect("offset remains on a character boundary");
+            offset += character.len_utf8();
+        }
+    }
+    append_utf16(&raw[segment_start..body_end], &mut cooked);
+    Some(Utf16String(cooked))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -579,10 +582,6 @@ pub(super) const fn hex_value(byte: u8) -> Option<u32> {
     }
 }
 
-direct_var_literal_predicates!(
-    statements_form_extended_unicode_string_safe_file,
-    statements_form_extended_unicode_string_variable_file,
-    comments_form_extended_unicode_string_safe_file,
-    ExpressionKind::Literal(Literal::String(StringLiteral::Extended(literal)))
-        if literal.validation_supported(),
-);
+#[cfg(test)]
+#[path = "../../rewrite-tests/ordinary_string_escape_unit.rs"]
+mod tests;

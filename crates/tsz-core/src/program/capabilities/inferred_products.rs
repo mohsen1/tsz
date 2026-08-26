@@ -1,9 +1,12 @@
 use crate::syntax::{
     BinaryOperator, ClassMember, ClassMemberKind, Expression, ExpressionKind, ExpressionRoot,
-    ExpressionTraversal::All, Parameter, SourceSyntaxFact, Statement, StatementKind,
-    contains_matching_expression,
+    ExpressionTraversal::All, Literal, NumberLiteral, Parameter, SourceSyntaxFact, Statement,
+    StatementKind, StringLiteral, contains_matching_expression,
 };
 
+use super::emit_targets::{
+    class_member_declaration_type_is_erased, class_parameter_property_type_is_published,
+};
 use super::{
     CapabilityNonclaim, CapabilityScope, CapabilityTarget, ProgramFile, SemanticGap, SyntaxGap,
     add_both_emit, add_semantic,
@@ -11,7 +14,7 @@ use super::{
 
 pub(super) fn add_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &ProgramFile) {
     add_unsigned_shift_nonclaims(nonclaims, file);
-    add_declaration_call_nonclaims(nonclaims, file);
+    add_declaration_expression_nonclaims(nonclaims, file);
 }
 
 fn add_unsigned_shift_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &ProgramFile) {
@@ -70,8 +73,10 @@ fn add_unsigned_shift_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &
     }
 }
 
-fn add_declaration_call_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &ProgramFile) {
-    let inference = InferredExpression::Call;
+fn add_declaration_expression_nonclaims(
+    nonclaims: &mut Vec<CapabilityNonclaim>,
+    file: &ProgramFile,
+) {
     let mut record = |owner| {
         add_semantic(
             nonclaims,
@@ -80,16 +85,18 @@ fn add_declaration_call_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file:
             SemanticGap::DeclarationExpressionSummary,
         );
     };
-    for root in &file.syntax.statements {
-        if inferred_statement(root, inference)
-            || matches!(&root.kind, StatementKind::Export(value) if inference.occurs_in(value.assignment.as_ref()))
-        {
-            record(root.id);
-        }
-        if let StatementKind::Class(class) = &root.kind {
-            for member in &class.members {
-                if inferred_member(member, inference) {
-                    record(member.id);
+    for inference in [InferredExpression::Call, InferredExpression::LiteralSummary] {
+        for root in &file.syntax.statements {
+            if inferred_statement(root, inference)
+                || matches!(&root.kind, StatementKind::Export(value) if inference.occurs_in(value.assignment.as_ref()))
+            {
+                record(root.id);
+            }
+            if let StatementKind::Class(class) = &root.kind {
+                for member in &class.members {
+                    if inferred_member(member, inference) {
+                        record(member.id);
+                    }
                 }
             }
         }
@@ -100,6 +107,7 @@ fn add_declaration_call_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file:
 enum InferredExpression {
     Shift,
     Call,
+    LiteralSummary,
 }
 
 impl InferredExpression {
@@ -121,15 +129,25 @@ impl InferredExpression {
                 }
             ),
             Self::Call => matches!(expression.kind, ExpressionKind::Call { .. }),
+            Self::LiteralSummary => matches!(
+                expression.kind,
+                ExpressionKind::NonNull(_)
+                    | ExpressionKind::RegularExpression(_)
+                    | ExpressionKind::Literal(
+                        Literal::NoSubstitutionTemplate(_)
+                            | Literal::String(StringLiteral::Extended(_))
+                            | Literal::Number(NumberLiteral::Recovery(_))
+                    )
+            ),
         }
     }
 }
 
 fn inferred_statement(statement: &Statement, inference: InferredExpression) -> bool {
     match &statement.kind {
-        StatementKind::Variable(value) => {
-            value.annotation.is_none() && inference.occurs_in(value.initializer.as_ref())
-        }
+        StatementKind::Variable(value) => value.declarators.iter().any(|declarator| {
+            declarator.annotation.is_none() && inference.occurs_in(declarator.initializer.as_ref())
+        }),
         StatementKind::Function(value) => value
             .parameters
             .iter()
@@ -139,6 +157,15 @@ fn inferred_statement(statement: &Statement, inference: InferredExpression) -> b
 }
 
 fn inferred_member(member: &ClassMember, inference: InferredExpression) -> bool {
+    if class_member_declaration_type_is_erased(member) {
+        return match &member.kind {
+            ClassMemberKind::Constructor { parameters, .. } => parameters.iter().any(|parameter| {
+                class_parameter_property_type_is_published(parameter)
+                    && inferred_parameter(parameter, inference)
+            }),
+            ClassMemberKind::Property { .. } | ClassMemberKind::Method { .. } => false,
+        };
+    }
     match &member.kind {
         ClassMemberKind::Property {
             annotation,

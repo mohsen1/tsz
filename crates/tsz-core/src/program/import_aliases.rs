@@ -48,7 +48,13 @@ impl TypeQueryRoot {
 
 #[derive(Debug, Default)]
 pub(super) struct ImportAliases {
-    value_targets: BTreeMap<DeclId, Option<DeclId>>,
+    targets: BTreeMap<DeclId, ImportAliasTargets>,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct ImportAliasTargets {
+    value: Option<DeclId>,
+    r#type: Option<DeclId>,
 }
 
 impl ImportAliases {
@@ -57,7 +63,7 @@ impl ImportAliases {
             .iter()
             .map(|file| (normalize_path(&file.source.host_path), file.source.id))
             .collect::<BTreeMap<_, _>>();
-        let mut value_targets = BTreeMap::new();
+        let mut targets = BTreeMap::new();
 
         for file in files {
             for statement in &file.syntax.statements {
@@ -74,9 +80,13 @@ impl ImportAliases {
                     let target = match (binding.namespace, target_file, binding.imported.as_deref())
                     {
                         (false, Some(target), Some(imported)) => {
-                            direct_exported_value(&files[target.0 as usize], imported)
+                            let target = &files[target.0 as usize];
+                            ImportAliasTargets {
+                                value: direct_exported(target, imported, Meaning::Value),
+                                r#type: direct_exported(target, imported, Meaning::Type),
+                            }
                         }
-                        _ => None,
+                        _ => ImportAliasTargets::default(),
                     };
                     for declaration in file.bindings.declarations.iter().filter(|declaration| {
                         declaration.owner == statement.id
@@ -84,13 +94,13 @@ impl ImportAliases {
                             && declaration.name == binding.local
                             && declaration.name_span == binding.local_span
                     }) {
-                        value_targets.insert(declaration.id, target);
+                        targets.insert(declaration.id, target);
                     }
                 }
             }
         }
 
-        Self { value_targets }
+        Self { targets }
     }
 }
 
@@ -111,10 +121,10 @@ impl Program {
             .or_else(|| self.resolve_import_alias(bound, scope, name))
         {
             return Some(
-                match self.import_aliases.value_targets.get(&declaration).copied() {
-                    Some(target) => TypeQueryRoot::ImportAlias {
+                match self.import_aliases.targets.get(&declaration).copied() {
+                    Some(targets) => TypeQueryRoot::ImportAlias {
                         declaration,
-                        target,
+                        target: targets.value,
                     },
                     None => TypeQueryRoot::Declaration(declaration),
                 },
@@ -122,6 +132,32 @@ impl Program {
         }
         self.resolve_global(name, Meaning::Value)
             .map(TypeQueryRoot::Declaration)
+    }
+
+    /// Resolve a semantic reference through the lexical/global binder tables.
+    /// Direct named type imports use the exported declaration when that exact
+    /// structural form is owned; navigation continues to use the local id.
+    #[must_use]
+    pub(crate) fn resolve_reference_declaration(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        name: &str,
+        meaning: Meaning,
+    ) -> Option<DeclId> {
+        let bound = &self.files.get(file.0 as usize)?.bindings;
+        let declaration = bound
+            .resolve(scope, name, meaning)
+            .or_else(|| self.resolve_global(name, meaning))?;
+        Some(if meaning == Meaning::Type {
+            self.import_aliases
+                .targets
+                .get(&declaration)
+                .and_then(|targets| targets.r#type)
+                .unwrap_or(declaration)
+        } else {
+            declaration
+        })
     }
 
     fn resolve_import_alias(
@@ -133,10 +169,11 @@ impl Program {
         loop {
             let current = bound.scopes.get(scope.0 as usize)?;
             if let Some(ids) = current.names.get(name)
-                && let Some(declaration) =
-                    ids.iter().rev().copied().find(|declaration| {
-                        self.import_aliases.value_targets.contains_key(declaration)
-                    })
+                && let Some(declaration) = ids
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|declaration| self.import_aliases.targets.contains_key(declaration))
             {
                 return Some(declaration);
             }
@@ -187,39 +224,28 @@ fn exact_source_kind_supported(path: &Path, allow_js: bool) -> bool {
         || allow_js && matches!(extension, "js" | "jsx" | "mjs" | "cjs")
 }
 
-fn direct_exported_value(file: &ProgramFile, name: &str) -> Option<DeclId> {
+fn direct_exported(file: &ProgramFile, name: &str, meaning: Meaning) -> Option<DeclId> {
     let ids = file.bindings.scopes.first()?.names.get(name)?;
-    let mut values = ids.iter().copied().filter(|id| {
+    let mut declarations = ids.iter().copied().filter(|id| {
         file.bindings.declaration(*id).is_some_and(|declaration| {
-            declaration.meaning == Meaning::Value
-                && statement_directly_exports_value(
-                    &file.syntax.statements,
-                    declaration.owner,
-                    &declaration.name,
-                )
+            declaration.meaning == meaning
+                && file.syntax.statements.iter().any(|statement| {
+                    statement.id == declaration.owner && statement_directly_exports(statement)
+                })
         })
     });
-    values.next().filter(|_| values.next().is_none())
+    declarations
+        .next()
+        .filter(|_| declarations.next().is_none())
 }
 
-fn statement_directly_exports_value(
-    statements: &[Statement],
-    owner: crate::source::NodeId,
-    name: &str,
-) -> bool {
-    statements.iter().any(|statement| {
-        statement.id == owner
-            && match &statement.kind {
-                StatementKind::Variable(declaration) => {
-                    declaration.exported && declaration.name == name
-                }
-                StatementKind::Function(declaration) => {
-                    declaration.exported && !declaration.default_export && declaration.name == name
-                }
-                StatementKind::Class(declaration) => {
-                    declaration.exported && !declaration.default_export && declaration.name == name
-                }
-                _ => false,
-            }
-    })
+const fn statement_directly_exports(statement: &Statement) -> bool {
+    match &statement.kind {
+        StatementKind::Variable(declaration) => declaration.exported,
+        StatementKind::Function(declaration) => declaration.exported && !declaration.default_export,
+        StatementKind::Class(declaration) => declaration.exported && !declaration.default_export,
+        StatementKind::TypeAlias(declaration) => declaration.exported,
+        StatementKind::Interface(declaration) => declaration.exported,
+        _ => false,
+    }
 }

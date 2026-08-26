@@ -25,7 +25,7 @@ fn parsed_string_value(raw: &str) -> String {
     let StatementKind::Variable(declaration) = &statement.kind else {
         panic!("expected a variable declaration");
     };
-    let Some(initializer) = &declaration.initializer else {
+    let Some(initializer) = &declaration.declarators[0].initializer else {
         panic!("expected an initializer");
     };
     let ExpressionKind::Literal(Literal::String(StringLiteral::Plain(value))) = &initializer.kind
@@ -93,7 +93,7 @@ fn property_class_and_type_member_names_share_the_scanner_cooked_value() {
     let StatementKind::Variable(declaration) = &statement.kind else {
         panic!("expected object variable");
     };
-    let Some(ExpressionKind::Object(properties)) = declaration
+    let Some(ExpressionKind::Object(properties)) = declaration.declarators[0]
         .initializer
         .as_ref()
         .map(|initializer| &initializer.kind)

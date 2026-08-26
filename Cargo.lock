@@ -1068,7 +1068,6 @@ dependencies = [
  "clap",
  "dashmap",
  "futures",
- "libc",
  "num_cpus",
  "once_cell",
  "rayon",

@@ -1,5 +1,6 @@
 use super::Parser;
 use crate::diagnostics::Diagnostic;
+use crate::source::Span;
 use crate::syntax::{TokenKind, TypeNode};
 
 impl Parser<'_> {
@@ -26,13 +27,13 @@ impl Parser<'_> {
     }
 
     pub(super) fn parse_type_arguments(&mut self) -> Vec<TypeNode> {
-        self.parse_type_arguments_with_status().0
+        self.parse_type_arguments_with_close().0
     }
 
-    fn parse_type_arguments_with_status(&mut self) -> (Vec<TypeNode>, bool) {
+    pub(super) fn parse_type_arguments_with_close(&mut self) -> (Vec<TypeNode>, Option<Span>) {
         let left = self.current().span;
         if !self.eat(TokenKind::LessThan) {
-            return (Vec::new(), false);
+            return (Vec::new(), None);
         }
         let mut arguments = Vec::new();
         while !self.at_type_close() && !self.at(TokenKind::EndOfFile) {
@@ -45,6 +46,10 @@ impl Parser<'_> {
                 break;
             }
         }
+        let close = self.at_type_close().then(|| Span {
+            end: self.current().span.start + 1,
+            ..self.current().span
+        });
         let closed = self.expect_type_close();
         if closed && arguments.is_empty() {
             self.diagnostics.push(Diagnostic::at(
@@ -54,7 +59,7 @@ impl Parser<'_> {
                 1099,
             ));
         }
-        (arguments, closed)
+        (arguments, close.filter(|_| closed))
     }
 
     /// Disambiguate `callee<T>(value)` from relational `<`/`>` expressions.
@@ -84,8 +89,8 @@ impl Parser<'_> {
             return false;
         }
         self.with_speculative_parse(|parser| {
-            let (_, closed) = parser.parse_type_arguments_with_status();
-            closed && predicate(parser.kind())
+            let (_, close) = parser.parse_type_arguments_with_close();
+            close.is_some() && predicate(parser.kind())
         })
     }
 }

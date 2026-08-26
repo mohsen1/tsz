@@ -1,20 +1,24 @@
+use crate::source::Span;
 use crate::syntax::{
-    AccessorKind, ExpressionKind, FunctionDeclaration, KeywordType, Literal, Parameter,
-    ParameterModifier, Statement, StatementKind, TypeMember, TypeMemberKind, TypeMemberName,
+    AccessorKind, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
+    FunctionDeclaration, KeywordType, Literal, Parameter, ParameterModifier, PropertyNameKind,
+    Statement, StatementKind, StringLiteral, TypeMember, TypeMemberKind, TypeMemberName,
     TypeMemberNameKind, TypeNode, TypeNodeKind,
 };
 
-use super::{PREC_LOWEST, Printer, TYPE_PREC_LOWEST};
+use super::{PREC_LOWEST, Printer, TYPE_PREC_LOWEST, literals};
 
 impl Printer<'_> {
     pub(super) fn write_declaration_function(&mut self, declaration: &FunctionDeclaration) {
         self.write_indent();
-        self.output.push_str(if declaration.exported {
+        self.output.push_str(if declaration.default_export {
+            "export default function "
+        } else if declaration.exported {
             "export declare function "
         } else {
             "declare function "
         });
-        self.output.push_str(&declaration.name);
+        self.write_authored_identifier(&declaration.name, declaration.name_span);
         self.write_type_parameters(&declaration.type_parameters);
         self.write_declaration_parameters(&declaration.parameters);
         self.output.push_str(": ");
@@ -30,10 +34,182 @@ impl Printer<'_> {
         self.output.push_str(";\n");
     }
 
+    pub(super) fn write_declaration_class(&mut self, declaration: &ClassDeclaration) {
+        self.write_indent();
+        self.output.push_str(if declaration.default_export {
+            "export default class "
+        } else if declaration.exported {
+            "export declare class "
+        } else {
+            "declare class "
+        });
+        self.write_authored_identifier(&declaration.name, declaration.name_span);
+        self.write_type_parameters(&declaration.type_parameters);
+        if let Some(base) = &declaration.extends {
+            self.output.push_str(" extends ");
+            self.write_type(base, TYPE_PREC_LOWEST);
+        }
+        if !declaration.implements.is_empty() {
+            self.output.push_str(" implements ");
+            self.write_type_list(&declaration.implements, ", ", TYPE_PREC_LOWEST);
+        }
+        self.output.push_str(" {\n");
+        self.indent += 1;
+        if declaration
+            .members
+            .iter()
+            .any(|member| member.name_kind == PropertyNameKind::PrivateIdentifier)
+        {
+            self.write_indent();
+            self.output.push_str("#private;\n");
+        }
+        if let Some(parameters) = declaration
+            .members
+            .iter()
+            .find_map(|member| match &member.kind {
+                ClassMemberKind::Constructor {
+                    parameters,
+                    has_body: true,
+                    ..
+                } => Some(parameters.as_slice()),
+                _ => None,
+            })
+        {
+            self.write_parameter_property_declarations(parameters);
+        }
+        for member in declaration
+            .members
+            .iter()
+            .filter(|member| member.name_kind != PropertyNameKind::PrivateIdentifier)
+        {
+            self.write_indent();
+            self.write_parts(&[
+                if member.modifiers.private {
+                    "private "
+                } else if member.modifiers.protected {
+                    "protected "
+                } else {
+                    ""
+                },
+                if member.modifiers.static_member {
+                    "static "
+                } else {
+                    ""
+                },
+                if member.modifiers.readonly {
+                    "readonly "
+                } else {
+                    ""
+                },
+            ]);
+            match &member.kind {
+                ClassMemberKind::Constructor { parameters, .. } => {
+                    self.output.push_str("constructor");
+                    if member.modifiers.private {
+                        self.output.push_str("()");
+                    } else {
+                        let previous = self.declaration_parameter_property_host;
+                        self.declaration_parameter_property_host = true;
+                        self.write_declaration_parameters(parameters);
+                        self.declaration_parameter_property_host = previous;
+                    }
+                    self.output.push_str(";\n");
+                }
+                ClassMemberKind::Property {
+                    annotation,
+                    initializer,
+                    optional,
+                    ..
+                } => {
+                    self.write_property_name(&member.name, member.name_span, member.name_kind);
+                    if *optional {
+                        self.output.push('?');
+                    }
+                    if member.modifiers.private {
+                        self.output.push_str(";\n");
+                        continue;
+                    }
+                    self.output.push_str(": ");
+                    if let Some(annotation) = annotation {
+                        self.write_type(annotation, TYPE_PREC_LOWEST);
+                    } else {
+                        if initializer
+                            .as_ref()
+                            .is_some_and(literals::expression_contains_template)
+                        {
+                            self.declaration_supported = false;
+                        }
+                        self.output.push_str("unknown");
+                    }
+                    self.output.push_str(";\n");
+                }
+                ClassMemberKind::Method {
+                    type_parameters,
+                    parameters,
+                    return_type,
+                    body,
+                    has_body,
+                    accessor,
+                    ..
+                } => {
+                    if member.modifiers.private {
+                        if let Some(accessor) = accessor {
+                            self.write_private_accessor_declaration(
+                                *accessor,
+                                &member.name,
+                                member.name_span,
+                                member.name_kind,
+                            );
+                        } else {
+                            self.write_property_name(
+                                &member.name,
+                                member.name_span,
+                                member.name_kind,
+                            );
+                            self.output.push_str(";\n");
+                        }
+                        continue;
+                    }
+                    if let Some(accessor) = accessor {
+                        self.output.push_str(match accessor {
+                            AccessorKind::Get => "get ",
+                            AccessorKind::Set => "set ",
+                        });
+                    }
+                    self.write_property_name(&member.name, member.name_span, member.name_kind);
+                    if accessor.is_none() {
+                        self.write_type_parameters(type_parameters);
+                    }
+                    self.write_declaration_parameters(parameters);
+                    if matches!(accessor, Some(AccessorKind::Set)) {
+                        self.output.push_str(";\n");
+                        continue;
+                    }
+                    self.output.push_str(": ");
+                    if let Some(return_type) = return_type {
+                        self.write_type(return_type, TYPE_PREC_LOWEST);
+                    } else if !has_body {
+                        self.output.push_str("any");
+                    } else if body.is_empty() {
+                        self.output.push_str("void");
+                    } else {
+                        self.declaration_supported = false;
+                        self.output.push_str("unknown");
+                    }
+                    self.output.push_str(";\n");
+                }
+            }
+        }
+        self.indent = self.indent.saturating_sub(1);
+        self.write_indent();
+        self.output.push_str("}\n");
+    }
+
     pub(super) fn write_parameter_property_fields(&mut self, parameters: &[Parameter]) {
         for parameter in parameter_properties(parameters) {
             self.write_indent();
-            self.write_parts(&[&parameter.name, ";\n"]);
+            self.write_authored_identifier(&parameter.name, parameter.name_span);
+            self.output.push_str(";\n");
         }
     }
 
@@ -66,7 +242,8 @@ impl Printer<'_> {
     pub(super) fn write_parameter_property_declarations(&mut self, parameters: &[Parameter]) {
         for parameter in parameter_properties(parameters) {
             self.write_indent();
-            if has_parameter_modifier(parameter, ParameterModifier::Private) {
+            let private = has_parameter_modifier(parameter, ParameterModifier::Private);
+            if private {
                 self.output.push_str("private ");
             } else if has_parameter_modifier(parameter, ParameterModifier::Protected) {
                 self.output.push_str("protected ");
@@ -74,9 +251,13 @@ impl Printer<'_> {
             if has_parameter_modifier(parameter, ParameterModifier::Readonly) {
                 self.output.push_str("readonly ");
             }
-            self.output.push_str(&parameter.name);
+            self.write_authored_identifier(&parameter.name, parameter.name_span);
             if parameter.optional {
                 self.output.push('?');
+            }
+            if private {
+                self.output.push_str(";\n");
+                continue;
             }
             self.output.push_str(": ");
             self.write_declaration_parameter_type(parameter);
@@ -92,6 +273,24 @@ impl Printer<'_> {
         }
     }
 
+    pub(super) fn write_private_accessor_declaration(
+        &mut self,
+        accessor: AccessorKind,
+        name: &str,
+        name_span: Span,
+        name_kind: PropertyNameKind,
+    ) {
+        self.output.push_str(match accessor {
+            AccessorKind::Get => "get ",
+            AccessorKind::Set => "set ",
+        });
+        self.write_property_name(name, name_span, name_kind);
+        match accessor {
+            AccessorKind::Get => self.output.push_str("();\n"),
+            AccessorKind::Set => self.output.push_str("(value);\n"),
+        }
+    }
+
     pub(super) fn write_constructor_body(
         &mut self,
         body_span: Option<crate::source::Span>,
@@ -99,16 +298,13 @@ impl Printer<'_> {
         parameters: &[Parameter],
         derived: bool,
     ) {
-        if statements.is_empty() && !parameters.iter().any(is_parameter_property) {
+        if statements.is_empty() && !parameters.iter().any(Parameter::is_property) {
             self.write_braced_statements(body_span, statements);
             return;
         }
         self.output.push_str("{\n");
         self.indent += 1;
-        let directive_count = statements
-            .iter()
-            .take_while(|statement| is_directive_statement(statement))
-            .count();
+        let directive_count = statements.iter().map_while(directive).count();
         for statement in &statements[..directive_count] {
             self.write_javascript_statement(statement, false);
         }
@@ -139,7 +335,11 @@ impl Printer<'_> {
     fn write_parameter_property_assignments(&mut self, parameters: &[Parameter]) {
         for parameter in parameter_properties(parameters) {
             self.write_indent();
-            self.write_parts(&["this.", &parameter.name, " = ", &parameter.name, ";\n"]);
+            self.output.push_str("this.");
+            self.write_authored_identifier(&parameter.name, parameter.name_span);
+            self.output.push_str(" = ");
+            self.write_authored_identifier(&parameter.name, parameter.name_span);
+            self.output.push_str(";\n");
         }
     }
 
@@ -215,7 +415,7 @@ impl Printer<'_> {
                     if parameter.rest {
                         self.output.push_str("...");
                     }
-                    self.output.push_str(&parameter.name);
+                    self.write_authored_identifier(&parameter.name, parameter.name_span);
                     if parameter.optional {
                         self.output.push('?');
                     }
@@ -239,10 +439,9 @@ impl Printer<'_> {
                 });
                 self.write_type_member_name(name);
                 self.write_declaration_parameters(parameters);
-                self.write_type_member_return(
-                    return_type.as_ref(),
-                    matches!(accessor, AccessorKind::Get).then_some("any"),
-                );
+                if matches!(accessor, AccessorKind::Get) {
+                    self.write_type_member_return(return_type.as_ref(), Some("any"));
+                }
             }
         }
         self.output.push(';');
@@ -283,23 +482,10 @@ fn has_parameter_modifier(parameter: &Parameter, expected: ParameterModifier) ->
         .any(|modifier| modifier.kind == expected)
 }
 
-pub(super) fn is_parameter_property(parameter: &Parameter) -> bool {
-    parameter.modifiers.iter().any(|modifier| {
-        matches!(
-            modifier.kind,
-            ParameterModifier::Public
-                | ParameterModifier::Protected
-                | ParameterModifier::Private
-                | ParameterModifier::Readonly
-                | ParameterModifier::Override
-        )
-    })
-}
-
 fn parameter_properties(parameters: &[Parameter]) -> impl Iterator<Item = &Parameter> {
     parameters
         .iter()
-        .filter(|parameter| is_parameter_property(parameter))
+        .filter(|parameter| parameter.is_property())
 }
 
 pub(super) fn optional_type_absorbs_undefined(ty: &TypeNode) -> bool {
@@ -313,25 +499,34 @@ pub(super) fn optional_type_absorbs_undefined(ty: &TypeNode) -> bool {
     }
 }
 
-const fn is_directive_statement(statement: &Statement) -> bool {
-    matches!(
-        &statement.kind,
-        StatementKind::Expression(crate::syntax::Expression {
-            kind: ExpressionKind::Literal(Literal::String(_)),
-            ..
-        })
-    )
+pub(super) fn directive(statement: &Statement) -> Option<bool> {
+    let StatementKind::Expression(Expression {
+        kind: ExpressionKind::Literal(Literal::String(literal)),
+        ..
+    }) = &statement.kind
+    else {
+        return None;
+    };
+    match literal {
+        StringLiteral::Plain(value) => Some(value == "use strict"),
+        StringLiteral::Extended(value) => (value.terminated
+            && !value.contains_invalid_escape
+            && value.cooked.as_string().as_deref() == Some("use strict"))
+        .then_some(true),
+    }
 }
 
 fn is_super_call_statement(statement: &Statement) -> bool {
-    let StatementKind::Expression(expression) = &statement.kind else {
+    let StatementKind::Expression(Expression {
+        kind: ExpressionKind::Call { callee, .. },
+        ..
+    }) = &statement.kind
+    else {
         return false;
     };
-    let ExpressionKind::Call { callee, .. } = &expression.kind else {
-        return false;
-    };
-    matches!(
-        &callee.kind,
-        ExpressionKind::Identifier { name, .. } if name == "super"
-    )
+    matches!(&callee.kind, ExpressionKind::Identifier { name, .. } if name == "super")
 }
+
+#[cfg(test)]
+#[path = "../../rewrite-tests/declaration_accessors_unit.rs"]
+mod declaration_accessors_unit;

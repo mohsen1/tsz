@@ -4,7 +4,10 @@ use std::sync::Arc;
 use tsz::diagnostics::DiagnosticCategory;
 use tsz::service::LanguageService;
 use tsz::source::{FileId, SourceText};
-use tsz::syntax::{BinaryOperator, Expression, ExpressionKind, StatementKind, parse_source};
+use tsz::syntax::{
+    AssignmentOperator, BinaryOperator, Expression, ExpressionKind, StatementKind, VariableKind,
+    parse_source,
+};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 fn parse_expression(source: &str) -> Expression {
@@ -30,9 +33,13 @@ fn parse_expression(source: &str) -> Expression {
 
 fn operator_text(operator: BinaryOperator) -> &'static str {
     match operator {
+        BinaryOperator::LeftShift => "<<",
+        BinaryOperator::SignedRightShift => ">>",
         BinaryOperator::UnsignedRightShift => ">>>",
         BinaryOperator::LessThan => "<",
         BinaryOperator::BitwiseOr => "|",
+        BinaryOperator::BitwiseXor => "^",
+        BinaryOperator::BitwiseAnd => "&",
         BinaryOperator::Add => "+",
         BinaryOperator::Multiply => "*",
         _ => panic!("unexpected operator: {operator:?}"),
@@ -78,6 +85,68 @@ fn checked_options() -> CompilerOptions {
 }
 
 #[test]
+fn variable_lists_and_compound_add_are_structural_syntax() {
+    let source = concat!(
+        "var alpha, beta = input << amount, gamma: number = beta ^ input >>> count;",
+        "alpha += gamma;",
+    );
+    let parsed = parse_source(&SourceText::new(
+        FileId(0),
+        PathBuf::from("variable-list.ts"),
+        Arc::<str>::from(source),
+    ));
+    assert_eq!(parsed.diagnostics, [], "{:#?}", parsed.diagnostics);
+    let [variable, assignment] = parsed.unit.statements.as_slice() else {
+        panic!("one variable statement and one assignment expected")
+    };
+    let StatementKind::Variable(variable) = &variable.kind else {
+        panic!("variable statement expected")
+    };
+    assert_eq!(variable.declaration_kind, VariableKind::Var);
+    assert_eq!(
+        variable
+            .declarators
+            .iter()
+            .map(|declaration| declaration.name.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "beta", "gamma"],
+    );
+    assert!(variable.declarators[0].initializer.is_none());
+    assert_eq!(
+        expression_shape(
+            variable.declarators[1]
+                .initializer
+                .as_ref()
+                .expect("beta initializer"),
+        ),
+        "(input << amount)",
+    );
+    assert!(variable.declarators[2].annotation.is_some());
+    assert_eq!(
+        expression_shape(
+            variable.declarators[2]
+                .initializer
+                .as_ref()
+                .expect("gamma initializer"),
+        ),
+        "(beta ^ (input >>> count))",
+    );
+    assert!(matches!(
+        &assignment.kind,
+        StatementKind::Expression(Expression {
+            kind: ExpressionKind::Assignment {
+                operator: AssignmentOperator::AddAssign,
+                left,
+                right,
+                ..
+            },
+            ..
+        }) if matches!(&left.kind, ExpressionKind::Identifier { name, .. } if name == "alpha")
+            && matches!(&right.kind, ExpressionKind::Identifier { name, .. } if name == "gamma")
+    ));
+}
+
+#[test]
 fn unsigned_shift_has_typescript_precedence_associativity_and_parentheses() {
     for (source, expected) in [
         (
@@ -96,6 +165,13 @@ fn unsigned_shift_has_typescript_precedence_associativity_and_parentheses() {
         ("cedar | birch >>> pine;", "(cedar | (birch >>> pine))"),
         ("cedar >>> birch | pine;", "((cedar >>> birch) | pine)"),
         ("cedar >>> birch < pine;", "((cedar >>> birch) < pine)"),
+        (
+            "cedar | birch ^ pine & oak;",
+            "(cedar | (birch ^ (pine & oak)))",
+        ),
+        ("cedar + birch << pine;", "((cedar + birch) << pine)"),
+        ("cedar << birch + pine;", "(cedar << (birch + pine))"),
+        ("cedar << birch >> pine;", "((cedar << birch) >> pine)"),
     ] {
         assert_eq!(
             expression_shape(&parse_expression(source)),
@@ -103,6 +179,89 @@ fn unsigned_shift_has_typescript_precedence_associativity_and_parentheses() {
             "{source}"
         );
     }
+}
+
+#[test]
+fn renamed_nested_operator_controls_have_no_oracle_absent_diagnostics() {
+    let source = concat!(
+        "declare const holder: { value: number };",
+        "function renamedOuter(flag: boolean) {",
+        "var alpha, beta = holder.value, gamma: number;",
+        "alpha = 1; gamma = 2;",
+        "if (flag) { alpha += beta; }",
+        "const shifted = (alpha << 3) | (alpha >>> 29);",
+        "const signed = shifted >> 1;",
+        "const combined = alpha & beta ^ gamma | shifted;",
+        "return [alpha, signed, combined];",
+        "}",
+    );
+    let output = compile_files(&[("renamed.ts", source)], checked_options());
+    assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
+}
+
+#[test]
+fn compound_add_and_new_binary_operators_report_owned_operand_errors() {
+    for (path, source, code, needle) in [
+        (
+            "compound.ts",
+            "let renamedNumber: number = 1; let renamedString: string = 'x'; renamedNumber += renamedString;",
+            2322,
+            "renamedNumber +=",
+        ),
+        (
+            "boolean-xor.ts",
+            "declare const left: boolean; declare const right: boolean; left ^ right;",
+            2447,
+            "^",
+        ),
+        (
+            "string-shift.ts",
+            "declare const text: string; text << 1;",
+            2362,
+            "text <<",
+        ),
+    ] {
+        let output = compile_files(&[(path, source)], checked_options());
+        let [diagnostic] = output.diagnostics.as_slice() else {
+            panic!("{path}: unexpected diagnostics: {:#?}", output.diagnostics)
+        };
+        assert_eq!(diagnostic.code, code, "{path}: {diagnostic:#?}");
+        assert_eq!(
+            diagnostic.start,
+            source.find(needle).expect("diagnostic target") as u32,
+            "{path}",
+        );
+        if code == 2447 {
+            assert!(diagnostic.message_text.contains("'!=='"), "{diagnostic:#?}");
+        }
+    }
+}
+
+#[test]
+fn javascript_emit_preserves_variable_lists_compound_add_and_precedence() {
+    let source = concat!(
+        "export var alpha, beta=input<<2, gamma=beta^input>>>1;",
+        "alpha += gamma;",
+        "export const grouped=(alpha^beta)<<gamma;",
+    );
+    let output = compile_files(
+        &[("emit.ts", source)],
+        CompilerOptions {
+            no_check: true,
+            module: "esnext".to_string(),
+            target: "es2022".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
+    assert_eq!(
+        output.emitted_files[0].text,
+        concat!(
+            "export var alpha, beta = input << 2, gamma = beta ^ input >>> 1;\n",
+            "alpha += gamma;\n",
+            "export const grouped = (alpha ^ beta) << gamma;\n",
+        ),
+    );
 }
 
 #[test]

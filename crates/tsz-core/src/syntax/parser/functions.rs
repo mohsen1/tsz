@@ -18,8 +18,18 @@ impl Parser<'_> {
         if unmodeled_generator {
             self.bump();
         }
+        let previous_yield_context = self.in_yield_context;
+        let previous_await_context = self.in_await_context;
+        let previous_await_binding_reserved = self.await_binding_reserved;
+        let previous_yield_binding_reserved = self.yield_binding_reserved;
+        self.yield_binding_reserved |= unmodeled_generator;
         let (name, name_span) = self.parse_name();
+        self.in_yield_context = unmodeled_generator;
+        self.in_await_context = false;
+        self.await_binding_reserved = false;
         let type_parameters = self.parse_type_parameters();
+        self.in_await_context = modifiers.is_async;
+        self.await_binding_reserved = modifiers.is_async;
         let parameters = self.parse_signature_parameters();
         let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
         let has_body = self.at(TokenKind::LeftBrace);
@@ -35,6 +45,10 @@ impl Parser<'_> {
                 self.bump();
             }
         }
+        self.in_yield_context = previous_yield_context;
+        self.in_await_context = previous_await_context;
+        self.await_binding_reserved = previous_await_binding_reserved;
+        self.yield_binding_reserved = previous_yield_binding_reserved;
         let overload_completion_supported = !unmodeled_generator
             && !modifiers.unsupported_for_overload_completion
             && parameters.iter().all(|parameter| {
@@ -68,10 +82,12 @@ impl Parser<'_> {
             overload_completion_supported,
         }
     }
-    pub(super) fn parse_function_expression(&mut self) -> Expression {
+    pub(super) fn parse_function_expression(&mut self, is_async: bool) -> Expression {
         let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let function_keyword = self.bump().span;
         let unmodeled_generator = self.eat(TokenKind::Star);
+        let previous_yield_binding_reserved = self.yield_binding_reserved;
+        self.yield_binding_reserved |= unmodeled_generator;
         let name = self.kind().is_identifier().then(|| {
             let token_kind = self.kind();
             let (name, span) = self.parse_name();
@@ -81,13 +97,17 @@ impl Parser<'_> {
                 token_kind,
             }
         });
-        self.parse_block_function_like(
+        let expression = self.parse_block_function_like(
             function_keyword,
             has_leading_jsdoc,
             FunctionLikeFunctionKind::Expression,
             name,
             unmodeled_generator,
-        )
+            unmodeled_generator,
+            is_async,
+        );
+        self.yield_binding_reserved = previous_yield_binding_reserved;
+        expression
     }
 
     pub(super) fn parse_block_function_like(
@@ -97,10 +117,20 @@ impl Parser<'_> {
         kind: FunctionLikeFunctionKind,
         name: Option<AuthoredBindingName>,
         intrinsically_recovered: bool,
+        yield_context: bool,
+        await_context: bool,
     ) -> Expression {
         let diagnostic_count = self.diagnostics.len();
         let recovery_fact_start = self.parser_recovery_facts.len();
+        let previous_yield_context = self.in_yield_context;
+        let previous_await_context = self.in_await_context;
+        let previous_await_binding_reserved = self.await_binding_reserved;
+        self.in_yield_context = yield_context;
+        self.in_await_context = false;
+        self.await_binding_reserved = false;
         let type_parameters = self.parse_type_parameters();
+        self.in_await_context = await_context;
+        self.await_binding_reserved = await_context;
         let parameters = self.parse_signature_parameters();
         let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
         let header_recovered = intrinsically_recovered
@@ -125,6 +155,9 @@ impl Parser<'_> {
                 self.bump();
             }
         }
+        self.in_yield_context = previous_yield_context;
+        self.in_await_context = previous_await_context;
+        self.await_binding_reserved = previous_await_binding_reserved;
         let has_closing_brace = has_opening_brace && self.previous().kind == TokenKind::RightBrace;
         let span = start.merge(self.previous().span);
         let expression = Expression {

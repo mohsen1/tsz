@@ -1,55 +1,5 @@
 //! Per-file syntax pipeline. Parsed trees are immutable after construction.
 
-macro_rules! direct_var_literal_predicates {
-    ($safe:ident, $variable:ident, $comments:ident, $kind:pat $(if $guard:expr)?, $($expression:ident)?) => {
-        pub(crate) fn $safe(
-            source: &SourceText,
-            statements: &[Statement],
-            supported_literal_count: usize,
-        ) -> bool {
-            source.is_regular_typescript_source()
-                && source_uses_supported_line_breaks(source)
-                && statement_starts_at_supported_column(source, statements)
-                && supported_literal_count == 1
-                && ($($expression(statements) ||)? $variable(source, statements))
-        }
-
-        pub(crate) fn $variable(source: &SourceText, statements: &[Statement]) -> bool {
-            let [Statement {
-                kind: StatementKind::Variable(declaration),
-                ..
-            }] = statements
-            else {
-                return false;
-            };
-            declaration.declaration_kind == VariableKind::Var
-                && !declaration.exported
-                && declaration.annotation.is_none()
-                && is_plain_strict_binding_identifier(source.slice(declaration.name_span))
-                && matches!(
-                    declaration.initializer.as_ref(),
-                    Some(Expression { kind: $kind, .. }) $(if $guard)?
-                )
-        }
-
-        pub(crate) fn $comments(
-            source: &SourceText,
-            statements: &[Statement],
-            comments: &[CommentTrivia],
-        ) -> bool {
-            if comments.is_empty() {
-                return source.text.is_ascii();
-            }
-            let [statement] = statements else {
-                return false;
-            };
-            $variable(source, statements)
-                && comments_form_contiguous_plain_leading_run(source, statement, comments)
-                && source_is_ascii_outside_comments(source, comments)
-        }
-    };
-}
-
 mod ast;
 mod descendant_walk;
 mod numeric_literal;
@@ -63,41 +13,44 @@ mod trivia;
 
 pub use ast::*;
 pub(crate) use descendant_walk::{
-    DescendantAdapter, DescendantContainer, ExpressionRoot, ExpressionTraversal, NestedStatement,
-    contains_matching_expression, for_each_statement_in, walk_expression_descendants,
-    walk_function_like_descendants, walk_statement_descendants,
+    DescendantAdapter, DescendantContainer, ExpressionEdge, ExpressionRoot, ExpressionTraversal,
+    NestedStatement, contains_matching_expression, for_each_statement_in,
+    walk_expression_descendants, walk_function_like_descendants, walk_statement_descendants,
+    walk_statement_list,
 };
 pub use numeric_literal::{NumberLiteral, NumericRecoveryLiteral, SeparatedNumberLiteral};
 pub(crate) use numeric_literal::{
     NumericRecoveryKind, erased_assertion_expression, erased_expression_separated_number,
-    numeric_recovery_family, parse_number_literal, statements_form_numeric_recovery_safe_file,
+    parse_number_literal,
 };
 pub use parser::{ParseOutput, parse_source};
+pub(crate) use regular_expression::RegularExpressionIssue;
 pub use regular_expression::RegularExpressionLiteral;
-pub(crate) use regular_expression::{
-    comments_form_regular_expression_safe_file, statements_form_regular_expression_expression_file,
-    statements_form_regular_expression_safe_file, statements_form_regular_expression_variable_file,
-};
 pub use scanner::{ScanOutput, scan_source};
 pub use string_literal::{ExtendedUnicodeStringLiteral, StringLiteral, Utf16String};
-pub(crate) use string_literal::{
-    comments_form_extended_unicode_string_safe_file,
-    statements_form_extended_unicode_string_safe_file,
-    statements_form_extended_unicode_string_variable_file,
-};
 pub use template_literal::NoSubstitutionTemplateLiteral;
-pub(crate) use template_literal::{
-    class_contains_no_substitution_template, expression_contains_no_substitution_template,
-    statements_form_no_substitution_template_expression_file,
-    statements_form_no_substitution_template_safe_file,
-    statements_form_no_substitution_template_variable_file,
-};
+pub(crate) use template_literal::expression_contains_no_substitution_template;
 pub use token::{Token, TokenKind};
 pub(crate) use trivia::{
     CommentClass, CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia,
-    comments_form_contiguous_plain_leading_run,
-    comments_form_no_substitution_template_expression_file, is_single_line_whitespace,
-    parse_source_check_directive, source_is_ascii_outside_comments,
-    source_uses_supported_line_breaks, statement_starts_at_supported_column,
+    is_single_line_whitespace, parse_source_check_directive,
 };
 pub(crate) use trivia::{SourceCheckDirective, SourceCheckDirectiveKind};
+
+pub(crate) const fn keyword_type_text(keyword: KeywordType) -> &'static str {
+    match keyword {
+        KeywordType::Any => "any",
+        KeywordType::Unknown => "unknown",
+        KeywordType::Never => "never",
+        KeywordType::Void => "void",
+        KeywordType::Undefined => "undefined",
+        KeywordType::Null => "null",
+        KeywordType::Boolean => "boolean",
+        KeywordType::Number => "number",
+        KeywordType::String => "string",
+        KeywordType::BigInt => "bigint",
+        KeywordType::Object => "object",
+        KeywordType::Symbol => "symbol",
+        KeywordType::UniqueSymbol => "unique symbol",
+    }
+}

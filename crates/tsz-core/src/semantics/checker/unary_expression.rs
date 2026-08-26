@@ -10,6 +10,9 @@ impl Checker<'_> {
         depth: usize,
     ) -> Completion<TypeId> {
         let operand = completed!(self.force_operand(operand, depth));
+        if operator == DeferredUnaryOperator::NonNull {
+            return self.store.non_nullable(operand);
+        }
         if operator == DeferredUnaryOperator::Await {
             return Completion::Complete(operand);
         }

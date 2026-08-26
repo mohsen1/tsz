@@ -319,9 +319,9 @@ function named<
             format!("Property '{property}' does not exist on type '{receiver}'.")
         );
     }
-    // The checker owns every required type child above, while explicit type
-    // arguments on `new` still have an unmodeled JavaScript product.
-    assert_completion(&output, SemanticCompletion::Deferred);
+    // No JavaScript product was requested, so the checker-owned explicit
+    // constructor arguments do not create a program-wide semantic nonclaim.
+    assert_completion(&output, SemanticCompletion::Complete);
 }
 
 #[test]
@@ -692,9 +692,9 @@ fn generic_class_instance_arguments_are_display_and_order_stable() {
     );
     assert_eq!(fingerprint(&cold), fingerprint(&warm));
     assert_eq!(fingerprint(&cold), fingerprint(&reversed));
-    assert_completion(&cold, SemanticCompletion::Deferred);
-    assert_completion(&warm, SemanticCompletion::Deferred);
-    assert_completion(&reversed, SemanticCompletion::Deferred);
+    assert_completion(&cold, SemanticCompletion::Complete);
+    assert_completion(&warm, SemanticCompletion::Complete);
+    assert_completion(&reversed, SemanticCompletion::Complete);
 }
 
 #[test]
@@ -870,6 +870,53 @@ fn keyof_generic_aliases_decide_only_after_a_modeled_substitution() {
         primitive.diagnostics
     );
     assert_completion(&primitive, SemanticCompletion::Deferred);
+}
+
+#[test]
+fn generic_keyof_and_indexed_aliases_remain_symbolic_at_their_declarations() {
+    for source in [
+        "type Keys<Payload> = keyof Payload;",
+        "type Bound<Row, Slot extends keyof Row> = Slot;",
+        "type Values<Row, Slot extends keyof Row> = Row[Slot];",
+        "type Wrapped<Model extends Record<string, unknown>> = \
+         readonly [keyof Model, Model[keyof Model]];",
+        "type Constrained<Item extends number> = keyof Item;",
+    ] {
+        let output = compile(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.stats.semantic_completion,
+            SemanticCompletion::Complete
+        );
+    }
+}
+
+#[test]
+fn concrete_keyof_and_indexed_demands_keep_their_existing_completion() {
+    for source in [
+        "type Keys=keyof number; let key:Keys; const value:number=key;",
+        "type Value=number[keyof number]; let value:Value; const exact:number=value;",
+        "type Keys<Item extends number> = keyof Item; let key:Keys<number>; \
+         const value:number=key;",
+    ] {
+        let output = compile(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert_completion(&output, SemanticCompletion::Deferred);
+    }
 }
 
 #[test]

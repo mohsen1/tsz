@@ -1,56 +1,15 @@
 use crate::bind::{LexicalThisOwner, ScopeId};
 use crate::source::{DeclId, Span};
 use crate::syntax::{
-    ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, PropertyNameKind, TypeNode,
+    AccessorKind, ClassDeclaration, ClassMember, ClassMemberKind, Expression, ExpressionKind,
+    PropertyNameKind,
 };
 
 use super::object_shape::plain_type_parameters;
+use super::relation_diagnostic::ContextualType;
 use super::{Checker, ConstructOrigin, DeclarationModel};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, Property, TypeId, TypeKind};
-
-pub(super) struct ClassInstanceProperty<'a> {
-    pub name: &'a str,
-    pub annotation: &'a TypeNode,
-    pub optional: bool,
-    pub readonly: bool,
-}
-
-/// Return the bounded class-instance shape this rewrite can decide today.
-///
-/// Extends clauses, nominal members, static members, inferred fields, and
-/// methods remain deferred until their models are implemented; they must not
-/// be approximated with `any`, `unknown`, or an error type.
-pub(super) fn class_instance_properties(
-    class: &ClassDeclaration,
-) -> Option<Vec<ClassInstanceProperty<'_>>> {
-    if class.extends.is_some() {
-        return None;
-    }
-    let mut properties = Vec::with_capacity(class.members.len());
-    for member in &class.members {
-        if member.modifiers.private || member.modifiers.protected || member.modifiers.static_member
-        {
-            return None;
-        }
-        let ClassMemberKind::Property {
-            annotation: Some(annotation),
-            optional,
-            ..
-        } = &member.kind
-        else {
-            return None;
-        };
-        properties.push(ClassInstanceProperty {
-            name: &member.name,
-            annotation,
-            optional: *optional,
-            readonly: member.modifiers.readonly,
-        });
-    }
-    properties.sort_by(|left, right| left.name.cmp(right.name));
-    Some(properties)
-}
 
 impl Checker<'_> {
     /// Project one exact lexical-this method without claiming the full class shape.
@@ -144,13 +103,22 @@ impl Checker<'_> {
         self.check_unconstructed_class_properties(file, class_scope, declaration);
 
         for (index, member) in declaration.members.iter().enumerate() {
+            if self
+                .capabilities
+                .semantic_check_node_is_claimed(file, member.id)
+            {
+                self.check_accessor_body(file, class_scope, member);
+            }
+            if member.modifiers.abstract_member
+                || member.modifiers.declared
+                || !member.overload_context_is_recovery_free()
+            {
+                continue;
+            }
             match &member.kind {
                 ClassMemberKind::Constructor {
                     has_body: false, ..
-                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
-                    if !member.overload_context_is_recovery_free() {
-                        continue;
-                    }
+                } => {
                     let next_is_constructor =
                         declaration.members.get(index + 1).is_some_and(|next| {
                             next.overload_context_is_recovery_free()
@@ -169,10 +137,7 @@ impl Checker<'_> {
                     has_body: false,
                     accessor: None,
                     ..
-                } if !member.modifiers.abstract_member && !member.modifiers.declared => {
-                    if !member.overload_context_is_recovery_free() {
-                        continue;
-                    }
+                } => {
                     let Some(next) = declaration.members.get(index + 1) else {
                         self.report_missing_function_implementation(file, member.name_span);
                         continue;
@@ -223,6 +188,41 @@ impl Checker<'_> {
         }
     }
 
+    fn check_accessor_body(
+        &mut self,
+        file: crate::source::FileId,
+        class_scope: ScopeId,
+        member: &ClassMember,
+    ) {
+        let ClassMemberKind::Method {
+            return_type,
+            body,
+            accessor: Some(accessor),
+            ..
+        } = &member.kind
+        else {
+            return;
+        };
+        let member_scope = self.node_scope(file, member.id, class_scope);
+        let expected_return =
+            match (accessor, return_type) {
+                (AccessorKind::Get, Some(annotation)) => ContextualType::Known(
+                    self.resolve_type_node(file, member_scope, annotation, &Default::default()),
+                ),
+                (AccessorKind::Get, None) | (AccessorKind::Set, _) => ContextualType::Absent,
+            };
+        let expected_return_order = return_type.as_ref().and_then(|annotation| {
+            self.property_order_for_type_node_root(file, member_scope, annotation)
+        });
+        self.check_statement_list(
+            file,
+            member_scope,
+            body,
+            expected_return,
+            expected_return_order.as_ref(),
+        );
+    }
+
     pub(super) fn report_missing_function_implementation(
         &mut self,
         file: crate::source::FileId,
@@ -241,7 +241,7 @@ impl Checker<'_> {
         &mut self,
         callee: TypeId,
         type_arguments: Vec<TypeId>,
-        argument_count: usize,
+        arguments: Vec<TypeId>,
         argument_span: Span,
     ) -> TypeId {
         let query = self
@@ -249,7 +249,7 @@ impl Checker<'_> {
             .intern(TypeKind::Deferred(DeferredType::Construct {
                 callee,
                 type_arguments,
-                argument_count,
+                arguments,
             }));
         let origin = ConstructOrigin {
             query,
@@ -265,12 +265,37 @@ impl Checker<'_> {
         &mut self,
         callee: TypeId,
         type_arguments: &[TypeId],
-        argument_count: usize,
+        arguments: &[TypeId],
         depth: usize,
     ) -> Completion<TypeId> {
         let callee = completed!(self.force_type(callee, depth));
         match self.store.kind(callee).clone() {
             TypeKind::ClassConstructor { declaration, .. } => {
+                if let Some(map_type) = self
+                    .program
+                    .standard_library
+                    .map_type_for_value(declaration)
+                {
+                    if self
+                        .program
+                        .standard_library_type_has_authored_declarations(map_type)
+                    {
+                        return Completion::Deferred;
+                    }
+                    let valid_entries = match arguments {
+                        [entry] => matches!(
+                            self.store.kind(*entry),
+                            TypeKind::Array(element) if *element == self.store.builtins.never
+                        ),
+                        _ => false,
+                    };
+                    let arguments = match type_arguments {
+                        [] if arguments.is_empty() => vec![self.store.builtins.any; 2],
+                        [key, value] if arguments.is_empty() || valid_entries => vec![*key, *value],
+                        _ => return Completion::Deferred,
+                    };
+                    return Completion::Complete(self.library_reference(map_type, arguments));
+                }
                 let Some(DeclarationModel::Class {
                     identity,
                     declaration: class,
@@ -300,13 +325,13 @@ impl Checker<'_> {
                 {
                     return Completion::Deferred;
                 }
-                self.evaluate_reference(declaration, type_arguments)
+                self.evaluate_reference(declaration, type_arguments, depth)
             }
             TypeKind::Object(shape)
                 if type_arguments.is_empty() && shape.construct_signatures.len() == 1 =>
             {
                 let signature = &shape.construct_signatures[0];
-                if argument_count != 0 || !signature.parameters.is_empty() {
+                if !arguments.is_empty() || !signature.parameters.is_empty() {
                     return Completion::Deferred;
                 }
                 Completion::Complete(signature.return_type)
@@ -317,18 +342,15 @@ impl Checker<'_> {
         }
     }
 
-    /// Constructor query identity contains only the semantic callee, type
-    /// arguments, and arity. Each syntax use retains its own argument span so
-    /// equal `new` queries share evaluation without sharing diagnostics.
+    /// Constructor query identity contains all semantic operands. Per-use syntax
+    /// retains its argument span so equal queries never share diagnostic provenance.
     pub(super) fn flush_construct_diagnostics(&mut self) {
         for origin in self.construct_origins.clone() {
-            let TypeKind::Deferred(DeferredType::Construct {
-                callee,
-                argument_count,
-                ..
-            }) = self.store.kind(origin.query).clone()
-            else {
-                continue;
+            let (callee, argument_count) = match self.store.kind(origin.query) {
+                TypeKind::Deferred(DeferredType::Construct {
+                    callee, arguments, ..
+                }) => (*callee, arguments.len()),
+                _ => continue,
             };
             if argument_count == 0 {
                 continue;
@@ -372,22 +394,43 @@ impl Checker<'_> {
         scope: ScopeId,
         arguments: &[TypeId],
     ) -> Completion<TypeId> {
-        let Some(instance_properties) = class_instance_properties(class) else {
+        if class.extends.is_some() {
             return Completion::Deferred;
-        };
+        }
+        let mut members = class.members.iter().collect::<Vec<_>>();
+        if members.iter().any(|member| {
+            member.modifiers.private
+                || member.modifiers.protected
+                || member.modifiers.static_member
+                || !matches!(
+                    &member.kind,
+                    ClassMemberKind::Property {
+                        annotation: Some(_),
+                        ..
+                    }
+                )
+        }) {
+            return Completion::Deferred;
+        }
+        members.sort_by(|left, right| left.name.cmp(&right.name));
         let parameters = self.substitution(declaration, &class.type_parameters, arguments);
-        let properties = instance_properties
+        let properties = members
             .into_iter()
-            .map(|property| Property {
-                name: property.name.to_string(),
-                ty: self.resolve_type_node(
-                    declaration.file,
-                    scope,
-                    property.annotation,
-                    &parameters,
-                ),
-                optional: property.optional,
-                readonly: property.readonly,
+            .map(|member| {
+                let ClassMemberKind::Property {
+                    annotation: Some(annotation),
+                    optional,
+                    ..
+                } = &member.kind
+                else {
+                    unreachable!("class-property preflight rejected this member")
+                };
+                Property {
+                    name: member.name.clone(),
+                    ty: self.resolve_type_node(declaration.file, scope, annotation, &parameters),
+                    optional: *optional,
+                    readonly: member.modifiers.readonly,
+                }
             })
             .collect::<Vec<_>>();
         Completion::Complete(self.store.intern(TypeKind::ClassInstance {

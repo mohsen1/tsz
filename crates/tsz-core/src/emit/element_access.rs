@@ -11,7 +11,7 @@ impl Printer<'_> {
         self.output.push('.');
         self.indent += usize::from(broke_line);
         self.write_gap(Kind(TokenKind::Dot, name_span.start), true, Gap::Indent);
-        self.output.push_str(name);
+        self.write_authored_identifier(name, name_span);
         self.indent = self.indent.saturating_sub(1 + usize::from(broke_line));
     }
 

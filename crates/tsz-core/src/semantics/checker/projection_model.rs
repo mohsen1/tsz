@@ -14,9 +14,9 @@ use super::{
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{
     Completion, DeferredType, IndexKeyKind, InvalidType, LiteralProvenance, ParameterType,
-    Property, ShapeParameter, ShapeSignature, TypeId, TypeKind, UnionPolicy,
+    Property, Signature, TypeId, TypeKind, TypeStore, UnionPolicy,
 };
-use crate::standard_library::StandardLibraryMemberId;
+use crate::standard_library::{LibraryCallMember, LibraryMemberLookup, LibraryReceiver};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PropertyOrderTree {
@@ -220,7 +220,7 @@ impl Checker<'_> {
                 return None;
             }
             resolved.push(ParameterType {
-                name: parameter.name.clone(),
+                name: Some(parameter.name.clone()),
                 ty: self.contextual_projection_type(file, scope, parameter.annotation.as_ref()?)?,
                 optional: parameter.optional,
                 rest: parameter.rest,
@@ -286,54 +286,22 @@ impl Checker<'_> {
                 {
                     Completion::Complete(true)
                 } else {
-                    let mut found = false;
-                    for property in shape.properties {
-                        if completed!(self.requires_authored_shape_display_inner(
-                            property.ty,
-                            active,
-                            references,
-                        )) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    Completion::Complete(found)
+                    self.children_require_authored(
+                        shape.properties.into_iter().map(|property| property.ty),
+                        active,
+                        references,
+                    )
                 }
             }
-            TypeKind::Array(element) => {
-                self.requires_authored_shape_display_inner(element, active, references)
-            }
-            TypeKind::Tuple(members)
-            | TypeKind::Union(members)
-            | TypeKind::Intersection(members) => {
-                let mut found = false;
-                for member in members {
-                    if completed!(
-                        self.requires_authored_shape_display_inner(member, active, references)
-                    ) {
-                        found = true;
-                        break;
-                    }
-                }
-                Completion::Complete(found)
-            }
-            TypeKind::Function(signature) => {
-                let mut members = signature
-                    .parameters
-                    .into_iter()
-                    .map(|parameter| parameter.ty)
-                    .collect::<Vec<_>>();
-                members.push(signature.return_type);
-                let mut found = false;
-                for member in members {
-                    if completed!(
-                        self.requires_authored_shape_display_inner(member, active, references)
-                    ) {
-                        found = true;
-                        break;
-                    }
-                }
-                Completion::Complete(found)
+            kind @ (TypeKind::Array(_)
+            | TypeKind::Tuple(_)
+            | TypeKind::Union(_)
+            | TypeKind::Intersection(_)
+            | TypeKind::Function(_)
+            | TypeKind::LibraryReference { .. }) => {
+                let mut children = Vec::new();
+                TypeStore::push_type_children(&kind, &mut children);
+                self.children_require_authored(children, active, references)
             }
             TypeKind::Deferred(deferred @ DeferredType::Reference { .. }) => {
                 let DeferredType::Reference {
@@ -343,13 +311,11 @@ impl Checker<'_> {
                 else {
                     unreachable!()
                 };
-                let mut requires_authored = false;
-                for argument in arguments {
-                    requires_authored |= completed!(
-                        self.requires_authored_shape_display_inner(*argument, active, references)
-                    );
-                }
-                if requires_authored {
+                if completed!(self.children_require_authored(
+                    arguments.iter().copied(),
+                    active,
+                    references,
+                )) {
                     Completion::Complete(true)
                 } else if let Some(expansion) =
                     references.generative_expansion(ty, *declaration, arguments, &|ty| {
@@ -406,6 +372,20 @@ impl Checker<'_> {
         result
     }
 
+    fn children_require_authored(
+        &mut self,
+        children: impl IntoIterator<Item = TypeId>,
+        active: &mut HashSet<TypeId>,
+        references: &mut ReferenceExpansionStack,
+    ) -> Completion<bool> {
+        for child in children {
+            if completed!(self.requires_authored_shape_display_inner(child, active, references)) {
+                return Completion::Complete(true);
+            }
+        }
+        Completion::Complete(false)
+    }
+
     pub(super) fn infer_member_expression(
         &mut self,
         file: FileId,
@@ -413,11 +393,12 @@ impl Checker<'_> {
         object: &Expression,
         name: &str,
         name_span: Span,
-        mut library_member: Option<&mut Completion<Option<StandardLibraryMemberId>>>,
+        mut library_member: Option<&mut Completion<Option<LibraryCallMember>>>,
     ) -> TypeId {
+        let authored_readonly = self.authored_readonly_array_receiver(file, scope, object);
         let object_type = self.infer_expression(file, scope, object, None);
         if let Some(library_member) = library_member.as_deref_mut() {
-            match self.array_search_call_projection(object_type, name) {
+            match self.standard_library_call_projection(object_type, name, authored_readonly) {
                 Completion::Complete(Some((ty, id))) => {
                     *library_member = Completion::Complete(Some(id));
                     return ty;
@@ -457,47 +438,160 @@ impl Checker<'_> {
         }
     }
 
-    pub(super) fn array_search_call_projection(
+    pub(super) fn standard_library_call_projection(
         &mut self,
         object: TypeId,
         name: &str,
-    ) -> Completion<Option<(TypeId, StandardLibraryMemberId)>> {
+        authored_readonly: bool,
+    ) -> Completion<Option<(TypeId, LibraryCallMember)>> {
         let Some(object) = self.complete_type(object) else {
             return Completion::Deferred;
         };
-        let TypeKind::Array(element) = *self.store.kind(object) else {
-            return Completion::Complete(None);
+        let (receiver, element, arguments) = match self.store.kind(object).clone() {
+            TypeKind::Array(element) => {
+                if element == self.store.builtins.never {
+                    return Completion::Deferred;
+                }
+                (LibraryReceiver::Array, Some(element), None)
+            }
+            TypeKind::LibraryReference {
+                declaration,
+                arguments,
+                ..
+            } => (
+                LibraryReceiver::Declaration(declaration),
+                None,
+                Some(arguments),
+            ),
+            _ => return Completion::Complete(None),
         };
-        if element == self.store.builtins.never {
-            return Completion::Deferred;
-        }
-        let Some(id) = self
-            .program
-            .standard_library
-            .array_search_member(name, |owner| {
-                self.program
-                    .standard_library_type_has_authored_declarations(owner)
-            })
+        let LibraryMemberLookup::Found(member) = self.standard_library_call_member(receiver, name)
         else {
             return Completion::Deferred;
         };
-        let ty = self.store.intern(TypeKind::ShapeFunction(ShapeSignature {
-            untyped_javascript: false,
-            parameters: vec![
-                ShapeParameter {
-                    ty: element,
-                    optional: false,
-                    rest: false,
-                },
-                ShapeParameter {
-                    ty: self.store.builtins.number,
-                    optional: true,
-                    rest: false,
-                },
-            ],
-            return_type: self.store.builtins.number,
-        }));
-        Completion::Complete(Some((ty, id)))
+        if authored_readonly
+            && matches!(member, LibraryCallMember::Push | LibraryCallMember::Splice)
+        {
+            return Completion::Deferred;
+        }
+        let number = self.store.builtins.number;
+        let signature = match member {
+            LibraryCallMember::IndexOf | LibraryCallMember::LastIndexOf => shape_function(
+                vec![
+                    shape_param(element.expect("Array member element"), false, false),
+                    shape_param(number, true, false),
+                ],
+                number,
+            ),
+            LibraryCallMember::Push => {
+                shape_function(vec![shape_param(object, false, true)], number)
+            }
+            LibraryCallMember::Slice => shape_function(
+                vec![
+                    shape_param(number, true, false),
+                    shape_param(number, true, false),
+                ],
+                object,
+            ),
+            LibraryCallMember::Splice => shape_function(
+                vec![
+                    shape_param(number, false, false),
+                    shape_param(number, true, false),
+                    shape_param(object, false, true),
+                ],
+                object,
+            ),
+            LibraryCallMember::Map => {
+                let element = element.expect("Array member element");
+                let callback = self.store.intern(shape_function(
+                    vec![
+                        shape_param(element, false, false),
+                        shape_param(number, false, false),
+                        shape_param(object, false, false),
+                    ],
+                    self.store.builtins.void,
+                ));
+                let result = self
+                    .store
+                    .intern(TypeKind::Array(self.store.builtins.unknown));
+                shape_function(
+                    vec![
+                        shape_param(callback, false, false),
+                        shape_param(self.store.builtins.any, true, false),
+                    ],
+                    result,
+                )
+            }
+            LibraryCallMember::MapGet | LibraryCallMember::MapSet => {
+                let Some([key, value]) = arguments.as_deref() else {
+                    return Completion::Deferred;
+                };
+                let (parameters, return_type) = if member == LibraryCallMember::MapGet {
+                    (
+                        vec![shape_param(*key, false, false)],
+                        self.store.union(
+                            [*value, self.store.builtins.undefined],
+                            UnionPolicy::Canonical,
+                        ),
+                    )
+                } else {
+                    (
+                        vec![
+                            shape_param(*key, false, false),
+                            shape_param(*value, false, false),
+                        ],
+                        object,
+                    )
+                };
+                shape_function(parameters, return_type)
+            }
+            LibraryCallMember::ToString => shape_function(Vec::new(), self.store.builtins.string),
+        };
+        let ty = self.store.intern(signature);
+        Completion::Complete(Some((ty, member)))
+    }
+
+    pub(super) fn standard_library_call_member(
+        &self,
+        receiver: LibraryReceiver,
+        name: &str,
+    ) -> LibraryMemberLookup {
+        self.program.standard_library.call_member(
+            receiver,
+            name,
+            |owner| {
+                self.program
+                    .standard_library_type_has_authored_declarations(owner)
+            },
+            |owner, member| {
+                self.program
+                    .standard_library_type_has_authored_member(owner, member)
+            },
+        )
+    }
+
+    pub(super) fn authored_readonly_array_receiver(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        expression: &Expression,
+    ) -> bool {
+        let annotation = match &expression.peel_parentheses().kind {
+            ExpressionKind::As { ty, .. } => Some(ty),
+            ExpressionKind::Identifier { name, .. } => self
+                .resolve_name(file, scope, name, Meaning::Value)
+                .and_then(|declaration| match self.models.get(&declaration).copied() {
+                    Some(DeclarationModel::Variable { declaration, .. }) => {
+                        declaration.annotation.as_ref()
+                    }
+                    Some(DeclarationModel::Parameter { parameter, .. }) => {
+                        parameter.annotation.as_ref()
+                    }
+                    _ => None,
+                }),
+            _ => None,
+        };
+        annotation.is_some_and(authored_readonly_array)
     }
 
     fn property_type(
@@ -599,7 +693,10 @@ impl Checker<'_> {
             receiver_order,
             receiver_alias,
         };
-        if !self.indexed_access_origins.contains(&origin) {
+        // A generic declaration stays symbolic; a concrete instantiation records its own origin.
+        if !matches!(self.store.kind(object), TypeKind::TypeParameter { .. })
+            && !self.indexed_access_origins.contains(&origin)
+        {
             self.indexed_access_origins.push(origin);
         }
         query
@@ -876,6 +973,7 @@ impl Checker<'_> {
             DeclarationModel::Variable {
                 declaration: variable,
                 scope,
+                ..
             } => {
                 if let Some(annotation) = &variable.annotation {
                     self.property_order_for_type_node(declaration.file, scope, annotation, active)
@@ -1255,6 +1353,7 @@ impl Checker<'_> {
             | TypeKind::Union(_)
             | TypeKind::Intersection(_)
             | TypeKind::ClassConstructor { .. }
+            | TypeKind::LibraryReference { .. }
             | TypeKind::Function(_)
             | TypeKind::ShapeFunction(_)
             | TypeKind::Deferred(_)
@@ -1284,7 +1383,7 @@ impl Checker<'_> {
         Completion::Complete(self.store.union(keys, UnionPolicy::Canonical))
     }
 
-    fn property_key_type(&mut self) -> Completion<TypeId> {
+    pub(super) fn property_key_type(&mut self) -> Completion<TypeId> {
         Completion::Complete(self.store.union(
             [
                 self.store.builtins.string,
@@ -1414,6 +1513,32 @@ impl Checker<'_> {
             TypeKind::Symbol => "Symbol".to_string(),
             _ => self.display_type_with_property_order(object, receiver_order, 0),
         }
+    }
+}
+
+const fn shape_param(ty: TypeId, optional: bool, rest: bool) -> ParameterType {
+    ParameterType {
+        name: None,
+        ty,
+        optional,
+        rest,
+    }
+}
+
+const fn shape_function(parameters: Vec<ParameterType>, return_type: TypeId) -> TypeKind {
+    TypeKind::ShapeFunction(Signature {
+        generic_declaration: None,
+        untyped_javascript: false,
+        parameters,
+        return_type,
+    })
+}
+
+fn authored_readonly_array(node: &TypeNode) -> bool {
+    match &node.kind {
+        TypeNodeKind::Readonly(inner) => matches!(inner.kind, TypeNodeKind::Array(_)),
+        TypeNodeKind::Parenthesized(inner) => authored_readonly_array(inner),
+        _ => false,
     }
 }
 

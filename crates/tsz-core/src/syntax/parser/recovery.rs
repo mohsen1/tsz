@@ -1,5 +1,5 @@
 use super::Parser;
-use crate::source::Span;
+use crate::source::{SourceKind, Span};
 use crate::syntax::{
     ParserRecoveryFact, ParserRecoveryKind, ParserRecoveryOwner, Statement, Token, TokenKind,
     TypeNode, TypeNodeKind,
@@ -21,7 +21,78 @@ enum PendingParserRecoveryParticipation {
     AnalysisOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClassMemberListRecovery {
+    Continue,
+    AbortBeforeStatement,
+}
+
+impl ClassMemberListRecovery {
+    pub(super) const fn aborts_list(self) -> bool {
+        matches!(self, Self::AbortBeforeStatement)
+    }
+}
+
 impl Parser<'_> {
+    pub(super) fn error_current(&mut self, message: &str, code: u32) {
+        self.diagnostics.push(crate::diagnostics::Diagnostic::at(
+            self.source,
+            self.current().span,
+            message.to_string(),
+            code,
+        ));
+    }
+
+    pub(super) fn expect(&mut self, kind: TokenKind, message: &str, code: u32) -> bool {
+        if self.eat(kind) {
+            true
+        } else {
+            self.error_current(message, code);
+            false
+        }
+    }
+
+    pub(super) fn recover_stray_statement_close(&mut self) -> bool {
+        if self.pending_stray_statement_closes == 0 || !self.at(TokenKind::RightBrace) {
+            return false;
+        }
+        self.pending_stray_statement_closes -= 1;
+        self.error_current("Declaration or statement expected.", 1128);
+        self.bump();
+        true
+    }
+
+    /// Mirrors TypeScript's `parseSemicolonAfterPropertyName` followed by
+    /// class-list recovery for the empty call-shaped tail left by a definite
+    /// property. The opening parenthesis belongs to the property error; the
+    /// closing parenthesis is skipped by the class-member list, while a block
+    /// start is retained for the enclosing source-element list.
+    pub(super) fn recover_definite_property_call(&mut self) -> ClassMemberListRecovery {
+        if !self.at(TokenKind::LeftParen) {
+            return ClassMemberListRecovery::Continue;
+        }
+        self.error_current("Cannot start a function call in a type annotation.", 1441);
+        self.bump();
+        if self.at(TokenKind::RightParen) {
+            self.error_class_member_list_token();
+            self.bump();
+        }
+        if self.at(TokenKind::LeftBrace) {
+            self.error_class_member_list_token();
+            self.pending_stray_statement_closes_after_block += 1;
+            ClassMemberListRecovery::AbortBeforeStatement
+        } else {
+            ClassMemberListRecovery::Continue
+        }
+    }
+
+    fn error_class_member_list_token(&mut self) {
+        self.error_current(
+            "Unexpected token. A constructor, method, accessor, or property was expected.",
+            1068,
+        );
+    }
+
     pub(super) fn consume_balanced_tokens(
         &mut self,
         open: TokenKind,
@@ -233,22 +304,6 @@ impl Parser<'_> {
         })
     }
 
-    pub(super) fn current_is_inside_recovered_generator(&self) -> bool {
-        self.parser_recovery_facts.iter().any(|fact| {
-            fact.kind == ParserRecoveryKind::GeneratorFunctionLike
-                && contains_authored_span(fact.recovery_extent, self.current().span)
-                && self
-                    .tokens
-                    .iter()
-                    .position(|token| token.span == fact.authored_span)
-                    .is_some_and(|index| {
-                        self.tokens[index].kind == TokenKind::Star
-                            || self.tokens[index].kind == TokenKind::Function
-                                && self.token_kind_at(index + 1) == TokenKind::Star
-                    })
-        })
-    }
-
     pub(super) fn current_starts_rejected_generic_arrow_prefix(&self) -> bool {
         self.parser_recovery_facts.iter().any(|fact| {
             fact.kind == ParserRecoveryKind::RejectedGenericArrowPrefix
@@ -330,6 +385,10 @@ impl Parser<'_> {
     /// starter on a later line closes it without consuming the next sibling.
     pub(super) fn recovery_extent_from_current(&self, authored_span: Span) -> Span {
         let current = self.current().span;
+        let jsx = matches!(
+            self.source.kind(),
+            SourceKind::TypeScriptJsx | SourceKind::JavaScriptJsx
+        ) && self.kind() == TokenKind::LessThan;
         debug_assert_eq!(authored_span.file, current.file);
         if authored_token_closes_recovery(self.kind())
             && !closed_token_continues_recovered_owner(self.kind(), self.peek_kind(1))
@@ -364,7 +423,14 @@ impl Parser<'_> {
                 TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace => {
                     relative_depth -= 1;
                 }
-                TokenKind::Semicolon if relative_depth == 0 => break,
+                TokenKind::Semicolon
+                    if relative_depth == 0
+                        && (!jsx
+                            || self.token_kind_at(index.saturating_sub(1))
+                                == TokenKind::GreaterThan) =>
+                {
+                    break;
+                }
                 _ => {}
             }
             previous = index;

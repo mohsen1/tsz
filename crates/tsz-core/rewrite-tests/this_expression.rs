@@ -13,7 +13,23 @@ fn compile_with_strict(source: &str, strict: bool) -> tsz::CompileOutput {
         &CompilerOptions {
             no_emit: false,
             strict,
-            target: "es2015".to_string(),
+            // This suite exercises lexical `this`, not class-field
+            // downleveling. ES2022 is the first target that preserves the
+            // authored field hosts used by these semantic witnesses.
+            target: "es2022".to_string(),
+            ..CompilerOptions::default()
+        },
+    )
+}
+
+fn compile_without_check(source: &str) -> tsz::CompileOutput {
+    Compiler::new().compile(
+        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+        &CompilerOptions {
+            no_check: true,
+            no_emit: false,
+            strict: true,
+            target: "es2022".to_string(),
             ..CompilerOptions::default()
         },
     )
@@ -409,4 +425,96 @@ fn lexical_this_method_projection_fails_closed_for_ambiguous_or_unsupported_host
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
         assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     }
+}
+
+#[test]
+fn authored_this_types_bind_structurally_in_renamed_class_and_interface_members() {
+    let source = concat!(
+        "declare class RenamedBase<Payload> {",
+        "payload:Payload;",
+        "set<Key extends keyof this>(key:Key,value:this[Key]):this[Key];",
+        "}",
+        "interface RenamedPair<Left,Right> {",
+        "set<Index extends keyof this>(key:Index,value:this[Index]):this[Index];",
+        "wrapped:(value:readonly this[])=>this;",
+        "}",
+        "interface AlternateShape {",
+        "set<Field extends keyof this>(key:Field,value:this[Field]):this[Field];",
+        "}",
+    );
+    assert_eq!(source.match_indices("this").count(), 11);
+    let output = compile_with_strict(source, true);
+    assert_eq!(output.diagnostics, []);
+}
+
+#[test]
+fn authored_this_type_context_resets_at_static_constructor_and_nested_boundaries() {
+    let source = concat!(
+        "type Outside=this;",
+        "class BoundaryOwner {",
+        "static slot:this;",
+        "constructor(value:this){const kept:this=this;}",
+        "nested!:{value:this};",
+        "method():void{",
+        "type LocalAlias=this;",
+        "const arrow=(value:this):this=>value;",
+        "function ordinary(value:this):void{}",
+        "}",
+        "}",
+    );
+    let expected_starts = [
+        source.find("=this").unwrap() + 1,
+        source.find("slot:this").unwrap() + "slot:".len(),
+        source.find("constructor(value:this").unwrap() + "constructor(value:".len(),
+        source.find("{value:this}").unwrap() + "{value:".len(),
+        source.find("ordinary(value:this").unwrap() + "ordinary(value:".len(),
+    ];
+    let output = compile_with_strict(source, true);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        expected_starts
+            .into_iter()
+            .map(|start| (
+                2526,
+                start as u32,
+                4,
+                "A 'this' type is available only in a non-static member of a class or interface.",
+            ))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ordinary_unresolved_type_names_remain_name_resolution_diagnostics() {
+    let source = "class IdentifierControl{field!:NotThis;method(value:NotThis):void{}}";
+    let output = compile_with_strict(source, true);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code, diagnostic.message_text.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (2304, "Cannot find name 'NotThis'."),
+            (2304, "Cannot find name 'NotThis'."),
+        ]
+    );
+}
+
+#[test]
+fn no_check_suppresses_this_type_semantics_without_changing_syntax_or_emit() {
+    let source = "type Outside=this;class Boundary{static slot:this;}";
+    let output = compile_without_check(source);
+    assert_complete_without_diagnostics(&output);
+    assert_eq!(output.emitted_files.len(), 1);
+    assert!(!output.emitted_files[0].text.contains("this"));
 }

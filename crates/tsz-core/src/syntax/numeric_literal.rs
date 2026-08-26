@@ -1,10 +1,7 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
 
-use super::{
-    Expression, ExpressionKind, Literal, Statement, StatementKind, Token, TokenKind, UnaryOperator,
-    source_uses_supported_line_breaks, statement_starts_at_supported_column,
-};
+use super::{Expression, ExpressionKind, Literal, Token, TokenKind};
 
 macro_rules! string_field_accessors {
     ($($field:ident),+ $(,)?) => {$(
@@ -197,7 +194,6 @@ pub(crate) enum NumericRecoveryKind {
 pub(super) struct ScannedNumericLiteral {
     pub span: Span,
     literal: NumericRecoveryLiteral,
-    diagnostic_events: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,16 +224,6 @@ impl ScannedSeparatedNumberLiteral {
 impl ScannedNumericLiteral {
     pub(super) fn syntax_literal(&self) -> NumericRecoveryLiteral {
         self.literal.clone()
-    }
-
-    pub(super) fn owns_diagnostics(
-        &self,
-        diagnostics: &[Diagnostic],
-        parser_diagnostics: &[Diagnostic],
-    ) -> bool {
-        diagnostics
-            .strip_prefix(self.diagnostic_events.as_slice())
-            .is_some_and(|remaining| remaining == parser_diagnostics)
     }
 }
 
@@ -498,7 +484,6 @@ fn recovered_numeric_token_with_kind(
                 kind,
                 validation_supported,
             },
-            diagnostic_events: diagnostics.clone(),
         }),
         diagnostics,
         separated_literal: None,
@@ -859,71 +844,4 @@ fn legacy_octal_replacement_digits(digits: &str) -> String {
     } else {
         digits.to_string()
     }
-}
-
-pub(crate) fn statements_form_numeric_recovery_safe_file(
-    source: &SourceText,
-    statements: &[Statement],
-    supported_literal_count: usize,
-) -> bool {
-    source.is_regular_typescript_source()
-        && source.text.is_ascii()
-        && source_uses_supported_line_breaks(source)
-        && statements
-            .get(..1)
-            .is_some_and(|first| statement_starts_at_supported_column(source, first))
-        && supported_literal_count == 1
-        && numeric_recovery_family(statements).is_some()
-}
-
-pub(crate) fn numeric_recovery_family(statements: &[Statement]) -> Option<NumericRecoveryKind> {
-    match statements {
-        [statement] => {
-            if let Some((number, _)) = numeric_expression_statement(statement) {
-                return number
-                    .recovery_kind()
-                    .filter(|_| number.validation_supported());
-            }
-            let StatementKind::Expression(Expression {
-                span,
-                kind:
-                    ExpressionKind::Unary {
-                        operator: UnaryOperator::Minus,
-                        operand,
-                    },
-                ..
-            }) = &statement.kind
-            else {
-                return None;
-            };
-            let ExpressionKind::Literal(Literal::Number(number)) = &operand.kind else {
-                return None;
-            };
-            (number.validation_supported()
-                && number.recovery_kind() == Some(NumericRecoveryKind::LegacyOctal)
-                && span.start.saturating_add(1) == operand.span.start)
-                .then_some(NumericRecoveryKind::LegacyOctal)
-        }
-        [first, second] => {
-            let (first, first_span) = numeric_expression_statement(first)?;
-            let (second, second_span) = numeric_expression_statement(second)?;
-            (first.validation_supported()
-                && first.recovery_kind() == Some(NumericRecoveryKind::LegacyOctal)
-                && second.recovery_kind().is_none()
-                && second.raw().starts_with('.')
-                && first_span.end == second_span.start)
-                .then_some(NumericRecoveryKind::LegacyOctal)
-        }
-        _ => None,
-    }
-}
-
-const fn numeric_expression_statement(statement: &Statement) -> Option<(&NumberLiteral, Span)> {
-    let StatementKind::Expression(expression) = &statement.kind else {
-        return None;
-    };
-    let ExpressionKind::Literal(Literal::Number(number)) = &expression.kind else {
-        return None;
-    };
-    Some((number, expression.span))
 }

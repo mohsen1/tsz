@@ -17,6 +17,7 @@ use crate::semantics::types::{
 pub(super) enum RelationDiagnosticStyle {
     Type,
     Argument,
+    Constraint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,15 +62,6 @@ impl ContextualType {
     }
 }
 
-impl RelationDiagnosticStyle {
-    const fn code(self) -> u32 {
-        match self {
-            Self::Type => 2322,
-            Self::Argument => 2345,
-        }
-    }
-}
-
 impl Checker<'_> {
     pub(super) fn report_relation(
         &mut self,
@@ -85,7 +77,7 @@ impl Checker<'_> {
             self.observe_file_completion(span.file, SemanticCompletion::Deferred);
             return RelationDiagnosticOutcome::Deferred;
         }
-        let (property_order, target_origins) = self.relation_origins(target, target_order.as_ref());
+        let (property_order, _) = self.relation_origins(target, target_order.as_ref());
         let Err(failure) = relate_with_property_order(self, source, target, mode, property_order)
         else {
             return RelationDiagnosticOutcome::Compatible;
@@ -110,6 +102,42 @@ impl Checker<'_> {
                 }
             }
         }
+        self.report_relation_failure(
+            (source, target),
+            span,
+            source_expression,
+            target_order,
+            failure,
+            style,
+        )
+    }
+
+    pub(super) fn report_constraint_failure(
+        &mut self,
+        failure: RelationFailure,
+        span: Span,
+    ) -> RelationDiagnosticOutcome {
+        self.report_relation_failure(
+            (failure.source, failure.target),
+            span,
+            None,
+            None,
+            failure,
+            RelationDiagnosticStyle::Constraint,
+        )
+    }
+
+    fn report_relation_failure(
+        &mut self,
+        root: (TypeId, TypeId),
+        span: Span,
+        source_expression: Option<&Expression>,
+        target_order: Option<PropertyOrderTree>,
+        failure: RelationFailure,
+        style: RelationDiagnosticStyle,
+    ) -> RelationDiagnosticOutcome {
+        let (source, target) = root;
+        let (_, target_origins) = self.relation_origins(target, target_order.as_ref());
         match failure.kind {
             RelationFailureKind::Deferred => {
                 self.observe_file_completion(span.file, SemanticCompletion::Deferred);
@@ -139,6 +167,7 @@ impl Checker<'_> {
             | RelationFailureKind::Object
             | RelationFailureKind::ArrayElement
             | RelationFailureKind::TupleElement(_)
+            | RelationFailureKind::TypeArgument(_)
             | RelationFailureKind::ArrayToTupleLength { .. }
             | RelationFailureKind::UnionMember
             | RelationFailureKind::AliasExpansion
@@ -169,7 +198,6 @@ impl Checker<'_> {
             })
             .unwrap_or(span);
         let primary = &failure;
-        let diagnostic_code = style.code();
         let source_order = source_expression.and_then(|expression| {
             self.expression_order_origins
                 .get(&(expression.span.file, expression.id))
@@ -184,16 +212,29 @@ impl Checker<'_> {
             _ => self.source_name(primary.source, primary.target, source_order.as_ref()),
         };
         let target_name = self.type_name_with_order(primary.target, target_order.as_ref());
-        let message = match style {
-            RelationDiagnosticStyle::Argument => format!(
-                "Argument of type '{source_name}' is not assignable to parameter of type '{target_name}'."
+        let (diagnostic_code, message) = match style {
+            RelationDiagnosticStyle::Type => (
+                2322,
+                format!("Type '{source_name}' is not assignable to type '{target_name}'."),
             ),
-            RelationDiagnosticStyle::Type => {
-                format!("Type '{source_name}' is not assignable to type '{target_name}'.")
-            }
+            RelationDiagnosticStyle::Argument => (
+                2345,
+                format!(
+                    "Argument of type '{source_name}' is not assignable to parameter of type '{target_name}'."
+                ),
+            ),
+            RelationDiagnosticStyle::Constraint => (
+                2344,
+                format!("Type '{source_name}' does not satisfy the constraint '{target_name}'."),
+            ),
         };
-        let related =
-            self.relation_continuations(primary, diagnostic_code, &source_origins, &target_origins);
+        let related = match style {
+            RelationDiagnosticStyle::Constraint => {
+                self.constraint_continuations(primary, diagnostic_code)
+            }
+            RelationDiagnosticStyle::Type | RelationDiagnosticStyle::Argument => self
+                .relation_continuations(primary, diagnostic_code, &source_origins, &target_origins),
+        };
         self.push_relation_diagnostic(
             diagnostic_span,
             message,
@@ -811,6 +852,41 @@ impl Checker<'_> {
             };
             related.push(RelatedInformation::unlocated(message, code, depth));
             depth += 1;
+            child = reason.child.as_deref();
+        }
+        related
+    }
+
+    fn constraint_continuations(
+        &mut self,
+        failure: &RelationFailure,
+        code: u32,
+    ) -> Vec<RelatedInformation> {
+        let source = self.complete_type(failure.source).unwrap_or(failure.source);
+        if !matches!(
+            self.store.kind(source),
+            TypeKind::TypeParameter { .. } | TypeKind::Union(_)
+        ) {
+            return Vec::new();
+        }
+        let target_name = self.type_name_with_order(failure.target, None);
+        let mut previous = failure.source;
+        let mut child = failure.child.as_deref();
+        let mut related = Vec::new();
+        while let Some(reason) = child {
+            let source = self.complete_type(reason.source).unwrap_or(reason.source);
+            if matches!(self.store.kind(source), TypeKind::Unknown) {
+                break;
+            }
+            if source != previous {
+                let source_name = self.source_name(reason.source, failure.target, None);
+                related.push(RelatedInformation::unlocated(
+                    format!("Type '{source_name}' is not assignable to type '{target_name}'."),
+                    code,
+                    related.len() as u32 + 1,
+                ));
+                previous = source;
+            }
             child = reason.child.as_deref();
         }
         related

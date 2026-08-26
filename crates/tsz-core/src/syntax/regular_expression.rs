@@ -1,20 +1,11 @@
 use crate::source::{SourceText, Span};
 
-use super::scanner::is_plain_strict_binding_identifier;
-use super::{
-    CommentTrivia, Expression, ExpressionKind, Statement, StatementKind, VariableKind,
-    comments_form_contiguous_plain_leading_run, source_is_ascii_outside_comments,
-    source_uses_supported_line_breaks, statement_starts_at_supported_column,
-};
+use super::string_literal::{AuthoredEscape, decode_authored_escape};
 
-/// Scanner-owned syntax for one regular-expression token.
-///
-/// The checker consumes the authored pattern and flags directly. Keeping their
-/// spans here avoids rescanning rendered output when it selects diagnostics.
+/// Scanner-owned spelling and spans for one regular-expression token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegularExpressionLiteral {
-    /// Exact authored token, beginning with `/` and including flags when the
-    /// closing delimiter was present.
+    /// Exact authored token, including delimiters and flags when present.
     pub raw: String,
     /// Authored pattern text without slash delimiters.
     pub pattern: String,
@@ -23,49 +14,48 @@ pub struct RegularExpressionLiteral {
     pub pattern_span: Span,
     pub flags_span: Span,
     pub terminated: bool,
-    /// The unterminated token stopped immediately before a physical line
-    /// terminator rather than at end of file.
+    /// Whether unterminated recovery stopped at a physical line break.
     pub(crate) recovery_at_line_break: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RegularExpressionIssue {
+    UnknownFlag(Span),
+    DuplicateFlag(Span),
+    HexDigit(Span),
+    UnicodeRange(Span),
+    CloseBrace(Span),
+}
+
 impl RegularExpressionLiteral {
-    /// Whether the initial checker campaign owns validation for this syntax.
-    ///
-    /// This is intentionally narrower than ECMAScript regular expressions.
-    /// Advanced groups, property/named/back-reference escapes, Unicode-set
-    /// mode, and class-set operations stay Deferred. Unicode mode is limited
-    /// to concatenated extended escapes whose shape is sufficient for the
-    /// checker's owned diagnostics; ambiguous malformed payloads fail closed.
+    /// Whether the bounded checker campaign owns this authored grammar.
+    /// Advanced groups, escapes, and Unicode-set operations fail closed.
     #[must_use]
     pub fn validation_supported(&self) -> bool {
-        if self.recovery_at_line_break
-            || (!self.terminated
+        self.analyze(&mut |_| {}).is_some()
+    }
+
+    pub(crate) fn validation_issues(&self) -> Option<Vec<RegularExpressionIssue>> {
+        let mut issues = Vec::new();
+        self.analyze(&mut |issue| issues.push(issue))?;
+        Some(issues)
+    }
+
+    fn analyze(&self, report: &mut impl FnMut(RegularExpressionIssue)) -> Option<()> {
+        (!self.recovery_at_line_break
+            && !(!self.terminated
                 && self
                     .pattern
                     .as_bytes()
                     .last()
-                    .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b';'))
-        {
-            return false;
-        }
-        if self
-            .flags
-            .bytes()
-            .any(|flag| matches!(flag, b'd' | b's' | b'v'))
-            || !self
-                .flags
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
-        {
-            return false;
-        }
+                    .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b';')))
+        .then_some(())?;
+        analyze_flags(&self.flags, self.flags_span, report)?;
         if self.flags.contains('u') {
-            return unicode_extended_escape_sequence_supported(&self.pattern);
+            analyze_extended_unicode_escapes(&self.pattern, self.pattern_span, report)
+        } else {
+            basic_ascii_pattern_supported(&self.pattern)
         }
-        if contains_extended_unicode_escape(&self.pattern) {
-            return false;
-        }
-        basic_ascii_pattern_supported(&self.pattern) && class_ranges_supported(&self.pattern)
     }
 }
 
@@ -76,26 +66,7 @@ pub(super) struct ScannedRegularExpressionLiteral {
 }
 
 impl ScannedRegularExpressionLiteral {
-    pub(super) fn terminated(
-        source: &SourceText,
-        start: usize,
-        pattern_end: usize,
-        flags_start: usize,
-        end: usize,
-    ) -> Self {
-        Self::new(source, start, pattern_end, flags_start, end, true, false)
-    }
-
-    pub(super) fn unterminated(
-        source: &SourceText,
-        start: usize,
-        end: usize,
-        recovery_at_line_break: bool,
-    ) -> Self {
-        Self::new(source, start, end, end, end, false, recovery_at_line_break)
-    }
-
-    fn new(
+    pub(super) fn from_source(
         source: &SourceText,
         start: usize,
         pattern_end: usize,
@@ -126,202 +97,172 @@ impl ScannedRegularExpressionLiteral {
     }
 }
 
-pub(crate) fn statements_form_regular_expression_expression_file(statements: &[Statement]) -> bool {
-    matches!(
-        statements,
-        [Statement {
-            kind: StatementKind::Expression(Expression {
-                kind: ExpressionKind::RegularExpression(_),
-                ..
-            }),
-            ..
-        }]
-    )
-}
-
-direct_var_literal_predicates!(
-    statements_form_regular_expression_safe_file,
-    statements_form_regular_expression_variable_file,
-    comments_form_regular_expression_safe_file,
-    ExpressionKind::RegularExpression(_),
-    statements_form_regular_expression_expression_file
-);
-
-fn basic_ascii_pattern_supported(pattern: &str) -> bool {
-    let bytes = pattern.as_bytes();
-    let mut index = 0;
-    let mut group_depth = 0_usize;
-    let mut in_class = false;
-    let mut class_has_content = false;
-    let mut can_quantify = false;
-
-    while let Some(byte) = bytes.get(index).copied() {
-        if !byte.is_ascii() || matches!(byte, b'\n' | b'\r') {
-            return false;
+fn analyze_flags(
+    flags: &str,
+    span: Span,
+    report: &mut impl FnMut(RegularExpressionIssue),
+) -> Option<()> {
+    let mut seen = [false; 5];
+    for (offset, flag) in flags.char_indices() {
+        (!matches!(flag, 'd' | 's' | 'v')
+            && (flag.is_ascii_alphanumeric() || matches!(flag, '_' | '$')))
+        .then_some(())?;
+        let flag_span = relative_span(span, offset, flag.len_utf8());
+        let Some(index) = "gimuy".find(flag) else {
+            report(RegularExpressionIssue::UnknownFlag(flag_span));
+            continue;
+        };
+        if std::mem::replace(&mut seen[index], true) {
+            report(RegularExpressionIssue::DuplicateFlag(flag_span));
         }
-        match byte {
-            b'\\' => {
-                let Some(escaped) = bytes.get(index + 1).copied() else {
-                    return false;
-                };
-                if escaped == b'u' && bytes.get(index + 2) == Some(&b'{') {
-                    index += 3;
-                    while bytes.get(index).is_some_and(|byte| *byte != b'}') {
-                        if !bytes[index].is_ascii() || matches!(bytes[index], b'\n' | b'\r') {
-                            return false;
-                        }
-                        index += 1;
-                    }
-                    if bytes.get(index) != Some(&b'}') {
-                        return false;
-                    }
-                    index += 1;
-                    can_quantify = true;
-                    class_has_content |= in_class;
-                    continue;
-                }
-                if matches!(escaped, b'p' | b'P' | b'k' | b'u' | b'x' | b'1'..=b'9')
-                    || !(escaped.is_ascii_alphabetic()
-                        && matches!(
-                            escaped,
-                            b'd' | b'D'
-                                | b's'
-                                | b'S'
-                                | b'w'
-                                | b'W'
-                                | b'b'
-                                | b'B'
-                                | b'f'
-                                | b'n'
-                                | b'r'
-                                | b't'
-                                | b'v'
-                        ))
-                        && !matches!(
-                            escaped,
-                            b'^' | b'$'
-                                | b'\\'
-                                | b'.'
-                                | b'*'
-                                | b'+'
-                                | b'?'
-                                | b'('
-                                | b')'
-                                | b'['
-                                | b']'
-                                | b'{'
-                                | b'}'
-                                | b'|'
-                                | b'/'
-                                | b'-'
-                        )
-                {
-                    return false;
-                }
-                index += 2;
-                can_quantify = in_class || !matches!(escaped, b'b' | b'B');
-                class_has_content |= in_class;
-                continue;
-            }
-            b'[' => {
-                if in_class {
-                    return false;
-                }
-                in_class = true;
-                class_has_content = false;
-                can_quantify = false;
-            }
-            b']' => {
-                if !in_class || !class_has_content {
-                    return false;
-                }
-                in_class = false;
-                can_quantify = true;
-            }
-            b'&' if in_class && bytes.get(index + 1) == Some(&b'&') => return false,
-            b'-' if in_class && bytes.get(index + 1) == Some(&b'-') => return false,
-            _ if in_class => class_has_content = true,
-            b'(' => {
-                if bytes.get(index + 1) == Some(&b'?') {
-                    return false;
-                }
-                group_depth += 1;
-                can_quantify = false;
-            }
-            b')' => {
-                if group_depth == 0 {
-                    return false;
-                }
-                group_depth -= 1;
-                can_quantify = true;
-            }
-            b'*' | b'+' | b'?' => {
-                if !can_quantify {
-                    return false;
-                }
-                can_quantify = false;
-            }
-            b'{' | b'}' => return false,
-            b'|' | b'^' | b'$' => can_quantify = false,
-            _ => can_quantify = true,
-        }
-        index += 1;
     }
-
-    !in_class && group_depth == 0
+    Some(())
 }
 
-fn contains_extended_unicode_escape(pattern: &str) -> bool {
-    let bytes = pattern.as_bytes();
+fn analyze_extended_unicode_escapes(
+    pattern: &str,
+    span: Span,
+    report: &mut impl FnMut(RegularExpressionIssue),
+) -> Option<()> {
     let mut index = 0;
-    while let Some(byte) = bytes.get(index) {
-        if *byte != b'\\' {
-            index += 1;
+    while index < pattern.len() {
+        (pattern.as_bytes().get(index) == Some(&b'\\')).then_some(())?;
+        let AuthoredEscape::ExtendedUnicode {
+            digits_start,
+            digits_end,
+            value,
+            closed,
+        } = decode_authored_escape(pattern, &mut index, pattern.len())
+        else {
+            return None;
+        };
+        if closed {
+            if digits_start == digits_end {
+                report(RegularExpressionIssue::HexDigit(relative_span(
+                    span, digits_end, 1,
+                )));
+            } else if value > 0x10_ffff {
+                report(RegularExpressionIssue::UnicodeRange(relative_span(
+                    span,
+                    digits_start,
+                    digits_end - digits_start,
+                )));
+            }
             continue;
         }
-        if bytes.get(index + 1) == Some(&b'u') && bytes.get(index + 2) == Some(&b'{') {
-            return true;
-        }
-        index += usize::from(bytes.get(index + 1).is_some()) + 1;
-    }
-    false
-}
-
-fn unicode_extended_escape_sequence_supported(pattern: &str) -> bool {
-    let bytes = pattern.as_bytes();
-    let mut index = 0;
-    let mut atom_count = 0_usize;
-
-    while index < bytes.len() {
-        if bytes.get(index..index + 3) != Some(br"\u{") {
-            return false;
-        }
-        index += 3;
-        let payload_start = index;
-        while bytes.get(index).is_some_and(|byte| *byte != b'}') {
-            let byte = bytes[index];
-            if !byte.is_ascii() || matches!(byte, b'\n' | b'\r') {
-                return false;
-            }
-            index += 1;
-        }
-        if bytes.get(index) != Some(&b'}') {
-            return false;
-        }
-        let payload = &bytes[payload_start..index];
-        let all_hex = payload.iter().all(u8::is_ascii_hexdigit);
+        let close = pattern.as_bytes()[digits_end..]
+            .iter()
+            .position(|byte| *byte == b'}')
+            .map(|close| digits_end + close)?;
+        let payload = &pattern.as_bytes()[digits_start..close];
         let one_nonhex_letter = matches!(payload, [byte]
             if byte.is_ascii_alphabetic() && !byte.is_ascii_hexdigit());
         let negative_hex = matches!(payload, [b'-', rest @ ..]
             if !rest.is_empty() && rest.iter().all(u8::is_ascii_hexdigit));
-        if !all_hex && !one_nonhex_letter && !negative_hex {
-            return false;
-        }
-        index += 1;
-        atom_count += 1;
+        (one_nonhex_letter || negative_hex).then_some(())?;
+        report(RegularExpressionIssue::HexDigit(relative_span(
+            span,
+            digits_start,
+            1,
+        )));
+        report(RegularExpressionIssue::CloseBrace(relative_span(
+            span, close, 1,
+        )));
+        index = close + 1;
     }
+    (!pattern.is_empty()).then_some(())
+}
 
-    atom_count != 0
+fn basic_ascii_pattern_supported(pattern: &str) -> Option<()> {
+    let bytes = pattern.as_bytes();
+    let (mut index, mut group_depth, mut can_quantify) = (0, 0_usize, false);
+    while let Some(byte) = bytes.get(index).copied() {
+        (byte.is_ascii() && !matches!(byte, b'\n' | b'\r')).then_some(())?;
+        match byte {
+            b'\\' => {
+                let escaped = bytes
+                    .get(index + 1)
+                    .copied()
+                    .filter(|escaped| basic_escape_supported(*escaped))?;
+                can_quantify = !matches!(escaped, b'b' | b'B');
+                index += 2;
+            }
+            b'[' => {
+                index = scan_basic_class(bytes, index + 1)?;
+                can_quantify = true;
+            }
+            b']' | b'{' | b'}' => return None,
+            b'(' => {
+                (bytes.get(index + 1) != Some(&b'?')).then_some(())?;
+                group_depth += 1;
+                can_quantify = false;
+                index += 1;
+            }
+            b')' => {
+                (group_depth != 0).then_some(())?;
+                group_depth -= 1;
+                can_quantify = true;
+                index += 1;
+            }
+            b'*' | b'+' | b'?' => {
+                can_quantify.then_some(())?;
+                can_quantify = false;
+                index += 1;
+            }
+            b'|' | b'^' | b'$' => {
+                can_quantify = false;
+                index += 1;
+            }
+            _ => {
+                can_quantify = true;
+                index += 1;
+            }
+        }
+    }
+    (group_depth == 0).then_some(())
+}
+
+fn basic_escape_supported(escaped: u8) -> bool {
+    b"dDsSwWbBfnrtv^$\\.*+?()[]{}|/-".contains(&escaped)
+}
+
+fn scan_basic_class(bytes: &[u8], mut index: usize) -> Option<usize> {
+    let mut items = Vec::new();
+    let mut has_content = false;
+    while let Some(byte) = bytes.get(index).copied() {
+        if !byte.is_ascii() || matches!(byte, b'\n' | b'\r') {
+            return None;
+        }
+        match byte {
+            b']' => return (has_content && ranges_are_supported(&items)).then_some(index + 1),
+            b'[' => return None,
+            b'&' if bytes.get(index + 1) == Some(&b'&') => return None,
+            b'-' if bytes.get(index + 1) == Some(&b'-') => return None,
+            b'\\' => {
+                let escaped = bytes
+                    .get(index + 1)
+                    .copied()
+                    .filter(|escaped| basic_escape_supported(*escaped))?;
+                items.push(classify_class_escape(escaped));
+                has_content = true;
+                index += 2;
+            }
+            b'^' if !has_content => {
+                has_content = true;
+                index += 1;
+            }
+            literal => {
+                items.push(if literal == b'-' {
+                    BasicClassItem::Hyphen
+                } else {
+                    BasicClassItem::Literal(literal)
+                });
+                has_content = true;
+                index += 1;
+            }
+        }
+    }
+    None
 }
 
 #[derive(Clone, Copy)]
@@ -332,80 +273,14 @@ enum BasicClassItem {
     Hyphen,
 }
 
-fn class_ranges_supported(pattern: &str) -> bool {
-    let bytes = pattern.as_bytes();
-    let mut index = 0;
-    while let Some(byte) = bytes.get(index).copied() {
-        match byte {
-            b'\\' if bytes.get(index + 1) == Some(&b'u') && bytes.get(index + 2) == Some(&b'{') => {
-                index += 3;
-                while bytes.get(index).is_some_and(|byte| *byte != b'}') {
-                    index += 1;
-                }
-                if bytes.get(index) != Some(&b'}') {
-                    return false;
-                }
-                index += 1;
-            }
-            b'\\' => index += usize::from(bytes.get(index + 1).is_some()) + 1,
-            b'[' => {
-                index += 1;
-                let Some(end) = collect_supported_class_items(bytes, index) else {
-                    return false;
-                };
-                index = end;
-            }
-            _ => index += 1,
-        }
+const fn classify_class_escape(escaped: u8) -> BasicClassItem {
+    if matches!(escaped, b'd' | b'D' | b's' | b'S' | b'w' | b'W') {
+        BasicClassItem::CharacterClassEscape
+    } else if escaped.is_ascii_punctuation() {
+        BasicClassItem::Literal(escaped)
+    } else {
+        BasicClassItem::OtherEscape
     }
-    true
-}
-
-fn collect_supported_class_items(bytes: &[u8], mut index: usize) -> Option<usize> {
-    let mut items = Vec::new();
-    if bytes.get(index) == Some(&b'^') {
-        index += 1;
-    }
-    while let Some(byte) = bytes.get(index).copied() {
-        match byte {
-            b']' => return ranges_are_supported(&items).then_some(index + 1),
-            b'\\' => {
-                let escaped = bytes.get(index + 1).copied()?;
-                if escaped == b'u' && bytes.get(index + 2) == Some(&b'{') {
-                    index += 3;
-                    while bytes.get(index).is_some_and(|byte| *byte != b'}') {
-                        index += 1;
-                    }
-                    if bytes.get(index) != Some(&b'}') {
-                        return None;
-                    }
-                    index += 1;
-                    items.push(BasicClassItem::OtherEscape);
-                } else {
-                    index += 2;
-                    items.push(
-                        if matches!(escaped, b'd' | b'D' | b's' | b'S' | b'w' | b'W') {
-                            BasicClassItem::CharacterClassEscape
-                        } else if escaped.is_ascii_punctuation() {
-                            BasicClassItem::Literal(escaped)
-                        } else {
-                            BasicClassItem::OtherEscape
-                        },
-                    );
-                }
-            }
-            b'-' => {
-                items.push(BasicClassItem::Hyphen);
-                index += 1;
-            }
-            b'[' => return None,
-            literal => {
-                items.push(BasicClassItem::Literal(literal));
-                index += 1;
-            }
-        }
-    }
-    None
 }
 
 fn ranges_are_supported(items: &[BasicClassItem]) -> bool {
@@ -420,6 +295,15 @@ fn ranges_are_supported(items: &[BasicClassItem]) -> bool {
         }
     }
     true
+}
+
+const fn relative_span(base: Span, start: usize, length: usize) -> Span {
+    let start = base.start.saturating_add(start as u32);
+    Span {
+        file: base.file,
+        start,
+        end: start.saturating_add(length as u32),
+    }
 }
 
 #[cfg(test)]

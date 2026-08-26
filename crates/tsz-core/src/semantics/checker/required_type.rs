@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
 use crate::program::{CapabilityScope, CapabilityTarget, SemanticCompletion};
 use crate::semantics::relation::RelationContext;
-use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
+use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind, TypeStore};
 use crate::source::{DeclId, FileId, NodeId, SourceKind};
 use crate::syntax::{
-    AccessorKind, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, Literal,
-    Parameter, ParameterNameKind, Statement, StatementKind, SwitchClauseKind, TypeMember,
-    TypeMemberKind, TypeMemberName, TypeMemberNameKind, TypeNode, TypeNodeKind,
-    TypeParameterDeclaration, UnaryOperator,
+    AuthoredTypeItem, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, Literal,
+    Parameter, ParameterNameKind, Statement, StatementKind, TypeMember, TypeMemberKind,
+    TypeMemberName, TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration,
+    UnaryOperator,
 };
 
 use super::{
@@ -70,23 +70,17 @@ impl Checker<'_> {
     ) {
         match &statement.kind {
             StatementKind::Import(_)
+            | StatementKind::Export(_)
+            | StatementKind::Variable(_)
+            | StatementKind::If(_)
+            | StatementKind::Switch(_)
+            | StatementKind::Return(_)
+            | StatementKind::Block(_)
+            | StatementKind::Expression(_)
             | StatementKind::Break(_)
             | StatementKind::Continue(_)
             | StatementKind::Empty
             | StatementKind::Unknown => {}
-            StatementKind::Export(declaration) => {
-                if let Some(assignment) = &declaration.assignment {
-                    self.visit_required_expression(file, scope, assignment, type_parameters);
-                }
-            }
-            StatementKind::Variable(declaration) => {
-                if let Some(annotation) = &declaration.annotation {
-                    self.visit_required_type_node(file, scope, annotation, type_parameters);
-                }
-                if let Some(initializer) = &declaration.initializer {
-                    self.visit_required_expression(file, scope, initializer, type_parameters);
-                }
-            }
             StatementKind::Function(declaration) => {
                 let source = &self.program.files[file.0 as usize].source;
                 let declaration_source = source.is_declaration_source();
@@ -207,7 +201,6 @@ impl Checker<'_> {
                         );
                     }
                 }
-                self.visit_required_body(file, function_scope, &declaration.body, &function_types);
             }
             StatementKind::Class(declaration) => {
                 let identity = self
@@ -226,8 +219,10 @@ impl Checker<'_> {
                 );
                 if !self.declaration_value_host_is_modeled(identity, DeclarationKind::Class)
                     || !self.is_single_type_symbol_declaration(identity)
-                    || class_has_multiple_constructor_implementations(declaration)
-                    || !class_member_declaration_groups_are_modeled(declaration)
+                    || !class_member_declaration_groups_are_modeled(
+                        &self.program.files[file.0 as usize].bindings,
+                        declaration,
+                    )
                     || javascript_source && class_has_bodyless_member(declaration)
                     || (declaration_source && !declaration.declared && !declaration.exported)
                     || (declaration.declared || declaration_source)
@@ -258,9 +253,6 @@ impl Checker<'_> {
                 }
                 for heritage in &declaration.implements {
                     self.visit_required_type_node(file, class_scope, heritage, &class_types);
-                }
-                for member in &declaration.members {
-                    self.visit_required_class_member(file, class_scope, member, &class_types);
                 }
             }
             StatementKind::TypeAlias(declaration) => {
@@ -319,81 +311,6 @@ impl Checker<'_> {
                     );
                 }
             }
-            StatementKind::If(control_flow) => {
-                self.visit_required_expression(
-                    file,
-                    scope,
-                    &control_flow.condition,
-                    type_parameters,
-                );
-                let then_scope = self.node_scope(file, control_flow.then_statement.id, scope);
-                self.visit_required_statement(
-                    file,
-                    then_scope,
-                    &control_flow.then_statement,
-                    None,
-                    type_parameters,
-                );
-                if let Some(else_statement) = &control_flow.else_statement {
-                    let else_scope = self.node_scope(file, else_statement.id, scope);
-                    self.visit_required_statement(
-                        file,
-                        else_scope,
-                        else_statement,
-                        None,
-                        type_parameters,
-                    );
-                }
-            }
-            StatementKind::Switch(control_flow) => {
-                let switch_scope = self.node_scope(file, statement.id, scope);
-                self.visit_required_expression(
-                    file,
-                    switch_scope,
-                    &control_flow.expression,
-                    type_parameters,
-                );
-                for clause in &control_flow.clauses {
-                    if let SwitchClauseKind::Case(expression) = &clause.kind {
-                        self.visit_required_expression(
-                            file,
-                            switch_scope,
-                            expression,
-                            type_parameters,
-                        );
-                    }
-                    for (index, nested) in clause.statements.iter().enumerate() {
-                        let nested_scope = self.node_scope(file, nested.id, switch_scope);
-                        self.visit_required_statement(
-                            file,
-                            nested_scope,
-                            nested,
-                            clause.statements.get(index + 1),
-                            type_parameters,
-                        );
-                    }
-                }
-            }
-            StatementKind::Return(expression) => {
-                if let Some(expression) = expression {
-                    self.visit_required_expression(file, scope, expression, type_parameters);
-                }
-            }
-            StatementKind::Block(statements) => {
-                for (index, nested) in statements.iter().enumerate() {
-                    let nested_scope = self.node_scope(file, nested.id, scope);
-                    self.visit_required_statement(
-                        file,
-                        nested_scope,
-                        nested,
-                        statements.get(index + 1),
-                        type_parameters,
-                    );
-                }
-            }
-            StatementKind::Expression(expression) => {
-                self.visit_required_expression(file, scope, expression, type_parameters);
-            }
         }
     }
 
@@ -401,9 +318,10 @@ impl Checker<'_> {
         &mut self,
         file: FileId,
         class_scope: ScopeId,
+        member_scope: ScopeId,
         member: &crate::syntax::ClassMember,
         type_parameters: &HashMap<String, TypeId>,
-    ) {
+    ) -> bool {
         if !self
             .capabilities
             .claim(
@@ -413,28 +331,19 @@ impl Checker<'_> {
             .is_claimed()
         {
             let _ = self.require_completion(Completion::<()>::Deferred);
-            return;
+            return false;
         }
         match &member.kind {
-            ClassMemberKind::Property {
-                annotation,
-                initializer,
-                ..
-            } => {
+            ClassMemberKind::Property { annotation, .. } => {
                 if let Some(annotation) = annotation {
                     self.visit_required_type_node(file, class_scope, annotation, type_parameters);
-                }
-                if let Some(initializer) = initializer {
-                    self.visit_required_expression(file, class_scope, initializer, type_parameters);
                 }
             }
             ClassMemberKind::Constructor {
                 parameters,
-                body,
                 has_body,
                 ..
             } => {
-                let member_scope = self.node_scope(file, member.id, class_scope);
                 self.visit_required_parameters(
                     file,
                     member_scope,
@@ -446,33 +355,25 @@ impl Checker<'_> {
                         ParameterGrammarHost::Signature
                     },
                 );
-                self.visit_required_body(file, member_scope, body, type_parameters);
             }
             ClassMemberKind::Method {
                 type_parameters: declarations,
                 parameters,
                 return_type,
-                body,
                 has_body,
                 ..
             } => {
-                let member_scope = self.node_scope(file, member.id, class_scope);
-                let method_types = self.extend_type_parameters(
-                    synthetic_identity(file, member.name_span.start),
-                    declarations,
-                    type_parameters,
-                );
                 self.visit_type_parameter_declarations(
                     file,
                     class_scope,
                     declarations,
-                    &method_types,
+                    type_parameters,
                 );
                 self.visit_required_parameters(
                     file,
                     member_scope,
                     parameters,
-                    &method_types,
+                    type_parameters,
                     if *has_body {
                         ParameterGrammarHost::Implementation { constructor: false }
                     } else {
@@ -487,13 +388,13 @@ impl Checker<'_> {
                             file,
                             member_scope,
                             return_type,
-                            &method_types,
+                            type_parameters,
                         );
                     }
                 }
-                self.visit_required_body(file, member_scope, body, &method_types);
             }
         }
+        true
     }
 
     fn class_bodyless_hosts_are_modeled(
@@ -650,86 +551,6 @@ impl Checker<'_> {
         true
     }
 
-    fn visit_required_expression(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        expression: &Expression,
-        type_parameters: &HashMap<String, TypeId>,
-    ) {
-        match &expression.kind {
-            ExpressionKind::Identifier { .. }
-            | ExpressionKind::This
-            | ExpressionKind::Literal(_)
-            | ExpressionKind::RegularExpression(_)
-            | ExpressionKind::Missing => {}
-            ExpressionKind::Object(properties) => {
-                for property in properties {
-                    self.visit_required_expression(file, scope, &property.value, type_parameters);
-                }
-            }
-            ExpressionKind::Array(elements) => {
-                for element in elements {
-                    self.visit_required_expression(file, scope, element, type_parameters);
-                }
-            }
-            ExpressionKind::Call {
-                callee,
-                type_arguments: _,
-                arguments,
-            } => {
-                self.visit_required_expression(file, scope, callee, type_parameters);
-                // Explicit call type arguments are bound and navigable syntax,
-                // but generic signature instantiation is not yet an owned
-                // semantic query. Resolving them here can emit the wrong
-                // diagnostic family (for example TS2304 instead of TS2749),
-                // so the call itself supplies the typed Deferred boundary.
-                for argument in arguments {
-                    self.visit_required_expression(file, scope, argument, type_parameters);
-                }
-            }
-            ExpressionKind::New {
-                callee,
-                type_arguments,
-                arguments,
-            } => {
-                self.visit_required_expression(file, scope, callee, type_parameters);
-                for type_argument in type_arguments {
-                    self.visit_required_type_node(file, scope, type_argument, type_parameters);
-                }
-                for argument in arguments {
-                    self.visit_required_expression(file, scope, argument, type_parameters);
-                }
-            }
-            ExpressionKind::Member { object, .. } => {
-                self.visit_required_expression(file, scope, object, type_parameters);
-            }
-            ExpressionKind::ElementAccess { object, index } => {
-                self.visit_required_expression(file, scope, object, type_parameters);
-                self.visit_required_expression(file, scope, index, type_parameters);
-            }
-            ExpressionKind::FunctionLike(function) => self.visit_required_function_like_expression(
-                file,
-                scope,
-                expression,
-                function,
-                type_parameters,
-            ),
-            ExpressionKind::Binary { left, right, .. }
-            | ExpressionKind::Assignment { left, right, .. } => {
-                self.visit_required_expression(file, scope, left, type_parameters);
-                self.visit_required_expression(file, scope, right, type_parameters);
-            }
-            ExpressionKind::Unary { operand, .. } | ExpressionKind::Parenthesized(operand) => {
-                self.visit_required_expression(file, scope, operand, type_parameters);
-            }
-            ExpressionKind::As { expression, ty } => {
-                self.visit_required_expression(file, scope, expression, type_parameters);
-                self.visit_required_type_node(file, scope, ty, type_parameters);
-            }
-        }
-    }
-
     fn visit_type_parameter_declarations(
         &mut self,
         file: FileId,
@@ -779,27 +600,16 @@ impl Checker<'_> {
             type_parameters,
             implementation,
         );
-        for parameter in parameters {
-            if let Some(initializer) = &parameter.initializer
-                && !matches!(initializer.kind, ExpressionKind::Literal(_))
-            {
-                self.visit_required_expression(file, scope, initializer, type_parameters);
-            }
-        }
         if implementation {
             for parameter in parameters {
                 if let Some(initializer) = &parameter.initializer
-                    && matches!(initializer.kind, ExpressionKind::Literal(_))
-                {
-                    if matches!(
+                    && matches!(
                         initializer.kind,
                         ExpressionKind::Literal(Literal::BigInt(_))
-                    ) {
-                        let completion = self.signature_initializer_type(file, scope, initializer);
-                        let _ = self.require_completion(completion);
-                    } else {
-                        self.visit_required_expression(file, scope, initializer, type_parameters);
-                    }
+                    )
+                {
+                    let completion = self.signature_initializer_type(file, scope, initializer);
+                    let _ = self.require_completion(completion);
                 }
             }
         }
@@ -835,28 +645,22 @@ impl Checker<'_> {
             .entry(node.span)
             .or_insert_with(|| type_parameters.clone());
         let ty = self.resolve_type_node(file, scope, node, type_parameters);
+        if let TypeNodeKind::Reference { arguments, .. } = &node.kind
+            && let TypeKind::Deferred(DeferredType::Reference {
+                declaration,
+                arguments: resolved_arguments,
+            }) = self.store.kind(ty).clone()
+            && let Completion::Complete(Err(failure)) =
+                self.record_key_constraint_check(declaration, &resolved_arguments, 0)
+            && let Some(argument) = arguments.get(failure.argument_index)
+        {
+            self.report_constraint_failure(failure.reason, argument.span);
+        }
         let completion = self.require_type_completion(ty);
         if matches!(completion, Completion::Complete(_)) {
             self.complete_required_type_nodes.insert(node.span);
         }
         match &node.kind {
-            TypeNodeKind::Keyword(_)
-            | TypeNodeKind::Literal(_)
-            | TypeNodeKind::TypeQuery { .. }
-            | TypeNodeKind::Missing => {}
-            TypeNodeKind::Array(child)
-            | TypeNodeKind::KeyOf(child)
-            | TypeNodeKind::Readonly(child)
-            | TypeNodeKind::Parenthesized(child) => {
-                self.visit_required_type_node(file, scope, child, type_parameters);
-            }
-            TypeNodeKind::Tuple(children)
-            | TypeNodeKind::Union(children)
-            | TypeNodeKind::Intersection(children) => {
-                for child in children {
-                    self.visit_required_type_node(file, scope, child, type_parameters);
-                }
-            }
             TypeNodeKind::Object(members) => {
                 if members.iter().any(|member| member.recovered) {
                     let _ = self.require_completion(Completion::<()>::Deferred);
@@ -871,6 +675,7 @@ impl Checker<'_> {
                         TypeMemberContainerKind::TypeLiteral,
                     );
                 }
+                return;
             }
             TypeNodeKind::Function {
                 id: signature_id,
@@ -919,6 +724,17 @@ impl Checker<'_> {
                     &signature_types,
                     ParameterGrammarHost::Signature,
                 );
+                for initializer in parameters
+                    .iter()
+                    .filter_map(|parameter| parameter.initializer.as_ref())
+                {
+                    self.visit_required_expression(
+                        file,
+                        signature_scope,
+                        initializer,
+                        &signature_types,
+                    );
+                }
                 self.visit_type_parameter_declarations(
                     file,
                     scope,
@@ -926,6 +742,7 @@ impl Checker<'_> {
                     &signature_types,
                 );
                 self.visit_required_type_node(file, signature_scope, return_type, &signature_types);
+                return;
             }
             TypeNodeKind::Reference {
                 name, arguments, ..
@@ -947,19 +764,6 @@ impl Checker<'_> {
                         2744,
                     );
                 }
-                for argument in arguments {
-                    self.visit_required_type_node(file, scope, argument, type_parameters);
-                }
-            }
-            TypeNodeKind::Infer { constraint, .. } => {
-                if let Some(constraint) = constraint {
-                    self.visit_required_type_node(file, scope, constraint, type_parameters);
-                }
-            }
-            TypeNodeKind::Predicate { ty, .. } => {
-                if let Some(ty) = ty {
-                    self.visit_required_type_node(file, scope, ty, type_parameters);
-                }
             }
             TypeNodeKind::Conditional {
                 check_type,
@@ -973,6 +777,7 @@ impl Checker<'_> {
                     self.conditional_true_type_parameters(file, extends_type, type_parameters);
                 self.visit_required_type_node(file, scope, true_type, &true_parameters);
                 self.visit_required_type_node(file, scope, false_type, type_parameters);
+                return;
             }
             TypeNodeKind::Mapped {
                 parameter,
@@ -985,22 +790,28 @@ impl Checker<'_> {
             } => {
                 self.visit_required_type_node(file, scope, constraint, type_parameters);
                 let mut mapped_types = type_parameters.clone();
-                let ty = self.store.intern(TypeKind::TypeParameter {
-                    declaration: synthetic_identity(file, parameter_span.start),
-                    index: 0,
-                    name: parameter.clone(),
-                });
+                let ty = self.store.type_parameter(
+                    synthetic_identity(file, parameter_span.start),
+                    0,
+                    parameter,
+                );
                 mapped_types.insert(parameter.clone(), ty);
                 if let Some(name_type) = name_type {
                     self.visit_required_type_node(file, scope, name_type, &mapped_types);
                 }
                 self.visit_required_type_node(file, scope, value_type, &mapped_types);
                 self.validate_mapped_type_members(file, members);
+                return;
             }
-            TypeNodeKind::IndexedAccess { object, index } => {
-                self.visit_required_type_node(file, scope, object, type_parameters);
-                self.visit_required_type_node(file, scope, index, type_parameters);
-            }
+            _ => {}
+        }
+        let mut children = Vec::new();
+        node.push_authored_children(&mut children);
+        for child in children.into_iter().rev() {
+            let AuthoredTypeItem::Type(child, _) = child else {
+                unreachable!()
+            };
+            self.visit_required_type_node(file, scope, child, type_parameters);
         }
     }
 
@@ -1186,11 +997,9 @@ impl Checker<'_> {
         let mut parameters = outer.clone();
         let mut seen = HashSet::new();
         for (index, declaration) in declarations.iter().enumerate() {
-            let ty = self.store.intern(TypeKind::TypeParameter {
-                declaration: identity,
-                index: index as u32,
-                name: declaration.name.clone(),
-            });
+            let ty = self
+                .store
+                .type_parameter(identity, index as u32, &declaration.name);
             if seen.insert(declaration.name.as_str()) {
                 parameters.insert(declaration.name.clone(), ty);
             }
@@ -1246,159 +1055,13 @@ impl Checker<'_> {
         outer: &HashMap<String, TypeId>,
     ) -> HashMap<String, TypeId> {
         let mut parameters = outer.clone();
-        self.collect_conditional_infer_parameters(file, extends_type, &mut parameters);
+        extends_type.for_each_conditional_infer(&mut |name, name_span| {
+            let ty = self
+                .store
+                .type_parameter(synthetic_identity(file, name_span.start), 0, name);
+            parameters.insert(name.to_string(), ty);
+        });
         parameters
-    }
-
-    fn collect_conditional_infer_parameters(
-        &mut self,
-        file: FileId,
-        node: &TypeNode,
-        parameters: &mut HashMap<String, TypeId>,
-    ) {
-        match &node.kind {
-            TypeNodeKind::Infer {
-                name, name_span, ..
-            } => {
-                let ty = self.store.intern(TypeKind::TypeParameter {
-                    declaration: synthetic_identity(file, name_span.start),
-                    index: 0,
-                    name: name.clone(),
-                });
-                parameters.insert(name.clone(), ty);
-            }
-            TypeNodeKind::Array(child)
-            | TypeNodeKind::KeyOf(child)
-            | TypeNodeKind::Readonly(child)
-            | TypeNodeKind::Parenthesized(child) => {
-                self.collect_conditional_infer_parameters(file, child, parameters);
-            }
-            TypeNodeKind::Tuple(children)
-            | TypeNodeKind::Union(children)
-            | TypeNodeKind::Intersection(children) => {
-                for child in children {
-                    self.collect_conditional_infer_parameters(file, child, parameters);
-                }
-            }
-            TypeNodeKind::Object(members) => {
-                for member in members {
-                    self.collect_conditional_infer_type_member(file, member, parameters);
-                }
-            }
-            TypeNodeKind::Function {
-                type_parameters: _,
-                parameters: signature_parameters,
-                return_type,
-                ..
-            }
-            | TypeNodeKind::Constructor {
-                type_parameters: _,
-                parameters: signature_parameters,
-                return_type,
-                ..
-            } => {
-                for parameter in signature_parameters {
-                    if let Some(annotation) = &parameter.annotation {
-                        self.collect_conditional_infer_parameters(file, annotation, parameters);
-                    }
-                }
-                self.collect_conditional_infer_parameters(file, return_type, parameters);
-            }
-            TypeNodeKind::Reference { arguments, .. } => {
-                for argument in arguments {
-                    self.collect_conditional_infer_parameters(file, argument, parameters);
-                }
-            }
-            TypeNodeKind::Predicate { ty, .. } => {
-                if let Some(ty) = ty {
-                    self.collect_conditional_infer_parameters(file, ty, parameters);
-                }
-            }
-            TypeNodeKind::Mapped {
-                constraint,
-                name_type,
-                value_type,
-                members,
-                ..
-            } => {
-                self.collect_conditional_infer_parameters(file, constraint, parameters);
-                if let Some(name_type) = name_type {
-                    self.collect_conditional_infer_parameters(file, name_type, parameters);
-                }
-                self.collect_conditional_infer_parameters(file, value_type, parameters);
-                for member in members {
-                    self.collect_conditional_infer_type_member(file, member, parameters);
-                }
-            }
-            TypeNodeKind::IndexedAccess { object, index } => {
-                self.collect_conditional_infer_parameters(file, object, parameters);
-                self.collect_conditional_infer_parameters(file, index, parameters);
-            }
-            // A nested conditional owns its own infer declarations. They must
-            // not leak into the outer conditional's true branch.
-            TypeNodeKind::Conditional { .. }
-            | TypeNodeKind::Keyword(_)
-            | TypeNodeKind::Literal(_)
-            | TypeNodeKind::TypeQuery { .. }
-            | TypeNodeKind::Missing => {}
-        }
-    }
-
-    fn collect_conditional_infer_type_member(
-        &mut self,
-        file: FileId,
-        member: &TypeMember,
-        parameters: &mut HashMap<String, TypeId>,
-    ) {
-        match &member.kind {
-            TypeMemberKind::Property { ty, .. } => {
-                if let Some(ty) = ty {
-                    self.collect_conditional_infer_parameters(file, ty, parameters);
-                }
-            }
-            TypeMemberKind::Method {
-                parameters: signature_parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Call {
-                parameters: signature_parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Construct {
-                parameters: signature_parameters,
-                return_type,
-                ..
-            }
-            | TypeMemberKind::Accessor {
-                parameters: signature_parameters,
-                return_type,
-                ..
-            } => {
-                for parameter in signature_parameters {
-                    if let Some(annotation) = &parameter.annotation {
-                        self.collect_conditional_infer_parameters(file, annotation, parameters);
-                    }
-                }
-                if let Some(return_type) = return_type {
-                    self.collect_conditional_infer_parameters(file, return_type, parameters);
-                }
-            }
-            TypeMemberKind::Index {
-                parameters: signature_parameters,
-                value_type,
-            } => {
-                for parameter in signature_parameters {
-                    if let Some(annotation) = &parameter.annotation {
-                        self.collect_conditional_infer_parameters(file, annotation, parameters);
-                    }
-                }
-                if let Some(value_type) = value_type {
-                    self.collect_conditional_infer_parameters(file, value_type, parameters);
-                }
-            }
-        }
     }
 
     pub(super) fn node_scope(&self, file: FileId, node: NodeId, fallback: ScopeId) -> ScopeId {
@@ -1420,97 +1083,17 @@ impl Checker<'_> {
             return Completion::Complete(ty);
         }
         let completion = match self.store.kind(ty).clone() {
-            TypeKind::Array(element) => {
-                self.visit_required_children(ty, [element], active, references)
-            }
-            TypeKind::Tuple(elements)
-            | TypeKind::Union(elements)
-            | TypeKind::Intersection(elements) => {
-                self.visit_required_children(ty, elements, active, references)
-            }
-            TypeKind::Object(shape) => {
-                let mut children = shape
-                    .properties
-                    .into_iter()
-                    .map(|property| property.ty)
-                    .collect::<Vec<_>>();
-                for signature in shape
-                    .call_signatures
-                    .into_iter()
-                    .chain(shape.construct_signatures)
-                {
-                    children.extend(
-                        signature
-                            .parameters
-                            .into_iter()
-                            .map(|parameter| parameter.ty),
-                    );
-                    children.push(signature.return_type);
-                }
-                children.extend(shape.index_signatures.into_iter().map(|index| index.value));
-                self.visit_required_children(ty, children, active, references)
-            }
-            TypeKind::ClassInstance {
-                arguments,
-                properties: shape,
-                ..
-            } => {
-                let mut children = arguments;
-                children.extend(shape.properties.into_iter().map(|property| property.ty));
-                for signature in shape
-                    .call_signatures
-                    .into_iter()
-                    .chain(shape.construct_signatures)
-                {
-                    children.extend(
-                        signature
-                            .parameters
-                            .into_iter()
-                            .map(|parameter| parameter.ty),
-                    );
-                    children.push(signature.return_type);
-                }
-                children.extend(shape.index_signatures.into_iter().map(|index| index.value));
-                self.visit_required_children(ty, children, active, references)
-            }
-            TypeKind::Function(signature) => {
-                let children = signature
-                    .parameters
-                    .into_iter()
-                    .map(|parameter| parameter.ty)
-                    .chain(std::iter::once(signature.return_type));
-                self.visit_required_children(ty, children, active, references)
-            }
-            TypeKind::ShapeFunction(signature) => {
-                let children = signature
-                    .parameters
-                    .into_iter()
-                    .map(|parameter| parameter.ty)
-                    .chain(std::iter::once(signature.return_type));
-                self.visit_required_children(ty, children, active, references)
-            }
             TypeKind::Deferred(deferred) => {
                 self.visit_required_deferred(ty, deferred, active, references)
             }
-            TypeKind::Error
-            | TypeKind::Invalid(_)
-            | TypeKind::Any
-            | TypeKind::Unknown
-            | TypeKind::Never
-            | TypeKind::Void
-            | TypeKind::Undefined
-            | TypeKind::Null
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::String
-            | TypeKind::BigInt
-            | TypeKind::ObjectKeyword
-            | TypeKind::Symbol
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _)
-            | TypeKind::LiteralString(_, _)
-            | TypeKind::TypeParameter { .. }
-            | TypeKind::ClassConstructor { .. } => Completion::Complete(ty),
+            TypeKind::Error | TypeKind::Invalid(_) | non_recursive_type_kind!() => {
+                Completion::Complete(ty)
+            }
+            kind => {
+                let mut children = Vec::new();
+                TypeStore::push_type_children(&kind, &mut children);
+                self.visit_required_children(ty, children, active, references)
+            }
         };
         active.remove(&ty);
         completion
@@ -1526,19 +1109,24 @@ impl Checker<'_> {
         let mut state = SemanticCompletion::Complete;
         self.visit_deferred_operands(&deferred, active, references, &mut state);
 
-        // Conditional, mapped, and predicate nodes are authored symbolic
-        // owners. Requiring their declaration position validates every child,
-        // but does not itself demand evaluation of the owner. A later
-        // relation or inference query remains responsible for forcing it.
-        if matches!(
+        // Authored symbolic owners validate their operands here; a later
+        // relation or inference demand remains responsible for forcing them.
+        let generic_projection = matches!(
             &deferred,
-            DeferredType::Conditional { .. }
-                | DeferredType::Mapped { .. }
-                | DeferredType::Predicate {
-                    parameter_is_bound: true,
-                    ..
-                }
-        ) {
+            DeferredType::KeyOf(operand) | DeferredType::IndexedAccess { object: operand, .. }
+                if matches!(self.store.kind(*operand), TypeKind::TypeParameter { .. })
+        );
+        if generic_projection
+            || matches!(
+                &deferred,
+                DeferredType::Conditional { .. }
+                    | DeferredType::Mapped { .. }
+                    | DeferredType::Predicate {
+                        parameter_is_bound: true,
+                        ..
+                    }
+            )
+        {
             return completion_from_state(state, ty);
         }
 
@@ -1658,78 +1246,50 @@ fn class_has_bodyless_member(declaration: &ClassDeclaration) -> bool {
     })
 }
 
-fn class_has_multiple_constructor_implementations(declaration: &ClassDeclaration) -> bool {
-    declaration
-        .members
-        .iter()
-        .filter(|member| {
-            matches!(
-                member.kind,
-                ClassMemberKind::Constructor { has_body: true, .. }
-            )
-        })
-        .take(2)
-        .count()
-        > 1
-}
-
-#[derive(Default)]
-struct ClassMemberDeclarationGroup {
-    methods: usize,
-    method_implementations: usize,
-    getters: usize,
-    setters: usize,
-    properties: usize,
-}
-
-fn class_member_declaration_groups_are_modeled(declaration: &ClassDeclaration) -> bool {
-    let mut groups = HashMap::<(bool, &str), ClassMemberDeclarationGroup>::new();
+fn class_member_declaration_groups_are_modeled(
+    bound: &crate::bind::BoundFile,
+    declaration: &ClassDeclaration,
+) -> bool {
+    let mut checked = HashSet::<DeclId>::new();
     let mut uncanonical_members = 0;
     for member in &declaration.members {
-        if !matches!(member.kind, ClassMemberKind::Constructor { .. })
-            && !member.overload_context_is_recovery_free()
-        {
+        let Some(group) = bound.class_member_group(member.id) else {
+            if matches!(member.kind, ClassMemberKind::Constructor { .. })
+                || member.overload_context_is_recovery_free()
+            {
+                continue;
+            }
             uncanonical_members += 1;
             if uncanonical_members >= 2 {
                 return false;
             }
+            continue;
+        };
+        let Some(canonical) = group.first().copied() else {
+            return false;
+        };
+        if !checked.insert(canonical) {
+            continue;
         }
-        let group = groups
-            .entry((member.modifiers.static_member, member.name.as_str()))
-            .or_default();
-        match &member.kind {
-            ClassMemberKind::Constructor { .. } => continue,
-            ClassMemberKind::Property { .. } => group.properties += 1,
-            ClassMemberKind::Method {
-                has_body,
-                accessor: None,
-                ..
-            } => {
-                group.methods += 1;
-                group.method_implementations += usize::from(*has_body);
-            }
-            ClassMemberKind::Method {
-                accessor: Some(AccessorKind::Get),
-                ..
-            } => group.getters += 1,
-            ClassMemberKind::Method {
-                accessor: Some(AccessorKind::Set),
-                ..
-            } => group.setters += 1,
+        let Some(facts) = bound.class_member_group_facts(member.id) else {
+            return false;
+        };
+        if if matches!(member.kind, ClassMemberKind::Constructor { .. }) {
+            facts.implementations > 1
+        } else if facts.callables > 0 {
+            facts.implementations > 1
+                || facts.getters > 0
+                || facts.setters > 0
+                || facts.properties > 0
+        } else if facts.properties > 0 {
+            facts.properties > 1 || facts.getters > 0 || facts.setters > 0
+        } else {
+            facts.getters > 1 || facts.setters > 1
+        } {
+            return false;
         }
     }
-    groups.values().all(|group| {
-        if group.methods > 0 {
-            group.method_implementations <= 1
-                && group.getters == 0
-                && group.setters == 0
-                && group.properties == 0
-        } else if group.properties > 0 {
-            group.properties == 1 && group.getters == 0 && group.setters == 0
-        } else {
-            group.getters <= 1 && group.setters <= 1
-        }
-    })
+    true
 }
 
 fn class_has_ambient_implementation(declaration: &ClassDeclaration) -> bool {
@@ -1772,6 +1332,7 @@ fn is_bindable_computed_name(expression: &Expression) -> bool {
         | ExpressionKind::Unary { .. }
         | ExpressionKind::Assignment { .. }
         | ExpressionKind::As { .. }
+        | ExpressionKind::NonNull(_)
         | ExpressionKind::Parenthesized(_)
         | ExpressionKind::Missing => false,
     }
@@ -1794,6 +1355,7 @@ fn is_entity_name_expression(expression: &Expression) -> bool {
         | ExpressionKind::Unary { .. }
         | ExpressionKind::Assignment { .. }
         | ExpressionKind::As { .. }
+        | ExpressionKind::NonNull(_)
         | ExpressionKind::Parenthesized(_)
         | ExpressionKind::Missing => false,
     }

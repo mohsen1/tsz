@@ -2,7 +2,6 @@
 //! compiler for semantic values; it does not own type algorithms.
 
 use std::cell::RefCell;
-use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -13,13 +12,7 @@ use crate::program::{
     CapabilityScope, CapabilityTarget, CompileOutput, Compiler, CompilerOptions, ProgramFile,
     SemanticCompletion, SourceInput,
 };
-use crate::source::{NodeId, Span};
-use crate::syntax::{
-    Expression, ExpressionKind, ExpressionRoot, ExpressionTraversal, FunctionLikeSyntax,
-    StatementKind, contains_matching_expression, for_each_statement_in,
-};
 
-mod display;
 mod navigation;
 
 pub use navigation::{
@@ -162,10 +155,7 @@ impl LanguageService {
     pub fn semantic_diagnostics(&self, path: &str) -> SemanticDiagnosticResult {
         let normalized = normalize_path(path);
         self.with_compiled_snapshot(|output| {
-            let file = output.program.files.iter().find(|file| {
-                normalize_path(&file.source.path.to_string_lossy()) == normalized
-                    || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
-            });
+            let file = compiled_file(output, &normalized);
             let semantic_completion = file.map_or(SemanticCompletion::Deferred, |file| {
                 if output
                     .capabilities
@@ -213,21 +203,18 @@ impl LanguageService {
         let normalized = normalize_path(path);
         self.files.get(&normalized)?;
         self.with_compiled_snapshot(|output| {
-            let file = output.program.files.iter().find(|file| {
-                normalize_path(&file.source.path.to_string_lossy()) == normalized
-                    || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
-            })?;
+            let file = compiled_file(output, &normalized)?;
             if !output
                 .capabilities
                 .claim(
                     CapabilityTarget::QuickInfo,
-                    capability_scope_at(file, offset)?,
+                    file.capability_scope_at(offset)?,
                 )
                 .is_claimed()
             {
                 return None;
             }
-            navigation::NavigationIndex::build(&output.program).quick_info(path, offset)
+            navigation::NavigationIndex::build(output).quick_info(path, offset)
         })
     }
 
@@ -243,8 +230,7 @@ impl LanguageService {
             if !service_operation_claimed(output, path, offset, CapabilityTarget::Definition) {
                 return None;
             }
-            let result =
-                navigation::NavigationIndex::build(&output.program).definition(path, offset)?;
+            let result = navigation::NavigationIndex::build(output).definition(path, offset)?;
             definition_result_is_claimed(output, &result).then_some(result)
         })
     }
@@ -256,8 +242,7 @@ impl LanguageService {
             if !service_operation_claimed(output, path, offset, CapabilityTarget::References) {
                 return Vec::new();
             }
-            let result =
-                navigation::NavigationIndex::build(&output.program).references(path, offset);
+            let result = navigation::NavigationIndex::build(output).references(path, offset);
             if references_result_is_claimed(output, &result) {
                 result
             } else {
@@ -277,7 +262,7 @@ impl LanguageService {
             if !service_operation_claimed(output, path, offset, CapabilityTarget::Highlights) {
                 return Vec::new();
             }
-            let result = navigation::NavigationIndex::build(&output.program).document_highlights(
+            let result = navigation::NavigationIndex::build(output).document_highlights(
                 path,
                 offset,
                 files_to_search,
@@ -296,7 +281,7 @@ impl LanguageService {
             if !service_operation_claimed(output, path, offset, CapabilityTarget::Rename) {
                 return RenameResult::failure();
             }
-            let result = navigation::NavigationIndex::build(&output.program).rename(path, offset);
+            let result = navigation::NavigationIndex::build(output).rename(path, offset);
             if rename_result_is_claimed(output, &result) {
                 result
             } else {
@@ -366,102 +351,28 @@ fn service_operation_claimed(
     target: CapabilityTarget,
 ) -> bool {
     let normalized = normalize_path(path);
-    let Some(file) = output.program.files.iter().find(|file| {
-        normalize_path(&file.source.path.to_string_lossy()) == normalized
-            || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
-    }) else {
+    let Some(file) = compiled_file(output, &normalized) else {
         return false;
     };
     output
         .capabilities
         .claim(
             target,
-            capability_scope_at(file, offset).unwrap_or(CapabilityScope::File(file.source.id)),
+            file.capability_scope_at(offset)
+                .unwrap_or(CapabilityScope::File(file.source.id)),
         )
         .is_claimed()
-}
-
-fn capability_scope_at(file: &ProgramFile, offset: u32) -> Option<CapabilityScope> {
-    if let Some(declaration) = file.bindings.declarations.iter().find(|declaration| {
-        contains(declaration.name_span, offset)
-            && file.bindings.declarations.iter().any(|candidate| {
-                matches!(
-                    candidate.kind,
-                    crate::bind::DeclarationKind::FunctionExpression
-                        | crate::bind::DeclarationKind::JavaScriptPropertyAssignment
-                ) && candidate.owner == declaration.owner
-            })
-    }) {
-        return Some(CapabilityScope::node(file.source.id, declaration.owner));
-    }
-    let mut function_expression_owner = None;
-    let mut owner = None;
-    let mut best = None;
-    for_each_statement_in(&file.syntax.statements, &mut |statement| {
-        if function_expression_owner.is_none()
-            && let StatementKind::Variable(declaration) = &statement.kind
-            && declaration.annotation.is_none()
-            && contains(declaration.name_span, offset)
-        {
-            function_expression_owner = declaration
-                .initializer
-                .as_ref()
-                .and_then(function_expression_initializer_owner);
-        }
-        if contains(statement.span, offset) {
-            let candidate = (
-                statement.span.start != offset,
-                statement.span.len(),
-                Reverse(statement.span.start),
-            );
-            if best.is_none_or(|current| candidate < current) {
-                owner = Some(statement.id);
-                best = Some(candidate);
-            }
-        }
-    });
-    contains_matching_expression(
-        ExpressionRoot::Statements(&file.syntax.statements),
-        ExpressionTraversal::All,
-        |expression| {
-            let candidate_span = match &expression.kind {
-                ExpressionKind::FunctionLike(_) => expression.span,
-                ExpressionKind::Member { name_span, .. } => *name_span,
-                _ => return false,
-            };
-            if contains(candidate_span, offset) {
-                let candidate = (
-                    candidate_span.start != offset,
-                    candidate_span.len(),
-                    Reverse(candidate_span.start),
-                );
-                if best.is_none_or(|current| candidate < current) {
-                    owner = Some(expression.id);
-                    best = Some(candidate);
-                }
-            }
-            false
-        },
-    );
-    function_expression_owner
-        .or(owner)
-        .map(|owner| CapabilityScope::node(file.source.id, owner))
-}
-
-fn function_expression_initializer_owner(expression: &Expression) -> Option<NodeId> {
-    let expression = expression.peel_parentheses_and_assertions();
-    let ExpressionKind::FunctionLike(function) = &expression.kind else {
-        return None;
-    };
-    matches!(&function.syntax, FunctionLikeSyntax::Function { .. }).then_some(expression.id)
 }
 
 fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
 }
 
-const fn contains(span: Span, offset: u32) -> bool {
-    span.start <= offset && offset <= span.end
+fn compiled_file<'a>(output: &'a CompileOutput, normalized: &str) -> Option<&'a ProgramFile> {
+    output.program.files.iter().find(|file| {
+        normalize_path(&file.source.path.to_string_lossy()) == normalized
+            || normalize_path(&file.source.host_path.to_string_lossy()) == normalized
+    })
 }
 
 #[cfg(test)]

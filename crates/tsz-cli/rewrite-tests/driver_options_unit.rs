@@ -53,6 +53,7 @@ fn shared_schema_mutates_every_supported_option_outside_debug_assertions() {
             source_map: Some(false),
             inline_source_map: Some(true),
             remove_comments: Some(false),
+            use_define_for_class_fields: None,
             allow_js: Some(true),
             check_js: Some(false),
             target: Some("es2022".into()),

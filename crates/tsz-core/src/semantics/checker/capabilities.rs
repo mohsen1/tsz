@@ -99,10 +99,8 @@ impl Checker<'_> {
         name: &str,
         meaning: Meaning,
     ) -> Option<DeclId> {
-        self.program.files[file.0 as usize]
-            .bindings
-            .resolve(scope, name, meaning)
-            .or_else(|| self.program.resolve_global(name, meaning))
+        self.program
+            .resolve_reference_declaration(file, scope, name, meaning)
     }
 
     pub(super) fn resolve_semantic_name(

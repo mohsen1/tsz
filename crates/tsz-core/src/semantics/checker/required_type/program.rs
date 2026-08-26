@@ -6,9 +6,9 @@ use crate::program::{CapabilityScope, CapabilityTarget};
 use crate::semantics::types::{Completion, TypeId};
 use crate::source::FileId;
 use crate::syntax::{
-    ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, FunctionLikeBody,
-    FunctionLikeExpression, NestedStatement, Statement, TypeNode, TypeNodeKind,
-    TypeParameterDeclaration, walk_function_like_descendants, walk_statement_descendants,
+    ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, FunctionLikeExpression,
+    NestedStatement, Statement, TypeNode, TypeNodeKind, TypeParameterDeclaration,
+    walk_expression_descendants, walk_function_like_descendants, walk_statement_descendants,
 };
 
 use super::super::Checker;
@@ -18,7 +18,14 @@ use super::{ParameterGrammarHost, synthetic_identity};
 struct RequiredDescendantContext {
     scope: ScopeId,
     type_parameters: Rc<HashMap<String, TypeId>>,
-    reenter_function_like_required_type: bool,
+    traversal: RequiredTraversal,
+}
+
+#[derive(Clone, Copy)]
+enum RequiredTraversal {
+    Claimed,
+    Nonclaimed { reenter_function_like: bool },
+    BlockedMember,
 }
 
 struct RequiredDescendantAdapter<'checker, 'program> {
@@ -27,6 +34,25 @@ struct RequiredDescendantAdapter<'checker, 'program> {
 }
 
 impl Checker<'_> {
+    pub(super) fn visit_required_expression(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        expression: &Expression,
+        type_parameters: &HashMap<String, TypeId>,
+    ) {
+        let context = RequiredDescendantContext {
+            scope,
+            type_parameters: Rc::new(type_parameters.clone()),
+            traversal: RequiredTraversal::Claimed,
+        };
+        let mut adapter = RequiredDescendantAdapter {
+            checker: self,
+            file,
+        };
+        walk_expression_descendants(&mut adapter, &context, expression);
+    }
+
     pub(super) fn visit_required_function_like_expression(
         &mut self,
         file: FileId,
@@ -35,88 +61,55 @@ impl Checker<'_> {
         function: &FunctionLikeExpression,
         type_parameters: &HashMap<String, TypeId>,
     ) {
-        if !self
+        let claimed = self
             .capabilities
             .claim(
                 CapabilityTarget::RequiredType,
                 CapabilityScope::node(file, expression.id),
             )
-            .is_claimed()
-        {
+            .is_claimed();
+        if !claimed {
             let _ = self.require_completion(Completion::<()>::Deferred);
-            self.visit_nonclaimed_required_function_like_descendants(
+        } else {
+            let function_scope = self.node_scope(file, expression.id, scope);
+            self.visit_required_parameters(
                 file,
-                scope,
-                expression,
-                function,
+                function_scope,
+                &function.parameters,
                 type_parameters,
+                ParameterGrammarHost::Implementation { constructor: false },
             );
-            return;
-        }
-        let function_scope = self.node_scope(file, expression.id, scope);
-        self.visit_required_parameters(
-            file,
-            function_scope,
-            &function.parameters,
-            type_parameters,
-            ParameterGrammarHost::Implementation { constructor: false },
-        );
-        if let Some(return_type) = &function.return_type {
-            if return_type.contains_type_query() {
-                let _ = self.require_completion(Completion::<()>::Deferred);
-            } else {
-                self.visit_required_type_node(file, function_scope, return_type, type_parameters);
+            if let Some(return_type) = &function.return_type {
+                if return_type.contains_type_query() {
+                    let _ = self.require_completion(Completion::<()>::Deferred);
+                } else {
+                    self.visit_required_type_node(
+                        file,
+                        function_scope,
+                        return_type,
+                        type_parameters,
+                    );
+                }
             }
         }
-        match function.syntax.body() {
-            FunctionLikeBody::Expression(body) => {
-                self.visit_required_expression(file, function_scope, body, type_parameters)
-            }
-            FunctionLikeBody::Statements(body) => {
-                self.visit_required_body(file, function_scope, body, type_parameters)
-            }
-        }
-    }
-
-    pub(super) fn visit_nonclaimed_required_function_like_descendants(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        expression: &Expression,
-        function: &FunctionLikeExpression,
-        type_parameters: &HashMap<String, TypeId>,
-    ) {
         let context = RequiredDescendantContext {
             scope,
             type_parameters: Rc::new(type_parameters.clone()),
-            reenter_function_like_required_type: self
-                .capabilities
-                .required_type_node_allows_function_like_reentry(file, expression.id),
+            traversal: if claimed {
+                RequiredTraversal::Claimed
+            } else {
+                RequiredTraversal::Nonclaimed {
+                    reenter_function_like: self
+                        .capabilities
+                        .required_type_node_allows_function_like_reentry(file, expression.id),
+                }
+            },
         };
         let mut adapter = RequiredDescendantAdapter {
             checker: self,
             file,
         };
         walk_function_like_descendants(&mut adapter, &context, expression, function);
-    }
-
-    pub(super) fn visit_required_body(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        body: &[Statement],
-        type_parameters: &HashMap<String, TypeId>,
-    ) {
-        for (index, statement) in body.iter().enumerate() {
-            let statement_scope = self.node_scope(file, statement.id, scope);
-            self.visit_required_statement(
-                file,
-                statement_scope,
-                statement,
-                body.get(index + 1),
-                type_parameters,
-            );
-        }
     }
 
     pub(super) fn visit_required_class_heritage(
@@ -186,38 +179,27 @@ impl Checker<'_> {
                 CapabilityScope::node(file, statement.id),
             )
             .is_claimed();
-        if !required_type_claimed {
-            let _ = self.require_completion(Completion::<()>::Deferred);
-            self.visit_nonclaimed_required_statement_descendants(
+        let traversal = if required_type_claimed {
+            self.visit_required_statement_claimed(
                 file,
                 scope,
                 statement,
+                next_statement,
                 type_parameters,
             );
-            return;
-        }
-        self.visit_required_statement_claimed(
-            file,
-            scope,
-            statement,
-            next_statement,
-            type_parameters,
-        );
-    }
-
-    fn visit_nonclaimed_required_statement_descendants(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        statement: &Statement,
-        type_parameters: &HashMap<String, TypeId>,
-    ) {
+            RequiredTraversal::Claimed
+        } else {
+            let _ = self.require_completion(Completion::<()>::Deferred);
+            RequiredTraversal::Nonclaimed {
+                reenter_function_like: self
+                    .capabilities
+                    .required_type_node_allows_function_like_reentry(file, statement.id),
+            }
+        };
         let context = RequiredDescendantContext {
             scope,
             type_parameters: Rc::new(type_parameters.clone()),
-            reenter_function_like_required_type: self
-                .capabilities
-                .required_type_node_allows_function_like_reentry(file, statement.id),
+            traversal,
         };
         let mut adapter = RequiredDescendantAdapter {
             checker: self,
@@ -243,63 +225,91 @@ impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
 {
     type Context = RequiredDescendantContext;
 
+    fn class_member(
+        &mut self,
+        context: &Self::Context,
+        member: &'ast crate::syntax::ClassMember,
+    ) -> Self::Context {
+        self.context(context, DescendantContainer::ClassMember(member))
+    }
+
     fn context(
         &mut self,
         context: &Self::Context,
         container: DescendantContainer<'ast>,
     ) -> Self::Context {
-        let (owner, identity, declarations): (_, _, &[TypeParameterDeclaration]) = match container {
-            DescendantContainer::Statement(statement) => (statement.id, None, &[]),
-            DescendantContainer::Function(statement, declaration) => {
-                let identity = self
-                    .checker
-                    .find_declaration(
-                        self.file,
-                        statement.id,
-                        DeclarationKind::Function,
-                        &declaration.name,
+        if matches!(context.traversal, RequiredTraversal::BlockedMember) {
+            return context.clone();
+        }
+        let (owner, identity, declarations, class_member): (_, _, &[TypeParameterDeclaration], _) =
+            match container {
+                DescendantContainer::Statement(statement) => (Some(statement.id), None, &[], None),
+                DescendantContainer::Function(statement, declaration) => {
+                    let identity = self
+                        .checker
+                        .find_declaration(
+                            self.file,
+                            statement.id,
+                            DeclarationKind::Function,
+                            &declaration.name,
+                        )
+                        .unwrap_or_else(|| {
+                            synthetic_identity(self.file, declaration.name_span.start)
+                        });
+                    (
+                        Some(statement.id),
+                        Some(identity),
+                        &declaration.type_parameters,
+                        None,
                     )
-                    .unwrap_or_else(|| synthetic_identity(self.file, declaration.name_span.start));
-                (statement.id, Some(identity), &declaration.type_parameters)
-            }
-            DescendantContainer::Class(statement, declaration) => {
-                let identity = self
-                    .checker
-                    .find_declaration(
-                        self.file,
-                        statement.id,
-                        DeclarationKind::Class,
-                        &declaration.name,
-                    )
-                    .unwrap_or_else(|| synthetic_identity(self.file, declaration.name_span.start));
-                (statement.id, Some(identity), &declaration.type_parameters)
-            }
-            DescendantContainer::ClassMember(member) => match &member.kind {
-                ClassMemberKind::Method {
-                    type_parameters, ..
-                } => (
-                    member.id,
-                    Some(synthetic_identity(self.file, member.name_span.start)),
-                    type_parameters.as_slice(),
-                ),
-                ClassMemberKind::Constructor { .. } | ClassMemberKind::Property { .. } => {
-                    (member.id, None, &[])
                 }
-            },
-            DescendantContainer::FunctionLike(expression, function) => {
-                let owner = expression.id;
-                let identity = match function.syntax.function() {
-                    Some((name, _)) => self.checker.find_declaration(
-                        self.file,
-                        owner,
-                        DeclarationKind::FunctionExpression,
-                        name.as_ref().map_or("", |name| name.name.as_str()),
+                DescendantContainer::Class(statement, declaration) => {
+                    let identity = self
+                        .checker
+                        .find_declaration(
+                            self.file,
+                            statement.id,
+                            DeclarationKind::Class,
+                            &declaration.name,
+                        )
+                        .unwrap_or_else(|| {
+                            synthetic_identity(self.file, declaration.name_span.start)
+                        });
+                    (
+                        Some(statement.id),
+                        Some(identity),
+                        &declaration.type_parameters,
+                        None,
+                    )
+                }
+                DescendantContainer::ClassMember(member) => match &member.kind {
+                    ClassMemberKind::Method {
+                        type_parameters, ..
+                    } => (
+                        Some(member.id),
+                        Some(synthetic_identity(self.file, member.name_span.start)),
+                        type_parameters.as_slice(),
+                        Some(member),
                     ),
-                    None => Some(synthetic_identity(self.file, expression.span.start)),
-                };
-                (owner, identity, &function.type_parameters)
-            }
-        };
+                    ClassMemberKind::Constructor { .. } => {
+                        (Some(member.id), None, &[], Some(member))
+                    }
+                    ClassMemberKind::Property { .. } => (None, None, &[], Some(member)),
+                },
+                DescendantContainer::FunctionLike(expression, function) => {
+                    let owner = expression.id;
+                    let identity = match function.syntax.function() {
+                        Some((name, _)) => self.checker.find_declaration(
+                            self.file,
+                            owner,
+                            DeclarationKind::FunctionExpression,
+                            name.as_ref().map_or("", |name| name.name.as_str()),
+                        ),
+                        None => Some(synthetic_identity(self.file, expression.span.start)),
+                    };
+                    (Some(owner), identity, &function.type_parameters, None)
+                }
+            };
         let type_parameters = if declarations.is_empty() {
             Rc::clone(&context.type_parameters)
         } else if let Some(identity) = identity {
@@ -312,10 +322,26 @@ impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
             let _ = self.checker.require_completion(Completion::<()>::Deferred);
             Rc::clone(&context.type_parameters)
         };
+        let scope = owner.map_or(context.scope, |owner| {
+            self.checker.node_scope(self.file, owner, context.scope)
+        });
+        let mut traversal = context.traversal;
+        if let Some(member) = class_member
+            && matches!(traversal, RequiredTraversal::Claimed)
+            && !self.checker.visit_required_class_member(
+                self.file,
+                context.scope,
+                scope,
+                member,
+                &type_parameters,
+            )
+        {
+            traversal = RequiredTraversal::BlockedMember;
+        }
         RequiredDescendantContext {
-            scope: self.checker.node_scope(self.file, owner, context.scope),
+            scope,
             type_parameters,
-            reenter_function_like_required_type: context.reenter_function_like_required_type,
+            traversal,
         }
     }
 
@@ -325,6 +351,9 @@ impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
         statement: &'ast Statement,
         next_statement: Option<&'ast Statement>,
     ) -> NestedStatement {
+        if matches!(context.traversal, RequiredTraversal::BlockedMember) {
+            return NestedStatement::Handled;
+        }
         self.checker.visit_required_statement(
             self.file,
             context.scope,
@@ -341,15 +370,38 @@ impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
         expression: &'ast Expression,
         function: &'ast FunctionLikeExpression,
     ) {
-        if context.reenter_function_like_required_type {
-            self.checker.visit_required_expression(
+        match context.traversal {
+            RequiredTraversal::Claimed => self.checker.visit_required_function_like_expression(
+                self.file,
+                context.scope,
+                expression,
+                function,
+                &context.type_parameters,
+            ),
+            RequiredTraversal::Nonclaimed {
+                reenter_function_like: true,
+            } => self.checker.visit_required_expression(
                 self.file,
                 context.scope,
                 expression,
                 &context.type_parameters,
-            );
-        } else {
-            walk_function_like_descendants(self, context, expression, function);
+            ),
+            RequiredTraversal::Nonclaimed {
+                reenter_function_like: false,
+            } => walk_function_like_descendants(self, context, expression, function),
+            RequiredTraversal::BlockedMember => {}
         }
+    }
+
+    fn type_node(&mut self, context: &Self::Context, node: &'ast TypeNode) {
+        if !matches!(context.traversal, RequiredTraversal::Claimed) {
+            return;
+        }
+        self.checker.visit_required_type_node(
+            self.file,
+            context.scope,
+            node,
+            &context.type_parameters,
+        );
     }
 }

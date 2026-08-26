@@ -6,7 +6,8 @@ use super::numeric_literal::{
 };
 use super::regular_expression::ScannedRegularExpressionLiteral;
 use super::string_literal::{
-    ScannedLineContinuationStringLiteral, ScannedStringLiteral, scan_ordinary_string_literal,
+    AuthoredEscape, ScannedCookedStringLiteral, ScannedStringLiteral, decode_authored_escape,
+    scan_ordinary_string_literal,
 };
 use super::template_literal::ScannedTemplateLiteral;
 use super::{
@@ -18,9 +19,10 @@ use super::{
 pub struct ScanOutput {
     pub tokens: Vec<Token>,
     pub diagnostics: Vec<Diagnostic>,
+    pub(super) identifier_values: Vec<ScannedIdentifierValue>,
     pub(super) template_literals: Vec<ScannedTemplateLiteral>,
     pub(super) string_literals: Vec<ScannedStringLiteral>,
-    pub(super) line_continuation_string_literals: Vec<ScannedLineContinuationStringLiteral>,
+    pub(super) cooked_string_literals: Vec<ScannedCookedStringLiteral>,
     pub(super) numeric_literals: Vec<ScannedNumericLiteral>,
     pub(super) separated_numeric_literals: Vec<ScannedSeparatedNumberLiteral>,
     pub(super) numeric_separator_spans: Vec<Span>,
@@ -28,7 +30,25 @@ pub struct ScanOutput {
     pub(super) regular_expression_literals: Vec<ScannedRegularExpressionLiteral>,
     pub(super) comments: Vec<CommentTrivia>,
     pub(super) has_unicode_line_comment_terminator: bool,
-    pub(super) has_unmodeled_trivia: bool,
+}
+
+/// Scanner-owned semantic spelling for one authored identifier escape.
+///
+/// `span` continues to identify the exact source spelling. The cooked value is
+/// the sole identifier identity consumed by the parser, while escape kind
+/// remains lexical provenance for consumers that must preserve authored text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ScannedIdentifierValue {
+    pub(super) span: Span,
+    pub(super) cooked: String,
+    pub(super) escape: IdentifierEscapeProvenance,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum IdentifierEscapeProvenance {
+    Unicode,
+    ExtendedUnicode,
+    UnicodeAndExtendedUnicode,
 }
 
 pub fn scan_source(source: &SourceText) -> ScanOutput {
@@ -68,8 +88,8 @@ impl<'a> Scanner<'a> {
                 && self.template_expression_depths.last() == Some(&self.brace_depth)
             {
                 self.scan_template_continuation(start)
-            } else if is_identifier_start(byte) || self.is_identifier_escape_at(self.offset) {
-                self.scan_identifier(start)
+            } else if is_identifier_start(byte) || self.is_identifier_escape_start_at(self.offset) {
+                self.scan_identifier(start, false)
             } else if byte.is_ascii_digit()
                 || (byte == b'.'
                     && self
@@ -133,7 +153,6 @@ impl<'a> Scanner<'a> {
                 self.offset += 3;
             }
             if self.offset == 0 && self.bytes.get(..2) == Some(b"#!") {
-                self.output.has_unmodeled_trivia = true;
                 self.skip_line_body();
                 continue;
             }
@@ -161,11 +180,9 @@ impl<'a> Scanner<'a> {
                     has_trailing_line_break: self.has_line_break_at_offset(),
                     plain,
                 });
-                self.output.has_unmodeled_trivia |= !plain;
                 continue;
             }
             if self.bytes.get(self.offset..self.offset + 2) == Some(b"/*") {
-                self.output.has_unmodeled_trivia = true;
                 let start = self.offset;
                 let placement = self.comment_placement(start);
                 let source_position = self.comment_source_position();
@@ -299,19 +316,31 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_identifier(&mut self, start: usize) -> TokenKind {
+    fn scan_identifier(&mut self, start: usize, private: bool) -> TokenKind {
         self.consume_identifier_character();
         while self
             .bytes
             .get(self.offset)
             .is_some_and(|byte| is_identifier_continue(*byte))
-            || self.is_identifier_escape_at(self.offset)
+            || self.is_identifier_escape_part_at(self.offset)
         {
             self.consume_identifier_character();
         }
         let text = &self.source.text[start..self.offset];
         if text.as_bytes().contains(&b'\\') {
-            TokenKind::Identifier
+            let CookedIdentifier { cooked, escape } = cook_identifier(text);
+            self.output.identifier_values.push(ScannedIdentifierValue {
+                span: Span::new(self.source.id, start, self.offset),
+                cooked: cooked.clone(),
+                escape,
+            });
+            if private {
+                TokenKind::PrivateIdentifier
+            } else {
+                TokenKind::from_keyword(&cooked)
+            }
+        } else if private {
+            TokenKind::PrivateIdentifier
         } else {
             TokenKind::from_keyword(text)
         }
@@ -328,29 +357,18 @@ impl<'a> Scanner<'a> {
         self.offset += character.len_utf8();
     }
 
-    fn is_identifier_escape_at(&self, offset: usize) -> bool {
-        self.identifier_escape_len_at(offset).is_some()
+    fn is_identifier_escape_start_at(&self, offset: usize) -> bool {
+        identifier_escape_at(&self.source.text, offset)
+            .is_some_and(|escape| is_identifier_start_character(escape.character))
+    }
+
+    fn is_identifier_escape_part_at(&self, offset: usize) -> bool {
+        identifier_escape_at(&self.source.text, offset)
+            .is_some_and(|escape| is_identifier_part_character(escape.character))
     }
 
     fn identifier_escape_len_at(&self, offset: usize) -> Option<usize> {
-        if self.bytes.get(offset..offset + 2) != Some(b"\\u") {
-            return None;
-        }
-        if self.bytes.get(offset + 2) == Some(&b'{') {
-            let mut cursor = offset + 3;
-            let digits_start = cursor;
-            while self.bytes.get(cursor).is_some_and(u8::is_ascii_hexdigit)
-                && cursor - digits_start < 6
-            {
-                cursor += 1;
-            }
-            return (cursor > digits_start && self.bytes.get(cursor) == Some(&b'}'))
-                .then_some(cursor + 1 - offset);
-        }
-        self.bytes
-            .get(offset + 2..offset + 6)
-            .filter(|digits| digits.iter().all(u8::is_ascii_hexdigit))
-            .map(|_| 6)
+        identifier_escape_at(&self.source.text, offset).map(|escape| escape.length)
     }
 
     fn scan_number(&mut self, start: usize) -> TokenKind {
@@ -443,14 +461,24 @@ impl<'a> Scanner<'a> {
                 .bytes
                 .get(self.offset)
                 .is_some_and(|byte| is_identifier_start(*byte))
-                || self.is_identifier_escape_at(self.offset) =>
+                || self.is_identifier_escape_start_at(self.offset) =>
             {
-                self.scan_identifier(self.offset);
-                TokenKind::PrivateIdentifier
+                self.scan_identifier(start, true)
             }
             b'#' => TokenKind::Hash,
             b'\'' | b'"' => self.scan_string(start, byte),
             b'`' => self.scan_template_start(start),
+            b'\\' => {
+                // TypeScript reports an invalid identifier escape at the
+                // authored backslash with a zero-width scanner diagnostic.
+                self.output.diagnostics.push(Diagnostic::at(
+                    self.source,
+                    Span::new(self.source.id, start, start),
+                    "Invalid character.".to_string(),
+                    1127,
+                ));
+                TokenKind::Identifier
+            }
             _ => {
                 self.output.diagnostics.push(Diagnostic::at(
                     self.source,
@@ -548,12 +576,14 @@ impl<'a> Scanner<'a> {
                         }
                     }
                     self.offset = cursor;
-                    return Some(ScannedRegularExpressionLiteral::terminated(
+                    return Some(ScannedRegularExpressionLiteral::from_source(
                         self.source,
                         start,
                         pattern_end,
                         flags_start,
                         cursor,
+                        true,
+                        false,
                     ));
                 }
                 _ => {
@@ -591,10 +621,13 @@ impl<'a> Scanner<'a> {
             "Unterminated regular expression literal.".to_string(),
             1161,
         ));
-        Some(ScannedRegularExpressionLiteral::unterminated(
+        Some(ScannedRegularExpressionLiteral::from_source(
             self.source,
             start,
             end,
+            end,
+            end,
+            false,
             at_line_break,
         ))
     }
@@ -683,10 +716,101 @@ impl<'a> Scanner<'a> {
         if let Some(literal) = scanned.extended_literal {
             self.output.string_literals.push(literal);
         }
-        if let Some(literal) = scanned.line_continuation_literal {
-            self.output.line_continuation_string_literals.push(literal);
+        if let Some(literal) = scanned.cooked_literal {
+            self.output.cooked_string_literals.push(literal);
         }
         TokenKind::StringLiteral
+    }
+}
+
+struct CookedIdentifier {
+    cooked: String,
+    escape: IdentifierEscapeProvenance,
+}
+
+fn cook_identifier(text: &str) -> CookedIdentifier {
+    let bytes = text.as_bytes();
+    let mut cooked = String::with_capacity(text.len());
+    let mut offset = 0;
+    let mut unicode = false;
+    let mut extended_unicode = false;
+    while offset < bytes.len() {
+        if let Some(identifier_escape) = identifier_escape_at(text, offset) {
+            unicode |= identifier_escape.escape == IdentifierEscapeProvenance::Unicode;
+            extended_unicode |=
+                identifier_escape.escape == IdentifierEscapeProvenance::ExtendedUnicode;
+            cooked.push(identifier_escape.character);
+            offset += identifier_escape.length;
+            continue;
+        }
+        let Some(character) = text[offset..].chars().next() else {
+            break;
+        };
+        cooked.push(character);
+        offset += character.len_utf8();
+    }
+    let escape = match (unicode, extended_unicode) {
+        (true, true) => IdentifierEscapeProvenance::UnicodeAndExtendedUnicode,
+        (true, false) => IdentifierEscapeProvenance::Unicode,
+        (false, true) => IdentifierEscapeProvenance::ExtendedUnicode,
+        (false, false) => unreachable!("cooking requires an identifier escape"),
+    };
+    CookedIdentifier { cooked, escape }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IdentifierEscape {
+    character: char,
+    length: usize,
+    escape: IdentifierEscapeProvenance,
+}
+
+fn identifier_escape_at(text: &str, offset: usize) -> Option<IdentifierEscape> {
+    let bytes = text.as_bytes();
+    if bytes.get(offset..offset + 2) != Some(b"\\u") {
+        return None;
+    }
+    let mut end = offset;
+    let (value, escape) = match decode_authored_escape(text, &mut end, text.len()) {
+        AuthoredEscape::CodePoint(value) => (value, IdentifierEscapeProvenance::Unicode),
+        AuthoredEscape::ExtendedUnicode {
+            digits_start,
+            digits_end,
+            value,
+            closed: true,
+        } if digits_start < digits_end && digits_end - digits_start <= 6 => (
+            u32::try_from(value).ok()?,
+            IdentifierEscapeProvenance::ExtendedUnicode,
+        ),
+        _ => return None,
+    };
+    // Fixed-width escapes denote individual identifier code points. A
+    // surrogate code unit is invalid independently and cannot pair with the
+    // following escape to manufacture an astral identifier.
+    let character = char::from_u32(value)?;
+    Some(IdentifierEscape {
+        character,
+        length: end - offset,
+        escape,
+    })
+}
+
+const fn is_identifier_start_character(character: char) -> bool {
+    if character.is_ascii() {
+        is_identifier_start(character as u8)
+    } else {
+        // Keep escaped scalar acceptance aligned with the rewrite scanner's
+        // current authored non-ASCII domain. Invalid UTF-16 units were already
+        // rejected by `char::from_u32` above.
+        true
+    }
+}
+
+const fn is_identifier_part_character(character: char) -> bool {
+    if character.is_ascii() {
+        is_identifier_continue(character as u8)
+    } else {
+        true
     }
 }
 
@@ -744,18 +868,6 @@ const fn token_can_end_expression(kind: TokenKind) -> bool {
                 | TokenKind::False
                 | TokenKind::Null
         )
-}
-
-pub(super) fn is_plain_strict_binding_identifier(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let Some((&first, rest)) = bytes.split_first() else {
-        return false;
-    };
-    text.is_ascii()
-        && is_identifier_start(first)
-        && rest.iter().copied().all(is_identifier_continue)
-        && TokenKind::from_keyword(text) == TokenKind::Identifier
-        && !matches!(text, "eval" | "arguments")
 }
 
 #[cfg(test)]

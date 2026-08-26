@@ -237,7 +237,7 @@ fn regex_has_a_dedicated_expression_node_and_preserves_scanner_metadata() {
     let StatementKind::Variable(declaration) = &statement.kind else {
         panic!("expected variable declaration");
     };
-    let Some(initializer) = &declaration.initializer else {
+    let Some(initializer) = &declaration.declarators[0].initializer else {
         panic!("expected initializer");
     };
     assert!(
@@ -562,123 +562,6 @@ fn renamed_vars_bare_atoms_and_comment_removal_are_exact() {
 }
 
 #[test]
-fn division_is_unchanged_and_broader_regex_hosts_fail_closed() {
-    for no_check in [false, true] {
-        let division = compile(
-            "division.ts",
-            "var quotient = 8 / 2 / 2;",
-            options(no_check),
-        );
-        assert_eq!(division.semantic_completion, SemanticCompletion::Complete);
-        assert!(division.diagnostics.is_empty());
-        assert_eq!(
-            javascript(&division),
-            "\"use strict\";\nvar quotient = 8 / 2 / 2;\n"
-        );
-
-        for source in [
-            "/x/.source;",
-            "/x/(\"x\");",
-            "/x/ `body`;",
-            "if (true) /x/;",
-            "function read() { return /x/; }",
-            "var wrapped = (/x/);",
-            "let mutable = /x/;",
-            "const fixed = /x/;",
-            "var typed: RegExp = /x/;",
-            "export var exposed = /x/;",
-            "var first = /x/; var sibling = 1;",
-            "var first = /x/; /y/;",
-            "/x/; /y/;",
-            "var first = /x/; var second = /y/;",
-            "var first = /x/, second = /y/;",
-            "// comment before bare\n/x/;",
-            "// café\n/x/z;",
-            "// café\n\nvar value = /x/z;",
-            "/* café */\nvar value = /x/z;",
-            "// café\nvar valué = /x/z;",
-            "// café\nvar value = /é/z;",
-            "// café\nvar value = /x/é;",
-            "// café\nvar value = \u{00a0}/x/z;",
-            "// café\nvar value = /x/z; // 😀",
-            "// café\u{00a0}\nvar value = /x/z;",
-            "\u{feff}// café\nvar value = /x/z;",
-            "var first = /x/; // trailing",
-            "// trailing whitespace \nvar first = /x/;",
-            "/// triple slash\nvar first = /x/;",
-            "// plain\n/* block */\nvar first = /x/;",
-            "/* block */\nvar first = /x/;",
-            "// @ts-ignore\nvar first = /x/;",
-            "// detached\n\nvar first = /x/;",
-            " // indented\nvar first = /x/;",
-            "// plain\rvar first = /\\u{}/gu;\r",
-            "\rvar first = /\\u{}/gu;",
-            "\u{00a0}var first = /\\u{}/gu;",
-            "\u{2003}var first = /\\u{}/gu;",
-            " var first = /x/;",
-            "\u{feff}var first = /\\u{}/gu;",
-            "var first = \u{00a0}/\\u{}/gu;",
-            "\u{2028}\nvar first = /\\u{}/gu;",
-            "\u{2029}\nvar first = /\\u{}/gu;",
-            "// unicode separator\u{2028}var first = /x/;",
-            "// unicode paragraph\u{2029}var first = /x/;",
-            "/x/[\"source\"];",
-            "target = /x/;",
-            "var target: any; target = /x/;",
-            "value > /x/;",
-            "value >> /x/;",
-            "value >>> /x/;",
-            "value as /x/;",
-            "await /x/;",
-            r"async function f() { return await /[a-z\/]+/; }",
-            r"function* g() { yield /[a-z\/]+/; }",
-            r"void /[a-z\/]+/;",
-            r"value > /[a-z\/]+/.source;",
-            "while (true) /x/;",
-            "with (object) /x/;",
-            "for (const item of /x/) {}",
-            "/x/s;",
-            "/x/d;",
-            "/x/uv;",
-            "/[a&&b]/v;",
-            r"/\u{65}/g;",
-            r"/[z-a]/g;",
-            r"/\b*/g;",
-            r"/\-/u;",
-            r"/[\B]/u;",
-            r"/[a-\d]/u;",
-            r"/[\d-a]/u;",
-            r"/[\w-?]/u;",
-            r"/[\u{5A}-\u{41}]/u;",
-            r"/\u{1x2}/u;",
-            r"/\u{r2}/u;",
-            r"/\u{\}/u;",
-            r"/\u{\x}/u;",
-            r"/\u{(}/u;",
-            "/(/g;",
-            "/[/",
-            r"/abc\",
-            "/abc;",
-            "/abc ",
-            "var x = /abc;",
-            "var x = /abc ",
-            "/abc\n",
-            "/abc\r\n",
-            "/abc\\\n/;",
-        ] {
-            let output = compile("boundary.ts", source, options(no_check));
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "{source:?} noCheck={no_check}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "{source:?}");
-        }
-    }
-}
-
-#[test]
 fn slash_equals_and_division_tokens_are_never_reclassified_as_regex_atoms() {
     let source = SourceText::new(
         FileId(11),
@@ -855,12 +738,19 @@ fn closing_generic_angles_keep_following_slashes_on_the_division_path() {
             );
             assert_eq!(
                 new_output.semantic_completion,
-                SemanticCompletion::Deferred,
+                SemanticCompletion::Complete,
                 "noCheck={no_check} noEmit={no_emit}: {:?}",
                 new_output.diagnostics,
             );
             assert!(new_output.diagnostics.is_empty());
-            assert!(new_output.emitted_files.is_empty());
+            if no_emit {
+                assert!(new_output.emitted_files.is_empty());
+            } else {
+                assert_eq!(
+                    javascript(&new_output),
+                    "\"use strict\";\nvar C;\nvar constructed = new C / 2;\n",
+                );
+            }
         }
     }
 
@@ -877,12 +767,19 @@ fn closing_generic_angles_keep_following_slashes_on_the_division_path() {
             );
             assert_eq!(
                 output.semantic_completion,
-                SemanticCompletion::Deferred,
+                SemanticCompletion::Complete,
                 "noCheck={no_check} noEmit={no_emit}: {:?}",
                 output.diagnostics,
             );
             assert!(output.diagnostics.is_empty());
-            assert!(output.emitted_files.is_empty());
+            if no_emit {
+                assert!(output.emitted_files.is_empty());
+            } else {
+                assert_eq!(
+                    javascript(&output),
+                    "\"use strict\";\nclass C {\n}\nvar constructed = new C();\n",
+                );
+            }
         }
     }
 
@@ -1076,143 +973,6 @@ fn member_names_and_simple_as_types_keep_following_slashes_on_the_division_path(
             "var yieldType = 4 / 2;\n",
         ),
     );
-}
-
-#[test]
-fn declaration_maps_options_and_global_regexp_collisions_fail_closed() {
-    for no_check in [false, true] {
-        for mode in [
-            "declaration",
-            "declarationMap",
-            "declarationDir",
-            "sourceMap",
-            "inlineSourceMap",
-        ] {
-            let mut compiler_options = options(no_check);
-            match mode {
-                "declaration" => compiler_options.declaration = true,
-                "declarationMap" => compiler_options.declaration_map = true,
-                "declarationDir" => {
-                    compiler_options.declaration_dir = Some(PathBuf::from("types"));
-                }
-                "sourceMap" => compiler_options.source_map = true,
-                "inlineSourceMap" => compiler_options.inline_source_map = true,
-                _ => unreachable!(),
-            }
-            let output = compile("products.ts", "var value = /x/;", compiler_options);
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "mode={mode} noCheck={no_check}: {:?}",
-                output.diagnostics
-            );
-            assert!(output.emitted_files.is_empty(), "mode={mode}");
-        }
-
-        let no_lib = compile(
-            "no-lib.ts",
-            "var value = /x/;",
-            CompilerOptions {
-                no_lib: true,
-                ..options(no_check)
-            },
-        );
-        assert_eq!(no_lib.semantic_completion, SemanticCompletion::Deferred);
-        assert!(no_lib.emitted_files.is_empty());
-        assert_eq!(codes(&no_lib), vec![2318; 10]);
-
-        for source in [
-            "interface RegExp { campaignBrand: string }\nvar value = /x/;",
-            "type RegExp = string; var value = /x/;",
-            "var RegExp = /x/;",
-        ] {
-            let output = compile("collision.ts", source, options(no_check));
-            assert_eq!(
-                output.semantic_completion,
-                SemanticCompletion::Deferred,
-                "{source}"
-            );
-            assert!(output.emitted_files.is_empty(), "{source}");
-        }
-    }
-}
-
-#[test]
-fn regex_program_results_are_cold_warm_and_root_order_stable() {
-    let fingerprint = |output: &CompileOutput| {
-        (
-            output.semantic_completion,
-            output.exit_status,
-            codes(output),
-            output
-                .emitted_files
-                .iter()
-                .map(|file| {
-                    (
-                        file.path.to_string_lossy().into_owned(),
-                        file.text.clone(),
-                        file.declaration,
-                    )
-                })
-                .collect::<Vec<_>>(),
-            output.stats.identifiers,
-            output.stats.symbols,
-            output.stats.types,
-        )
-    };
-
-    let families = [
-        vec![
-            SourceInput::new("a.ts", Arc::<str>::from(r"var alphaPattern = /\u{41}/gu;")),
-            SourceInput::new("b.ts", Arc::<str>::from(r"var betaPattern = /[a-z]+/gi;")),
-        ],
-        vec![
-            SourceInput::new("a.ts", Arc::<str>::from(r"/\u{41}/gu;")),
-            SourceInput::new("b.ts", Arc::<str>::from(r"/(#?\d+)|[a-z]/gi;")),
-        ],
-        vec![
-            SourceInput::new(
-                "a.ts",
-                Arc::<str>::from("// café\nvar alphaPattern = /\\u{41}/gu;"),
-            ),
-            SourceInput::new(
-                "b.ts",
-                Arc::<str>::from("// 😀\n// ≤\nvar betaPattern = /[a-z]+/gi;"),
-            ),
-        ],
-    ];
-
-    for (family, roots) in families.into_iter().enumerate() {
-        for no_check in [false, true] {
-            let compiler = Compiler::new();
-            let compiler_options = options(no_check);
-            let expected = fingerprint(&compiler.compile(roots.clone(), &compiler_options));
-            assert_eq!(expected.0, SemanticCompletion::Complete);
-            assert_eq!(expected.1, CompileExitStatus::Success);
-            for iteration in 0..10 {
-                let ordered = if iteration % 2 == 0 {
-                    roots.clone()
-                } else {
-                    roots.iter().rev().cloned().collect()
-                };
-                assert_eq!(
-                    fingerprint(&compiler.compile(ordered, &compiler_options)),
-                    expected,
-                    "family={family} noCheck={no_check} iteration={iteration}"
-                );
-            }
-
-            let mixed = compiler.compile(
-                vec![
-                    SourceInput::new("mixed-a.ts", Arc::<str>::from(r"var value = /x/;")),
-                    SourceInput::new("mixed-b.ts", Arc::<str>::from(r"/y/;")),
-                ],
-                &compiler_options,
-            );
-            assert_eq!(mixed.semantic_completion, SemanticCompletion::Deferred);
-            assert!(mixed.emitted_files.is_empty());
-        }
-    }
 }
 
 #[test]

@@ -242,7 +242,7 @@ fn unchecked_unannotated_producer_keeps_its_inferred_type_for_checked_consumers(
 }
 
 #[test]
-fn checked_consumer_preserves_incomplete_unchecked_initializer_completion() {
+fn checked_consumer_completes_through_an_owned_unchecked_template_initializer() {
     let unchecked = concat!(
         "// @ts-nocheck\n",
         "const shared = `plain`;\n",
@@ -261,8 +261,8 @@ fn checked_consumer_preserves_incomplete_unchecked_initializer_completion() {
     let reverse = compiler.compile(reversed, &options());
     for output in [&forward, &repeated, &reverse] {
         assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.exit_status, CompileExitStatus::Success);
     }
     assert_eq!(forward.stats.types, repeated.stats.types);
     assert_eq!(forward.stats.types, reverse.stats.types);
@@ -336,7 +336,9 @@ fn ts7_trailing_text_corpus_witnesses_complete() {
             vec![input("file.ts", &source)],
             &CompilerOptions {
                 declaration: true,
-                target: "es2015".to_string(),
+                // Keep pragma recognition independent of the separately
+                // nonclaimed pre-ES2022 class-field transform.
+                target: "es2022".to_string(),
                 ..CompilerOptions::default()
             },
         );

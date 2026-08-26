@@ -23,7 +23,7 @@ impl CommentIndex {
             .is_some_and(|comment| comment.span.end <= end)
     }
 
-    fn reset(&mut self, comments: &[CommentTrivia], preserve_comments: bool) {
+    pub(super) fn reset(&mut self, comments: &[CommentTrivia], preserve_comments: bool) {
         self.comments = comments
             .iter()
             .copied()
@@ -67,21 +67,16 @@ pub(super) enum GapOwner {
 }
 
 impl Printer<'_> {
-    pub(super) fn write_javascript_statements(&mut self, unit: &SourceUnit) {
-        self.comment_index
-            .reset(unit.comments(), self.preserve_comments);
-        for statement in &unit.statements {
-            self.write_javascript_statement(statement, true);
-        }
-        let tail_start = unit
-            .statements
-            .last()
-            .map_or(unit.span.start, |statement| statement.span.end);
-        let _ = self.comment_index.take_before(tail_start);
-        let tail = self
+    pub(super) fn finish_javascript_statements(&mut self, unit: &SourceUnit) {
+        let _ = self.comment_index.take_before(
+            unit.statements
+                .last()
+                .map_or(unit.span.start, |statement| statement.span.end),
+        );
+        let comments = self
             .comment_index
-            .take_prefix(|comment| comment.span.end <= unit.span.end);
-        self.write_comment_sequence(&tail, false, true);
+            .take_prefix(|c| c.span.end <= unit.span.end);
+        self.write_comment_sequence(&comments, false, true);
     }
 
     pub(super) fn write_comments_before_node(&mut self, span: Span, emitted: bool) {
@@ -152,9 +147,9 @@ impl Printer<'_> {
     }
 
     pub(super) fn consume_comments_through_token(&mut self, end: u32) {
-        let _ = self.comment_index.take_prefix(
-            |comment| matches!(comment.preceding_token_end, Some(start) if start <= end),
-        );
+        let _ = self
+            .comment_index
+            .take_prefix(|c| c.preceding_token_end.is_some_and(|start| start <= end));
     }
 
     pub(super) fn consume_comments_before(&mut self, offset: u32) {

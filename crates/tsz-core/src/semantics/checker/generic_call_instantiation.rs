@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::semantics::types::{ShapeSignature, TypeId, TypeStore};
+use crate::semantics::types::{Signature, TypeId, TypeStore};
 use crate::source::DeclId;
 
 /// Query-local proof that a generic signature's identity mapper is sufficient.
@@ -15,7 +15,7 @@ pub(super) struct IdentityCallInstantiation {
 }
 
 impl IdentityCallInstantiation {
-    pub(super) fn new(store: &TypeStore, owner: DeclId, signature: &ShapeSignature) -> Self {
+    pub(super) fn new(store: &TypeStore, owner: DeclId, signature: &Signature) -> Self {
         let mut required = store.type_parameters_from(signature.return_type, owner);
         for parameter in &signature.parameters {
             required.extend(store.type_parameters_from(parameter.ty, owner));

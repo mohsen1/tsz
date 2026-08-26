@@ -1303,7 +1303,7 @@ fn emit_preflight_blocks_only_the_product_that_would_overwrite_an_input() {
 }
 
 #[test]
-fn emit_preflight_reserves_javascript_declaration_and_map_products() {
+fn unsupported_map_options_withhold_products_before_collision_preflight() {
     let fixture = TempDir::new().expect("tempdir");
     let root = fixture.path();
     write(
@@ -1337,19 +1337,7 @@ fn emit_preflight_reserves_javascript_declaration_and_map_products() {
         .filter(|diagnostic| diagnostic.code == 5056)
         .map(|diagnostic| diagnostic.message_text.clone())
         .collect();
-    assert_eq!(collision_messages.len(), 4, "{collision_messages:?}");
-    for suffix in ["same.d.ts", "same.d.ts.map", "same.js", "same.js.map"] {
-        assert!(
-            collision_messages.iter().any(|message| {
-                message
-                    == &format!(
-                        "Cannot write file '{}' because it would be overwritten by multiple input files.",
-                        root.join(suffix).to_string_lossy()
-                    )
-            }),
-            "missing collision for {suffix}: {collision_messages:?}"
-        );
-    }
+    assert!(collision_messages.is_empty(), "{collision_messages:?}");
     assert_eq!(
         relative_paths(
             root,
@@ -1359,12 +1347,10 @@ fn emit_preflight_reserves_javascript_declaration_and_map_products() {
                 .map(|file| file.path.clone())
                 .collect::<Vec<_>>(),
         ),
-        ["other.d.ts", "other.js"]
+        Vec::<String>::new()
     );
-    assert_eq!(
-        output.exit_status,
-        tsz::CompileExitStatus::DiagnosticsPresentOutputsSkipped
-    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
 }
 
 #[test]

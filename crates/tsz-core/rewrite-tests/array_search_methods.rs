@@ -430,6 +430,9 @@ fn inferred_search_declaration_products_fail_closed_across_supported_hosts() {
         declaration: true,
         module: "esnext".to_string(),
         no_emit: false,
+        // Keep this declaration-summary matrix independent of the separate
+        // class-field downlevel transform boundary.
+        target: "es2022".to_string(),
         ..options()
     };
     for source in [
@@ -581,4 +584,194 @@ fn loose_null_and_repeated_uncached_queries_agree() {
         assert_eq!(output.diagnostics, []);
         assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
     }
+}
+
+#[test]
+fn canonical_array_mutation_and_transform_members_complete_across_authored_forms() {
+    for source in [
+        "function append<Element>(items:Element[],value:Element):void{items.push(value);}",
+        "function remove<Element>(items:Element[],value:Element):void{items.splice(items.indexOf(value)>>>0,1);}",
+        "function copy<Element>(items:Element[]):Element[]{return items.slice();}",
+        "function visit<Element>(items:Element[],callback:(item:Element)=>void):void{items.map((item)=>{callback(item);});}",
+        "const items:number[]=[];const removed:number[]=items.splice(0,undefined);const copied:number[]=items.slice(undefined,undefined);",
+        "const items:number[]=[];const count:number=items.push(1,2);const removed:number[]=items.splice(0,1,3);const copied:number[]=items.slice(undefined,undefined);const mapped:number[]=items.map((value,index,array)=>value+index+array[0]);",
+        "type Seq<Item>=Array<Item>;type Box<Item>={items:Seq<Item>};declare const box:Box<number>;const count:number=box.items.push(1);const removed:number[]=box.items.splice(0,1,2);const copied:number[]=box.items.slice();const mapped:number[]=box.items.map((value)=>value);",
+    ] {
+        assert_complete(source);
+    }
+}
+
+#[test]
+fn canonical_array_members_reuse_exact_arity_and_argument_relations() {
+    for (source, code, needle, message) in [
+        (
+            "const values:number[]=[];values.push('bad');",
+            2345,
+            "'bad'",
+            "Argument of type 'string' is not assignable to parameter of type 'number'.",
+        ),
+        (
+            "const values:number[]=[];values.slice('bad');",
+            2345,
+            "'bad'",
+            "Argument of type 'string' is not assignable to parameter of type 'number'.",
+        ),
+        (
+            "const values:number[]=[];values.slice(0,1,2);",
+            2554,
+            "2",
+            "Expected 0-2 arguments, but got 3.",
+        ),
+        (
+            "const values:number[]=[];values.splice();",
+            2555,
+            "splice",
+            "Expected at least 1 arguments, but got 0.",
+        ),
+        (
+            "const values:number[]=[];values.splice(0,1,'bad');",
+            2345,
+            "'bad'",
+            "Argument of type 'string' is not assignable to parameter of type 'number'.",
+        ),
+        (
+            "const values:number[]=[];values.map();",
+            2554,
+            "map",
+            "Expected 1-2 arguments, but got 0.",
+        ),
+        (
+            "const values:number[]=[];values.map((value)=>value,undefined,0);",
+            2554,
+            "0",
+            "Expected 1-2 arguments, but got 3.",
+        ),
+        (
+            "declare function take(value:string):string;const values:number[]=[];values.map((item)=>take(item));",
+            2345,
+            "item",
+            "Argument of type 'number' is not assignable to parameter of type 'string'.",
+        ),
+    ] {
+        let output = compile(source);
+        let [diagnostic] = output.diagnostics.as_slice() else {
+            panic!("{source}: {:#?}", output.diagnostics);
+        };
+        assert_eq!(diagnostic.code, code, "{source}");
+        assert_eq!(
+            diagnostic.start,
+            source.rfind(needle).unwrap() as u32,
+            "{source}"
+        );
+        assert_eq!(diagnostic.length, needle.len() as u32, "{source}");
+        assert_eq!(diagnostic.message_text, message, "{source}");
+        assert!(diagnostic.related_information.is_empty(), "{source}");
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "{source}: {:#?}",
+            output.diagnostics
+        );
+    }
+
+    for source in [
+        "const values:number[]=[];values.splice('bad',1);",
+        "const values:number[]=[];values.splice(0,undefined,1);",
+        "const values:number[]=[];values.map(1);",
+        "const values:number[]=[];values.map((value:string)=>value);",
+    ] {
+        assert_deferred(source);
+    }
+}
+
+#[test]
+fn unowned_array_member_receivers_and_overloads_remain_deferred() {
+    assert_complete(
+        "declare const values:readonly number[];values.slice();values.map((value)=>value);",
+    );
+    for source in [
+        "declare const values:ReadonlyArray<number>;values.push(1);",
+        "declare const values:ReadonlyArray<number>;values.splice(0,1);",
+        "declare const values:ReadonlyArray<number>;values.slice();",
+        "declare const values:ReadonlyArray<number>;values.map((value)=>value);",
+        "declare const values:readonly number[];values.push(1);",
+        "declare const values:readonly number[];values.splice(0,1);",
+        "declare const values:[number,string];values.push(1);",
+        "declare const values:[number,string];values.splice(0,1);",
+        "declare const values:[number,string];values.slice();",
+        "declare const values:[number,string];values.map((value)=>value);",
+        "declare const values:number[]|string[];values.push(1);",
+        "declare const values:number[]|string[];values.splice(0,1);",
+        "declare const values:number[]|string[];values.slice();",
+        "declare const values:number[]|string[];values.map((value)=>value);",
+        "const values:number[]=[];values.splice('bad',1);",
+        "const values:number[]=[];values.map(1);",
+        "const values:number[]=[];values.map((value:string)=>value);",
+    ] {
+        assert_deferred(source);
+    }
+}
+
+#[test]
+fn array_member_identity_respects_augmentation_shadowing_and_no_lib() {
+    let merged = compile(
+        "interface Array<T>{authored?:T}const values:number[]=[];values.push(1);values.splice(0,1);values.slice();values.map((value)=>value);",
+    );
+    assert_eq!(merged.diagnostics, []);
+    assert_eq!(merged.semantic_completion, SemanticCompletion::Deferred);
+
+    let shadowed = compile(concat!(
+        "export {};interface Array<T>{push(value:T):string;splice(start:number):string;",
+        "slice():string;map(callback:(value:T)=>T):string}",
+        "declare const values:Array<number>;const pushed:string=values.push(1);",
+        "const removed:string=values.splice(0);const copied:string=values.slice();",
+        "const mapped:string=values.map((value)=>value);",
+    ));
+    assert_eq!(shadowed.diagnostics, []);
+    assert_eq!(shadowed.semantic_completion, SemanticCompletion::Deferred);
+
+    let no_lib = compile_with(
+        "const values:number[]=[];values.push(1);values.splice(0,1);values.slice();values.map((value)=>value);",
+        CompilerOptions {
+            no_lib: true,
+            ..options()
+        },
+    );
+    assert_eq!(
+        no_lib
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        vec![2318; 10]
+    );
+    assert_eq!(no_lib.semantic_completion, SemanticCompletion::Complete);
+}
+
+#[test]
+fn canonical_array_members_are_cold_warm_and_root_order_stable() {
+    let compiler = Compiler::new();
+    let declarations = SourceInput::new(
+        "models.ts",
+        Arc::<str>::from("type Seq<Item>=Array<Item>;type Box<Item>={items:Seq<Item>};"),
+    );
+    let use_site = SourceInput::new(
+        "use.ts",
+        Arc::<str>::from(concat!(
+            "declare const box:Box<number>;const pushed:number=box.items.push(1);",
+            "const removed:number[]=box.items.splice(0,1,2);",
+            "const copied:number[]=box.items.slice();",
+            "const mapped:number[]=box.items.map((value)=>value);",
+        )),
+    );
+    let run = |files| compiler.compile(files, &options());
+    let cold = run(vec![declarations.clone(), use_site.clone()]);
+    let warm = run(vec![declarations.clone(), use_site.clone()]);
+    let reversed = run(vec![use_site, declarations]);
+    for output in [&cold, &warm, &reversed] {
+        assert_eq!(output.diagnostics, []);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    }
+    assert_eq!(cold.stats.types, warm.stats.types);
+    assert_eq!(cold.stats.types, reversed.stats.types);
 }

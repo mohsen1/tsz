@@ -12,8 +12,8 @@ use super::{
     recursion::{AliasRecursionProductivity, ReferenceRecursion},
 };
 use crate::semantics::types::{
-    Completion, DeferredType, IndexKeyKind, IndexSignature, ObjectShape, Property, ShapeParameter,
-    ShapeSignature, TypeId, TypeKind, TypeStore,
+    Completion, DeferredType, IndexKeyKind, IndexSignature, ObjectShape, ParameterType, Property,
+    Signature, TypeId, TypeKind, TypeStore,
 };
 
 impl Checker<'_> {
@@ -129,8 +129,8 @@ impl Checker<'_> {
         let Some(bound) = file.bindings.declaration(declaration) else {
             return false;
         };
-        let declaration = match (bound.meaning, bound.kind) {
-            (Meaning::Type, _) => declaration,
+        let bound = match (bound.meaning, bound.kind) {
+            (Meaning::Type, _) => bound,
             (Meaning::Value, DeclarationKind::Class) => {
                 let mut counterparts = file.bindings.declarations.iter().filter(|candidate| {
                     candidate.owner == bound.owner
@@ -143,96 +143,61 @@ impl Checker<'_> {
                 if counterparts.next().is_some() {
                     return false;
                 }
-                counterpart.id
+                counterpart
             }
             (Meaning::Value, _) => return false,
         };
-        let Some(bound) = file.bindings.declaration(declaration) else {
-            return false;
-        };
         let is_global = bound.scope == ScopeId(0) && !file.is_external_module();
-        if is_global
-            && self
-                .program
-                .standard_library
-                .resolve(&bound.name, Meaning::Type)
-                .is_some()
-        {
+        if !self.is_sole_symbol_declaration(file, bound, is_global) {
             return false;
         }
-        if bound.kind == DeclarationKind::Class
-            && !self.is_single_class_value_declaration(file, bound, is_global)
-        {
-            return false;
+        if bound.kind != DeclarationKind::Class {
+            return true;
         }
-        let declarations = if is_global {
-            self.program
-                .global_types
-                .get(&bound.name)
-                .map(Vec::as_slice)
-        } else {
-            file.bindings
-                .scopes
-                .get(bound.scope.0 as usize)
-                .and_then(|scope| scope.names.get(&bound.name))
-                .map(Vec::as_slice)
-        };
-        declarations.is_some_and(|declarations| {
-            let mut type_declarations = declarations.iter().copied().filter(|candidate| {
-                self.program
-                    .file(candidate.file)
-                    .and_then(|candidate_file| candidate_file.bindings.declaration(*candidate))
-                    .is_some_and(|candidate| candidate.meaning == Meaning::Type)
-            });
-            type_declarations.next() == Some(declaration) && type_declarations.next().is_none()
-        })
-    }
-
-    fn is_single_class_value_declaration(
-        &self,
-        file: &crate::program::ProgramFile,
-        class_type: &crate::bind::BoundDeclaration,
-        is_global: bool,
-    ) -> bool {
         let mut counterparts = file.bindings.declarations.iter().filter(|candidate| {
-            candidate.owner == class_type.owner
+            candidate.owner == bound.owner
                 && candidate.kind == DeclarationKind::Class
                 && candidate.meaning == Meaning::Value
         });
         let Some(counterpart) = counterparts.next() else {
             return false;
         };
-        if counterparts.next().is_some()
-            || is_global
-                && self
-                    .program
-                    .standard_library
-                    .resolve(&class_type.name, Meaning::Value)
-                    .is_some()
-        {
-            return false;
+        counterparts.next().is_none()
+            && self.is_sole_symbol_declaration(file, counterpart, is_global)
+    }
+
+    fn is_sole_symbol_declaration(
+        &self,
+        file: &crate::program::ProgramFile,
+        declaration: &crate::bind::BoundDeclaration,
+        is_global: bool,
+    ) -> bool {
+        if is_global {
+            let declarations = match declaration.meaning {
+                Meaning::Value => &self.program.global_values,
+                Meaning::Type => &self.program.global_types,
+            };
+            return self
+                .program
+                .standard_library
+                .resolve(&declaration.name, declaration.meaning)
+                .is_none()
+                && declarations
+                    .get(&declaration.name)
+                    .is_some_and(|declarations| declarations.as_slice() == [declaration.id]);
         }
-        let declarations = if is_global {
-            self.program
-                .global_values
-                .get(&class_type.name)
-                .map(Vec::as_slice)
-        } else {
-            file.bindings
-                .scopes
-                .get(class_type.scope.0 as usize)
-                .and_then(|scope| scope.names.get(&class_type.name))
-                .map(Vec::as_slice)
-        };
-        declarations.is_some_and(|declarations| {
-            let mut value_declarations = declarations.iter().copied().filter(|candidate| {
-                self.program
-                    .file(candidate.file)
-                    .and_then(|candidate_file| candidate_file.bindings.declaration(*candidate))
-                    .is_some_and(|candidate| candidate.meaning == Meaning::Value)
-            });
-            value_declarations.next() == Some(counterpart.id) && value_declarations.next().is_none()
-        })
+        file.bindings
+            .scopes
+            .get(declaration.scope.0 as usize)
+            .and_then(|scope| scope.names.get(&declaration.name))
+            .is_some_and(|declarations| {
+                declarations
+                    .iter()
+                    .filter_map(|candidate| file.bindings.declaration(*candidate))
+                    .filter(|candidate| candidate.meaning == declaration.meaning)
+                    .map(|candidate| candidate.id)
+                    .eq([declaration.id])
+            })
     }
 
     pub(super) fn plain_property_interface_heritage_reference_supported(
@@ -641,7 +606,7 @@ impl Checker<'_> {
         parameters: &[Parameter],
         return_type: Option<&TypeNode>,
         type_parameters: &HashMap<String, TypeId>,
-    ) -> Completion<ShapeSignature> {
+    ) -> Completion<Signature> {
         if parameters
             .iter()
             .any(|parameter| parameter.name_kind == ParameterNameKind::This)
@@ -664,7 +629,8 @@ impl Checker<'_> {
             } else {
                 self.store.builtins.any
             };
-            semantic_parameters.push(ShapeParameter {
+            semantic_parameters.push(ParameterType {
+                name: None,
                 ty,
                 optional: parameter.optional || parameter.initializer.is_some(),
                 rest: parameter.rest,
@@ -679,7 +645,8 @@ impl Checker<'_> {
         } else {
             self.store.builtins.any
         };
-        Completion::Complete(ShapeSignature {
+        Completion::Complete(Signature {
+            generic_declaration: None,
             untyped_javascript: false,
             parameters: semantic_parameters,
             return_type,
@@ -758,17 +725,31 @@ impl Checker<'_> {
                     }
                 }
             }
-            TypeKind::Deferred(deferred @ DeferredType::IndexedAccess { object, index })
-                if !matches!(self.store.kind(object), TypeKind::Deferred(_))
-                    && !matches!(self.store.kind(index), TypeKind::Deferred(_)) =>
+            TypeKind::Deferred(deferred)
+                if matches!(
+                    &deferred,
+                    DeferredType::IndexedAccess { object, index }
+                        if !matches!(self.store.kind(*object), TypeKind::Deferred(_))
+                            && !matches!(self.store.kind(*index), TypeKind::Deferred(_))
+                ) || matches!(
+                    &deferred,
+                    DeferredType::KeyOf(operand)
+                        if !matches!(self.store.kind(*operand), TypeKind::Deferred(_))
+                ) =>
             {
-                match self.force_deferred(ty, deferred, 0) {
-                    Completion::Complete(resolved) if resolved != ty => {
-                        self.shape_child_type_supported(resolved, active)
+                if let DeferredType::KeyOf(operand) = &deferred
+                    && matches!(self.store.kind(*operand), TypeKind::TypeParameter { .. })
+                {
+                    self.symbolic_keyof_operand_supported(*operand)
+                } else {
+                    match self.force_deferred(ty, deferred, 0) {
+                        Completion::Complete(resolved) if resolved != ty => {
+                            self.shape_child_type_supported(resolved, active)
+                        }
+                        Completion::Complete(_) | Completion::Deferred => Completion::Deferred,
+                        Completion::Cycle => Completion::Cycle,
+                        Completion::Limit => Completion::Limit,
                     }
-                    Completion::Complete(_) | Completion::Deferred => Completion::Deferred,
-                    Completion::Cycle => Completion::Cycle,
-                    Completion::Limit => Completion::Limit,
                 }
             }
             // Authored callables and unresolved children both lack a definitive shape.

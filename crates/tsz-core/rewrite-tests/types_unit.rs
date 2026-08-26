@@ -16,6 +16,7 @@ fn utf16_string_nonclaims_are_identity_free_and_not_interned() {
         store.kind(second),
         TypeKind::Deferred(DeferredType::Utf16StringLiteral)
     ));
+    assert_eq!(store.widened_literal_type(first), store.builtins.string);
 }
 
 #[test]
@@ -64,6 +65,64 @@ fn union_order_follows_typed_structure_not_allocation_or_input_order() {
         reverse_allocation.display(reverse_union),
         forward_allocation.display(forward_union)
     );
+}
+
+fn deferred_conditional(store: &mut TypeStore, value: &str) -> TypeId {
+    let check = literal_array(store, value);
+    store.intern(TypeKind::Deferred(DeferredType::Conditional {
+        check,
+        extends: store.builtins.string,
+        when_true: store.builtins.number,
+        when_false: store.builtins.boolean,
+    }))
+}
+
+#[test]
+fn deferred_union_order_preserves_variant_field_and_nested_type_order() {
+    let mut reverse_allocation = TypeStore::new();
+    let reverse_b = deferred_conditional(&mut reverse_allocation, "b");
+    let reverse_a = deferred_conditional(&mut reverse_allocation, "a");
+    let reverse_union = reverse_allocation.union([reverse_b, reverse_a], UnionPolicy::Canonical);
+
+    let mut forward_allocation = TypeStore::new();
+    let forward_a = deferred_conditional(&mut forward_allocation, "a");
+    let forward_b = deferred_conditional(&mut forward_allocation, "b");
+    let forward_union = forward_allocation.union([forward_b, forward_a], UnionPolicy::Canonical);
+
+    assert_eq!(
+        reverse_allocation.display(reverse_union),
+        "\"a\"[] extends string ? number : boolean | \"b\"[] extends string ? number : boolean"
+    );
+    assert_eq!(
+        reverse_allocation.display(reverse_union),
+        forward_allocation.display(forward_union)
+    );
+}
+
+#[test]
+fn construct_query_identity_and_traversal_include_argument_types() {
+    let mut store = TypeStore::new();
+    let callee = store.builtins.any;
+    let string = store.builtins.string;
+    let number = store.builtins.number;
+    let never_array = store.intern(TypeKind::Array(store.builtins.never));
+    let construct = |store: &mut TypeStore, argument| {
+        store.intern(TypeKind::Deferred(DeferredType::Construct {
+            callee,
+            type_arguments: vec![string, number],
+            arguments: vec![argument],
+        }))
+    };
+    let valid = construct(&mut store, never_array);
+    let invalid = construct(&mut store, number);
+    assert_ne!(valid, invalid);
+
+    let TypeKind::Deferred(query) = store.kind(valid) else {
+        panic!("expected deferred construct query");
+    };
+    let mut children = Vec::new();
+    TypeStore::push_deferred_children(query, &mut children);
+    assert_eq!(children, [callee, string, number, never_array]);
 }
 
 #[test]

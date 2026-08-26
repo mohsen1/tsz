@@ -4,10 +4,10 @@ use crate::bind::ScopeId;
 use crate::program::SemanticCompletion;
 use crate::semantics::relation::{RelationContext, RelationMode};
 use crate::semantics::types::{
-    CallArityGap, CallArityResolution, Completion, DeferredType, ShapeSignature, TypeId, TypeKind,
+    CallArityGap, CallArityResolution, Completion, DeferredType, Signature, TypeId, TypeKind,
 };
 use crate::source::{DeclId, FileId};
-use crate::standard_library::StandardLibraryMemberId;
+use crate::standard_library::LibraryCallMember;
 use crate::syntax::{Expression, ExpressionKind, FunctionLikeExpression, ParameterNameKind};
 
 use super::{
@@ -19,14 +19,15 @@ use super::{
 #[derive(Debug, Clone)]
 pub(super) struct InferredCallCallee {
     pub(super) ty: TypeId,
-    pub(super) library_member: Completion<Option<StandardLibraryMemberId>>,
+    pub(super) library_member: Completion<Option<LibraryCallMember>>,
 }
 
 impl Checker<'_> {
-    pub(super) fn callable_signature(&self, ty: TypeId) -> Option<ShapeSignature> {
+    pub(super) fn callable_signature(&self, ty: TypeId) -> Option<Signature> {
         match self.store.kind(ty) {
-            TypeKind::Function(signature) => Some(ShapeSignature::from(signature)),
-            TypeKind::ShapeFunction(signature) => Some(signature.clone()),
+            TypeKind::Function(signature) | TypeKind::ShapeFunction(signature) => {
+                Some(signature.clone())
+            }
             TypeKind::Object(shape) if shape.call_signatures.len() == 1 => {
                 shape.call_signatures.first().cloned()
             }
@@ -43,6 +44,10 @@ impl Checker<'_> {
         arguments: &[Expression],
     ) -> TypeId {
         let member_callee = callee.peel_parentheses();
+        let member_name_span = match &member_callee.kind {
+            ExpressionKind::Member { name_span, .. } => Some(*name_span),
+            _ => None,
+        };
         let inferred_callee = match &member_callee.kind {
             ExpressionKind::Member {
                 object,
@@ -84,9 +89,7 @@ impl Checker<'_> {
             self.infer_deferred_call_arguments(file, scope, arguments);
             return self.store.deferred_generic_call();
         }
-        let Completion::Complete(standard_library_array_search_member) =
-            inferred_callee.library_member
-        else {
+        let Completion::Complete(standard_library_member) = inferred_callee.library_member else {
             self.observe_file_completion(file, SemanticCompletion::Deferred);
             self.infer_deferred_call_arguments(file, scope, arguments);
             return self.deferred_call_type(callee_query, arguments.len());
@@ -165,7 +168,11 @@ impl Checker<'_> {
         let too_few = arity.is_some_and(|(minimum, _)| arguments.len() < minimum);
         let too_many = arity
             .is_some_and(|(_, maximum)| maximum.is_some_and(|maximum| arguments.len() > maximum));
-        if (too_few || too_many) && standard_library_array_search_member.is_some() {
+        let standard_library_array_search = matches!(
+            standard_library_member,
+            Some(LibraryCallMember::IndexOf | LibraryCallMember::LastIndexOf)
+        );
+        if (too_few || too_many) && standard_library_array_search {
             self.observe_file_completion(file, SemanticCompletion::Deferred);
             self.infer_deferred_call_arguments(file, scope, arguments);
             return self.deferred_call_type(callee_type, arguments.len());
@@ -189,7 +196,7 @@ impl Checker<'_> {
                 if too_many {
                     arguments[maximum.unwrap_or(arguments.len())].span
                 } else {
-                    callee.span
+                    member_name_span.unwrap_or(callee.span)
                 },
                 format!(
                     "Expected {expected_count} arguments, but got {}.",
@@ -198,7 +205,6 @@ impl Checker<'_> {
                 if maximum.is_none() { 2555 } else { 2554 },
             );
         }
-        let standard_library_array_search = standard_library_array_search_member.is_some();
         let mut deferred_standard_library_argument = false;
         let mut stopped_argument_relations = arity.is_none() || too_few || too_many;
         for (index, argument) in arguments.iter().enumerate() {
@@ -259,8 +265,21 @@ impl Checker<'_> {
             }
             let context = ContextualType::Known(expected);
             let actual = self.infer_expression_contextual(file, scope, argument, context);
-            if standard_library_array_search {
-                match self.array_search_argument_disposition(index, expected, actual) {
+            if standard_library_member == Some(LibraryCallMember::Map) && index == 0 {
+                let actual = self.complete_type(actual).unwrap_or(actual);
+                if let Some(callback) = self.callable_signature(actual) {
+                    signature.return_type =
+                        self.store.intern(TypeKind::Array(callback.return_type));
+                }
+            }
+            if let Some(member) = standard_library_member {
+                match self.standard_library_argument_disposition(
+                    member,
+                    index,
+                    arguments.len(),
+                    expected,
+                    actual,
+                ) {
                     Completion::Complete(true) => continue,
                     Completion::Complete(false) => {}
                     Completion::Deferred | Completion::Cycle | Completion::Limit => {
@@ -318,7 +337,7 @@ impl Checker<'_> {
         &mut self,
         direct_function: Option<&FunctionLikeExpression>,
         argument_count: usize,
-        signature: &mut ShapeSignature,
+        signature: &mut Signature,
     ) -> Completion<(usize, Option<usize>)> {
         if let Some(function) = direct_function {
             signature.untyped_javascript = false;
@@ -360,6 +379,7 @@ impl Checker<'_> {
                                 declaration,
                                 &arguments,
                                 instantiation,
+                                0,
                             );
                             match self.require_completion(expansion) {
                                 Completion::Complete(ty) => {
@@ -384,7 +404,7 @@ impl Checker<'_> {
                         _ if self
                             .program
                             .standard_library
-                            .is_string_record_type(declaration)
+                            .is_homogeneous_record_type(declaration)
                             && arguments.len() == 2 =>
                         {
                             Completion::Complete(CallArityResolution::OpaqueRequired)
@@ -430,13 +450,25 @@ impl Checker<'_> {
         }
     }
 
-    fn array_search_argument_disposition(
+    fn standard_library_argument_disposition(
         &mut self,
+        member: LibraryCallMember,
         index: usize,
+        argument_count: usize,
         expected: TypeId,
         actual: TypeId,
     ) -> Completion<bool> {
-        if index == 0 && matches!(self.store.kind(expected), TypeKind::TypeParameter { .. }) {
+        let element_argument = match member {
+            LibraryCallMember::IndexOf | LibraryCallMember::LastIndexOf => index == 0,
+            LibraryCallMember::Push => true,
+            LibraryCallMember::Splice => index >= 2,
+            LibraryCallMember::Map
+            | LibraryCallMember::Slice
+            | LibraryCallMember::MapGet
+            | LibraryCallMember::MapSet
+            | LibraryCallMember::ToString => false,
+        };
+        if element_argument && matches!(self.store.kind(expected), TypeKind::TypeParameter { .. }) {
             let actual = (actual == expected)
                 .then_some(actual)
                 .or_else(|| self.complete_type(actual));
@@ -446,7 +478,30 @@ impl Checker<'_> {
                 Completion::Deferred
             };
         }
-        if index != 1 {
+        if matches!(self.store.kind(actual), TypeKind::Undefined)
+            && (member == LibraryCallMember::Slice
+                || matches!(
+                    member,
+                    LibraryCallMember::IndexOf | LibraryCallMember::LastIndexOf
+                ) && index == 1
+                || member == LibraryCallMember::Splice && index == 1 && argument_count == 2)
+        {
+            return Completion::Complete(true);
+        }
+        if member == LibraryCallMember::Splice
+            && index < 2
+            && !matches!(
+                self.store.kind(actual),
+                TypeKind::Number | TypeKind::LiteralNumber(_, _)
+            )
+        {
+            return Completion::Deferred;
+        }
+        if !matches!(
+            member,
+            LibraryCallMember::IndexOf | LibraryCallMember::LastIndexOf
+        ) || index != 1
+        {
             return Completion::Complete(false);
         }
         let actual = match self.store.kind(actual) {
@@ -491,7 +546,7 @@ impl Checker<'_> {
         &self,
         declaration: Option<DeclId>,
         signature_owner: Option<DeclId>,
-        signature: &ShapeSignature,
+        signature: &Signature,
         argument_count: usize,
     ) -> Option<bool> {
         if signature.parameters.len() != argument_count

@@ -2,16 +2,22 @@ use super::Parser;
 use crate::source::Span;
 use crate::syntax::{
     IfStatement, JumpStatement, Statement, StatementKind, SwitchClause, SwitchClauseKind,
-    SwitchStatement, TokenKind, VariableDeclaration, VariableKind,
+    SwitchStatement, TokenKind, VariableDeclarator, VariableKind, VariableStatement,
 };
 
 impl Parser<'_> {
     pub(super) fn parse_block(&mut self) -> (Vec<Statement>, Option<Span>) {
+        let promotes_stray_close = self.pending_stray_statement_closes_after_block != 0;
+        if promotes_stray_close {
+            self.pending_stray_statement_closes_after_block -= 1;
+        }
         let has_opening_brace = self.at(TokenKind::LeftBrace);
         let opening_brace = self.current().span;
         self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
         let mut statements = Vec::new();
-        while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
+        while !self.at(TokenKind::EndOfFile)
+            && (!self.at(TokenKind::RightBrace) || self.pending_stray_statement_closes != 0)
+        {
             let before = self.index;
             statements.push(self.parse_statement());
             if before == self.index {
@@ -21,6 +27,9 @@ impl Parser<'_> {
         let has_closing_brace = self.at(TokenKind::RightBrace);
         let closing_brace = self.current().span;
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
+        if promotes_stray_close {
+            self.pending_stray_statement_closes += 1;
+        }
         (
             statements,
             (has_opening_brace && has_closing_brace).then(|| opening_brace.merge(closing_brace)),
@@ -64,13 +73,15 @@ impl Parser<'_> {
                 statements.push(Statement {
                     id: self.alloc_node(),
                     span: declaration_span,
-                    kind: StatementKind::Variable(VariableDeclaration {
+                    kind: StatementKind::Variable(VariableStatement {
                         declaration_kind,
-                        name,
-                        name_span,
-                        recovered_binding_names,
-                        annotation: None,
-                        initializer: None,
+                        declarators: vec![VariableDeclarator {
+                            name,
+                            name_span,
+                            recovered_binding_names,
+                            annotation: None,
+                            initializer: None,
+                        }],
                         has_leading_jsdoc: false,
                         exported: false,
                         declared: false,
@@ -120,7 +131,6 @@ impl Parser<'_> {
         self.bump();
         self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
         let condition = self.parse_expression();
-        self.observe_template_expression_semantics(&condition);
         self.expect(TokenKind::RightParen, "')' expected.", 1005);
         let then_statement = Box::new(self.parse_statement());
         let else_statement = self
@@ -137,7 +147,6 @@ impl Parser<'_> {
         self.bump();
         self.expect(TokenKind::LeftParen, "'(' expected.", 1005);
         let expression = self.parse_expression();
-        self.observe_template_expression_semantics(&expression);
         let recovered_discriminant = !self.at(TokenKind::RightParen);
         self.expect(TokenKind::RightParen, "')' expected.", 1005);
         self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
@@ -147,7 +156,6 @@ impl Parser<'_> {
             let start = self.current().span;
             let kind = if self.eat(TokenKind::Case) {
                 let expression = self.parse_expression();
-                self.observe_template_expression_semantics(&expression);
                 self.expect(TokenKind::Colon, "':' expected.", 1005);
                 SwitchClauseKind::Case(expression)
             } else if self.eat(TokenKind::Default) {
@@ -198,10 +206,6 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) && self.current_is_inside_rejected_generic_arrow_prefix() {
             self.error_current("';' expected.", 1005);
             self.bump();
-            return;
-        }
-        if self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index) {
-            self.has_unmodeled_top_level_syntax = true;
         }
     }
 

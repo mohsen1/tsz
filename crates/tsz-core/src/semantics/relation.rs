@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::checker::recursion::{ReferenceDemand, ReferenceExpansionStack};
-use super::types::{Completion, DeferredType, Property, ShapeSignature, TypeId, TypeKind};
+use super::types::{Completion, DeferredType, Property, Signature, TypeId, TypeKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationMode {
@@ -18,6 +18,7 @@ pub enum RelationFailureKind {
     Object,
     ArrayElement,
     TupleElement(usize),
+    TypeArgument(usize),
     ArrayToTupleLength { required: usize },
     UnionMember,
     AliasExpansion,
@@ -54,6 +55,7 @@ impl RelationFailureKind {
             | Self::Object
             | Self::ArrayElement
             | Self::TupleElement(_)
+            | Self::TypeArgument(_)
             | Self::ArrayToTupleLength { .. }
             | Self::UnionMember
             | Self::AliasExpansion
@@ -135,6 +137,8 @@ pub(crate) trait RelationContext {
         declaration: crate::source::DeclId,
         arguments: &[TypeId],
     ) -> bool;
+    fn library_reference_arguments_are_covariant(&self, declaration: crate::source::DeclId)
+    -> bool;
     fn strict_null_checks(&self) -> bool;
     fn canonical_union(&mut self, members: &[TypeId]) -> TypeId;
 }
@@ -226,7 +230,20 @@ impl<C: RelationContext> Relation<'_, C> {
                 RelationFailureKind::ComplexityLimit,
             ));
         }
-
+        let source = self.assignment_source(source, target, mode);
+        if source == target {
+            return Ok(());
+        }
+        if mode == RelationMode::Assignment
+            && matches!(self.context.type_kind(source), TypeKind::Any)
+            && matches!(
+                self.context.type_kind(target),
+                TypeKind::Deferred(DeferredType::KeyOf(operand))
+                    if matches!(self.context.type_kind(operand), TypeKind::TypeParameter { .. })
+            )
+        {
+            return Ok(());
+        }
         let key = RelationQueryKey {
             source,
             target,
@@ -238,6 +255,36 @@ impl<C: RelationContext> Relation<'_, C> {
         let result = self.relate_with_reference_stacks(source, target, mode, depth);
         self.active.remove(&key);
         result
+    }
+
+    fn assignment_source(&self, mut source: TypeId, target: TypeId, mode: RelationMode) -> TypeId {
+        let target_kind = self.context.type_kind(target);
+        while mode == RelationMode::Assignment
+            && let TypeKind::Deferred(DeferredType::Logical {
+                operator: super::types::DeferredLogicalOperator::Or,
+                left,
+                right,
+            }) = self.context.type_kind(source)
+        {
+            let same_target = left == target
+                && matches!(target_kind, TypeKind::Deferred(DeferredType::Value(_)))
+                || matches!(
+                    (&target_kind, self.context.type_kind(left)),
+                    (
+                        TypeKind::Deferred(DeferredType::Value(target_declaration)),
+                        TypeKind::Deferred(DeferredType::FlowReference {
+                            declaration,
+                            declared,
+                            ..
+                        })
+                    ) if declaration == *target_declaration && declared == target
+                );
+            if !same_target {
+                break;
+            }
+            source = right;
+        }
+        source
     }
 
     fn relate_with_reference_stacks(
@@ -367,6 +414,9 @@ impl<C: RelationContext> Relation<'_, C> {
         if matches!(source_kind, TypeKind::Never) || matches!(target_kind, TypeKind::Unknown) {
             return Ok(());
         }
+        if matches!(target_kind, TypeKind::Never) {
+            return Err(failure(source, target, RelationFailureKind::Incompatible));
+        }
         if mode == RelationMode::Assignment
             && (matches!(source_kind, TypeKind::Any) || matches!(target_kind, TypeKind::Any))
         {
@@ -466,21 +516,16 @@ impl<C: RelationContext> Relation<'_, C> {
             {
                 Ok(())
             }
-            (TypeKind::Tuple(left), TypeKind::Tuple(right)) if left.len() == right.len() => {
-                for (index, (left_element, right_element)) in left.iter().zip(right).enumerate() {
-                    if let Err(error) =
-                        self.relate_inner(*left_element, *right_element, mode, depth + 1)
-                    {
-                        return Err(wrap_failure(
-                            source,
-                            target,
-                            RelationFailureKind::TupleElement(index),
-                            error,
-                        ));
-                    }
-                }
-                Ok(())
-            }
+            (TypeKind::Tuple(left), TypeKind::Tuple(right)) if left.len() == right.len() => self
+                .relate_covariant_types(
+                    source,
+                    target,
+                    left,
+                    right,
+                    mode,
+                    depth,
+                    RelationFailureKind::TupleElement,
+                ),
             (TypeKind::Tuple(elements), TypeKind::Array(element)) => {
                 let source_element = self.context.canonical_union(elements);
                 self.relate_inner(source_element, *element, mode, depth + 1)
@@ -502,7 +547,7 @@ impl<C: RelationContext> Relation<'_, C> {
                     ..
                 },
             ) => {
-                if shape_has_unsupported_callable_members(self.context, target_shape)
+                if shape_has_unsupported_callable_members(self.context, target_shape, None)
                     || !target_shape.index_signatures.is_empty()
                 {
                     Err(failure(source, target, RelationFailureKind::Deferred))
@@ -521,53 +566,85 @@ impl<C: RelationContext> Relation<'_, C> {
                 .relate_signatures(
                     source,
                     target,
-                    &ShapeSignature::from(source_signature),
-                    &ShapeSignature::from(target_signature),
+                    source_signature,
+                    target_signature,
                     mode,
                     depth,
                 ),
             (
                 TypeKind::ShapeFunction(source_signature),
-                TypeKind::ShapeFunction(target_signature),
-            ) => self
-                .relate_signatures(
-                    source,
-                    target,
-                    source_signature,
-                    target_signature,
-                    mode,
-                    depth,
-                )
-                .map_err(|_| failure(source, target, RelationFailureKind::Deferred)),
-            (TypeKind::Function(source_signature), TypeKind::ShapeFunction(target_signature)) => {
+                TypeKind::Function(target_signature) | TypeKind::ShapeFunction(target_signature),
+            )
+            | (TypeKind::Function(source_signature), TypeKind::ShapeFunction(target_signature)) => {
                 self.relate_signatures(
                     source,
                     target,
-                    &ShapeSignature::from(source_signature),
+                    source_signature,
                     target_signature,
                     mode,
                     depth,
                 )
                 .map_err(|_| failure(source, target, RelationFailureKind::Deferred))
             }
-            (TypeKind::ShapeFunction(source_signature), TypeKind::Function(target_signature)) => {
-                self.relate_signatures(
-                    source,
-                    target,
-                    source_signature,
-                    &ShapeSignature::from(target_signature),
-                    mode,
-                    depth,
-                )
-                .map_err(|_| failure(source, target, RelationFailureKind::Deferred))
+            (
+                TypeKind::LibraryReference {
+                    declaration: source_declaration,
+                    arguments: source_arguments,
+                    ..
+                },
+                TypeKind::LibraryReference {
+                    declaration: target_declaration,
+                    arguments: target_arguments,
+                    ..
+                },
+            ) if source_declaration == target_declaration
+                && self
+                    .context
+                    .library_reference_arguments_are_covariant(*source_declaration) =>
+            {
+                if source_arguments.len() != target_arguments.len() {
+                    Err(failure(source, target, RelationFailureKind::Deferred))
+                } else {
+                    self.relate_covariant_types(
+                        source,
+                        target,
+                        source_arguments,
+                        target_arguments,
+                        mode,
+                        depth,
+                        RelationFailureKind::TypeArgument,
+                    )
+                }
             }
             (TypeKind::Function(_) | TypeKind::ShapeFunction(_), TypeKind::Object(_))
             | (TypeKind::Object(_), TypeKind::Function(_) | TypeKind::ShapeFunction(_))
-            | (TypeKind::Array(_), TypeKind::Object(_)) => {
+            | (TypeKind::Array(_), TypeKind::Object(_))
+            | (TypeKind::LibraryReference { .. }, _)
+            | (_, TypeKind::LibraryReference { .. }) => {
                 Err(failure(source, target, RelationFailureKind::Deferred))
             }
             _ => Err(failure(source, target, RelationFailureKind::Incompatible)),
         }
+    }
+
+    fn relate_covariant_types(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_types: &[TypeId],
+        target_types: &[TypeId],
+        mode: RelationMode,
+        depth: usize,
+        element_failure: fn(usize) -> RelationFailureKind,
+    ) -> Result<(), RelationFailure> {
+        source_types
+            .iter()
+            .zip(target_types)
+            .enumerate()
+            .try_for_each(|(index, (source_type, target_type))| {
+                self.relate_inner(*source_type, *target_type, mode, depth + 1)
+                    .map_err(|error| wrap_failure(source, target, element_failure(index), error))
+            })
     }
 
     fn relate_object_shapes(
@@ -579,8 +656,7 @@ impl<C: RelationContext> Relation<'_, C> {
         mode: RelationMode,
         depth: usize,
     ) -> Result<(), RelationFailure> {
-        if shape_has_unsupported_callable_members(self.context, source_shape)
-            || shape_has_unsupported_callable_members(self.context, target_shape)
+        if shape_has_unsupported_callable_members(self.context, target_shape, Some(source_shape))
             || !source_shape.index_signatures.is_empty()
         {
             return Err(failure(source, target, RelationFailureKind::Deferred));
@@ -716,8 +792,8 @@ impl<C: RelationContext> Relation<'_, C> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        source_signature: &ShapeSignature,
-        target_signature: &ShapeSignature,
+        source_signature: &Signature,
+        target_signature: &Signature,
         mode: RelationMode,
         depth: usize,
     ) -> Result<(), RelationFailure> {
@@ -893,14 +969,38 @@ const fn object_shape(kind: &TypeKind) -> Option<&super::types::ObjectShape> {
 
 fn shape_has_unsupported_callable_members<C: RelationContext>(
     context: &C,
-    shape: &super::types::ObjectShape,
+    target: &super::types::ObjectShape,
+    source: Option<&super::types::ObjectShape>,
 ) -> bool {
-    !shape.call_signatures.is_empty()
-        || !shape.construct_signatures.is_empty()
-        || shape
-            .properties
-            .iter()
-            .any(|property| matches!(context.type_kind(property.ty), TypeKind::ShapeFunction(_)))
+    if !target.call_signatures.is_empty()
+        || !target.construct_signatures.is_empty()
+        || source.is_some_and(|source| {
+            !source.call_signatures.is_empty() || !source.construct_signatures.is_empty()
+        })
+    {
+        return true;
+    }
+    target.properties.iter().any(|target_property| {
+        let target_kind = context.type_kind(target_property.ty);
+        let Some(source_property) = source.and_then(|source| {
+            source
+                .properties
+                .iter()
+                .find(|property| property.name == target_property.name)
+        }) else {
+            return matches!(target_kind, TypeKind::ShapeFunction(_));
+        };
+        let source_kind = context.type_kind(source_property.ty);
+        match (&source_kind, &target_kind) {
+            (TypeKind::ShapeFunction(source), TypeKind::Function(target))
+            | (TypeKind::ShapeFunction(source), TypeKind::ShapeFunction(target))
+            | (TypeKind::Function(source), TypeKind::ShapeFunction(target)) => {
+                source.generic_declaration.is_some() || target.generic_declaration.is_some()
+            }
+            (TypeKind::ShapeFunction(_), _) | (_, TypeKind::ShapeFunction(_)) => true,
+            _ => false,
+        }
+    })
 }
 
 fn wrap_failure(

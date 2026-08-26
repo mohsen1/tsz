@@ -3,7 +3,14 @@ use std::collections::HashMap;
 use crate::source::{DeclId, FileId};
 
 use super::*;
-use crate::semantics::types::{DeferredType, InvalidType, LiteralProvenance};
+use crate::semantics::types::{
+    DeferredLogicalOperator, DeferredType, InvalidType, LiteralProvenance, ParameterType, Signature,
+};
+
+const COVARIANT_LIBRARY_REFERENCE: DeclId = DeclId {
+    file: FileId(u32::MAX),
+    local: 0,
+};
 
 /// Relate two types in one query-local session.
 ///
@@ -57,6 +64,10 @@ impl RelationContext for TestContext {
         true
     }
 
+    fn library_reference_arguments_are_covariant(&self, declaration: DeclId) -> bool {
+        declaration == COVARIANT_LIBRARY_REFERENCE
+    }
+
     fn strict_null_checks(&self) -> bool {
         true
     }
@@ -78,6 +89,227 @@ fn property(name: &str, ty: u32) -> Property {
         optional: false,
         readonly: false,
     }
+}
+
+#[test]
+fn assignment_any_observes_never_and_symbolic_keyof() {
+    let mut context = TestContext {
+        kinds: vec![
+            TypeKind::Any,
+            TypeKind::Never,
+            TypeKind::Deferred(DeferredType::KeyOf(TypeId(3))),
+            TypeKind::TypeParameter {
+                declaration: DeclId {
+                    file: FileId(0),
+                    local: 1,
+                },
+                index: 0,
+                name: "Key".to_string(),
+            },
+        ],
+        completions: HashMap::new(),
+        evaluator_depth: 0,
+    };
+
+    let failure = relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
+    assert_eq!(failure.kind, RelationFailureKind::Incompatible);
+    assert!(relate(&mut context, TypeId(0), TypeId(2), RelationMode::Assignment,).is_ok());
+    assert!(relate(&mut context, TypeId(0), TypeId(2), RelationMode::Subtype,).is_err());
+}
+
+#[test]
+fn logical_assignment_proof_propagates_incomplete_rhs() {
+    let declaration = |local| DeclId {
+        file: FileId(0),
+        local,
+    };
+    let mut context = TestContext {
+        kinds: vec![
+            TypeKind::Deferred(DeferredType::Value(declaration(0))),
+            TypeKind::Deferred(DeferredType::Logical {
+                operator: DeferredLogicalOperator::Or,
+                left: TypeId(0),
+                right: TypeId(2),
+            }),
+            TypeKind::Deferred(DeferredType::Value(declaration(2))),
+        ],
+        completions: HashMap::from([(TypeId(2), Completion::Cycle)]),
+        evaluator_depth: 0,
+    };
+
+    let failure = relate(&mut context, TypeId(1), TypeId(0), RelationMode::Assignment).unwrap_err();
+    assert_eq!(failure.kind, RelationFailureKind::Cycle);
+
+    let signature = Signature {
+        generic_declaration: None,
+        untyped_javascript: false,
+        parameters: Vec::new(),
+        return_type: TypeId(3),
+    };
+    let mut contextual = TestContext {
+        kinds: vec![
+            TypeKind::Function(signature),
+            TypeKind::Deferred(DeferredType::Logical {
+                operator: DeferredLogicalOperator::Or,
+                left: TypeId(0),
+                right: TypeId(2),
+            }),
+            TypeKind::Array(TypeId(3)),
+            TypeKind::Void,
+        ],
+        completions: HashMap::from([(TypeId(1), Completion::Complete(TypeId(0)))]),
+        evaluator_depth: 0,
+    };
+    assert!(
+        relate(
+            &mut contextual,
+            TypeId(1),
+            TypeId(0),
+            RelationMode::Assignment,
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn callable_variant_pairs_preserve_their_failure_policy() {
+    let callable = |shape: bool, name: &str, parameter: TypeId| {
+        let signature = Signature {
+            generic_declaration: None,
+            untyped_javascript: false,
+            parameters: vec![ParameterType {
+                name: (!shape).then(|| name.to_string()),
+                ty: parameter,
+                optional: false,
+                rest: false,
+            }],
+            return_type: TypeId(0),
+        };
+        if shape {
+            TypeKind::ShapeFunction(signature)
+        } else {
+            TypeKind::Function(signature)
+        }
+    };
+
+    for (source_shape, target_shape) in [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let kinds = vec![
+            TypeKind::String,
+            TypeKind::Number,
+            callable(source_shape, "source", TypeId(0)),
+            callable(target_shape, "target", TypeId(0)),
+        ];
+        assert_eq!(
+            relate(
+                &mut TestContext {
+                    kinds,
+                    completions: HashMap::new(),
+                    evaluator_depth: 0,
+                },
+                TypeId(2),
+                TypeId(3),
+                RelationMode::Assignment,
+            ),
+            Ok(())
+        );
+
+        let kinds = vec![
+            TypeKind::String,
+            TypeKind::Number,
+            callable(source_shape, "source", TypeId(0)),
+            callable(target_shape, "target", TypeId(1)),
+        ];
+        let failure = relate(
+            &mut TestContext {
+                kinds,
+                completions: HashMap::new(),
+                evaluator_depth: 0,
+            },
+            TypeId(2),
+            TypeId(3),
+            RelationMode::Assignment,
+        )
+        .unwrap_err();
+        if source_shape || target_shape {
+            assert_eq!(failure.kind, RelationFailureKind::Deferred);
+            assert!(failure.child.is_none());
+        } else {
+            assert_eq!(failure.kind, RelationFailureKind::Parameter(0));
+            assert_eq!(
+                failure.child.as_deref().map(|child| &child.kind),
+                Some(&RelationFailureKind::Incompatible)
+            );
+        }
+    }
+}
+
+#[test]
+fn covariant_library_references_relate_arguments_and_preserve_incompletion() {
+    let other_library = DeclId {
+        file: FileId(u32::MAX),
+        local: 1,
+    };
+    let mut context = TestContext {
+        kinds: vec![
+            TypeKind::Any,
+            TypeKind::String,
+            TypeKind::Number,
+            TypeKind::LibraryReference {
+                declaration: COVARIANT_LIBRARY_REFERENCE,
+                name: "Canonical".to_string(),
+                arguments: vec![TypeId(0), TypeId(0)],
+            },
+            TypeKind::LibraryReference {
+                declaration: COVARIANT_LIBRARY_REFERENCE,
+                name: "Canonical".to_string(),
+                arguments: vec![TypeId(1), TypeId(2)],
+            },
+            TypeKind::LibraryReference {
+                declaration: COVARIANT_LIBRARY_REFERENCE,
+                name: "Canonical".to_string(),
+                arguments: vec![TypeId(1), TypeId(1)],
+            },
+            TypeKind::Deferred(DeferredType::Value(DeclId {
+                file: FileId(0),
+                local: 0,
+            })),
+            TypeKind::LibraryReference {
+                declaration: COVARIANT_LIBRARY_REFERENCE,
+                name: "Canonical".to_string(),
+                arguments: vec![TypeId(1), TypeId(6)],
+            },
+            TypeKind::LibraryReference {
+                declaration: other_library,
+                name: "Other".to_string(),
+                arguments: vec![TypeId(0), TypeId(0)],
+            },
+        ],
+        completions: HashMap::from([(TypeId(6), Completion::Deferred)]),
+        evaluator_depth: 0,
+    };
+
+    assert_eq!(
+        relate(&mut context, TypeId(3), TypeId(4), RelationMode::Assignment),
+        Ok(())
+    );
+
+    let incompatible =
+        relate(&mut context, TypeId(5), TypeId(4), RelationMode::Assignment).unwrap_err();
+    assert_eq!(incompatible.kind, RelationFailureKind::TypeArgument(1));
+    let leaf = incompatible.child.as_deref().unwrap();
+    assert_eq!(
+        (leaf.source, leaf.target, &leaf.kind),
+        (TypeId(1), TypeId(2), &RelationFailureKind::Incompatible)
+    );
+
+    let incomplete =
+        relate(&mut context, TypeId(7), TypeId(4), RelationMode::Assignment).unwrap_err();
+    assert_eq!(incomplete.kind, RelationFailureKind::Deferred);
+    assert!(incomplete.child.is_none());
+
+    let other = relate(&mut context, TypeId(8), TypeId(4), RelationMode::Assignment).unwrap_err();
+    assert_eq!(other.kind, RelationFailureKind::Deferred);
 }
 
 #[test]

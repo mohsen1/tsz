@@ -6,7 +6,6 @@
     "crates/tsz-core/src/**/*.rs"
   ],
   "exclude": [
-    "crates/tsz-core/src/emit/test_support.rs",
     "crates/tsz-core/src/program/capabilities/tests.rs"
   ]
 }

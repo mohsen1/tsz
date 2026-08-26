@@ -30,10 +30,13 @@ const ESSENTIAL_GLOBAL_TYPES: &[&str] = &[
     "String",
 ];
 
-// Pinned TS7 apparent owners for `Array` function members. `Function.toString`
-// shadows `Object.toString`, so `Object` is not a dependency for this member.
-const ARRAY_FUNCTION_MEMBER_OWNER_TYPES: &[&str] =
-    &["ArrayConstructor", "CallableFunction", "Function"];
+#[derive(Debug)]
+pub(crate) struct CanonicalTypeAliasOrigin {
+    pub(crate) name: &'static str,
+    pub(crate) path: &'static str,
+    pub(crate) source: &'static str,
+    pub(crate) name_start: u32,
+}
 
 #[derive(Debug)]
 struct GeneratedLibrary {
@@ -41,9 +44,7 @@ struct GeneratedLibrary {
     references: &'static [&'static str],
     type_names: &'static [&'static str],
     value_names: &'static [&'static str],
-    string_record_type_names: &'static [&'static str],
-    function_zero_argument_string_method_names: &'static [&'static str],
-    array_search_method_names: &'static [&'static str],
+    homogeneous_record_type_origins: &'static [CanonicalTypeAliasOrigin],
 }
 
 include!(concat!(env!("OUT_DIR"), "/standard_library_data.rs"));
@@ -56,35 +57,31 @@ pub struct StandardLibraryDeclaration {
     pub meaning: Meaning,
 }
 
-/// Program-owned identity for a member projected from the pinned libraries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct StandardLibraryMemberId {
-    owner: DeclId,
-    local: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LibraryReceiver {
+    Array,
+    Declaration(DeclId),
 }
 
-/// Narrow semantic shapes structurally recognized by the pinned-library index.
+/// Canonical callable-member identity owned by the selected pinned libraries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StandardLibraryMemberKind {
-    ZeroArgumentStringMethod,
+pub(crate) enum LibraryCallMember {
+    IndexOf,
+    LastIndexOf,
+    Map,
+    Push,
+    Slice,
+    Splice,
+    MapGet,
+    MapSet,
+    ToString,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StandardLibraryValueMemberLookup {
+pub(crate) enum LibraryMemberLookup {
     Missing,
     DeferredUntilMemberMerging,
-    Found {
-        id: StandardLibraryMemberId,
-        kind: StandardLibraryMemberKind,
-    },
-}
-
-/// A deterministic ambient value member owned by one library declaration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct StandardLibraryValueMember {
-    id: StandardLibraryMemberId,
-    kind: StandardLibraryMemberKind,
-    dependency_type_owners: Option<Vec<DeclId>>,
+    Found(LibraryCallMember),
 }
 
 /// The deterministic, program-owned ambient declaration environment.
@@ -94,8 +91,7 @@ pub struct StandardLibraryEnvironment {
     declarations: Vec<StandardLibraryDeclaration>,
     type_names: BTreeMap<String, DeclId>,
     value_names: BTreeMap<String, DeclId>,
-    value_members: BTreeMap<DeclId, BTreeMap<String, StandardLibraryValueMember>>,
-    string_record_types: BTreeSet<DeclId>,
+    homogeneous_record_types: BTreeMap<DeclId, &'static CanonicalTypeAliasOrigin>,
 }
 
 impl StandardLibraryEnvironment {
@@ -144,8 +140,24 @@ impl StandardLibraryEnvironment {
     }
 
     #[must_use]
-    pub(crate) fn is_string_record_type(&self, id: DeclId) -> bool {
-        self.string_record_types.contains(&id)
+    pub(crate) fn is_homogeneous_record_type(&self, id: DeclId) -> bool {
+        self.homogeneous_record_types.contains_key(&id)
+    }
+
+    pub(crate) fn homogeneous_record_origin(
+        &self,
+        id: DeclId,
+    ) -> Option<&'static CanonicalTypeAliasOrigin> {
+        self.homogeneous_record_types.get(&id).copied()
+    }
+
+    pub(crate) fn hide_homogeneous_record_type(&mut self, id: DeclId) {
+        self.type_names.retain(|_, candidate| *candidate != id);
+    }
+
+    #[must_use]
+    pub(crate) fn is_property_key_type(&self, id: DeclId) -> bool {
+        self.resolve("PropertyKey", Meaning::Type) == Some(id)
     }
 
     #[must_use]
@@ -158,58 +170,77 @@ impl StandardLibraryEnvironment {
         self.resolve("Array", Meaning::Value) == Some(id)
     }
 
-    #[must_use]
-    pub(crate) fn value_member(
-        &self,
-        owner: DeclId,
-        name: &str,
-        mut has_authored_member: impl FnMut(DeclId, &str) -> bool,
-    ) -> StandardLibraryValueMemberLookup {
-        let Some(member) = self
-            .value_members
-            .get(&owner)
-            .and_then(|members| members.get(name))
-        else {
-            return StandardLibraryValueMemberLookup::Missing;
-        };
-        let Some(dependency_type_owners) = &member.dependency_type_owners else {
-            return StandardLibraryValueMemberLookup::DeferredUntilMemberMerging;
-        };
-        if dependency_type_owners
-            .iter()
-            .copied()
-            .any(|dependency| has_authored_member(dependency, name))
-        {
-            StandardLibraryValueMemberLookup::DeferredUntilMemberMerging
-        } else {
-            StandardLibraryValueMemberLookup::Found {
-                id: member.id,
-                kind: member.kind,
-            }
-        }
+    pub(crate) fn is_map_type(&self, id: DeclId) -> bool {
+        self.resolve("Map", Meaning::Type) == Some(id)
+    }
+
+    pub(crate) fn map_type_for_value(&self, id: DeclId) -> Option<DeclId> {
+        (self.resolve("Map", Meaning::Value) == Some(id))
+            .then(|| self.resolve("Map", Meaning::Type))
+            .flatten()
     }
 
     #[must_use]
-    pub(crate) fn array_search_member(
+    pub(crate) fn call_member(
         &self,
+        receiver: LibraryReceiver,
         name: &str,
         mut has_authored_declarations: impl FnMut(DeclId) -> bool,
-    ) -> Option<StandardLibraryMemberId> {
-        let owner = self.resolve("Array", Meaning::Type)?;
-        let local = ARRAY_SEARCH_METHOD_NAMES.binary_search(&name).ok()?;
-        (!has_authored_declarations(owner)
-            && self.selected_libraries.iter().any(|library_name| {
-                library(library_name).is_some_and(|library| {
-                    library
-                        .array_search_method_names
-                        .binary_search(&name)
-                        .is_ok()
-                })
-            }))
-        .then_some(StandardLibraryMemberId {
-            owner,
-            local: local as u32,
-        })
+        mut has_authored_member: impl FnMut(DeclId, &str) -> bool,
+    ) -> LibraryMemberLookup {
+        let member = match receiver {
+            LibraryReceiver::Array => {
+                let Some(owner) = self.resolve("Array", Meaning::Type) else {
+                    return LibraryMemberLookup::Missing;
+                };
+                if has_authored_declarations(owner) {
+                    return LibraryMemberLookup::DeferredUntilMemberMerging;
+                }
+                if !self.selected_libraries.contains(&"es5") {
+                    return LibraryMemberLookup::Missing;
+                }
+                match name {
+                    "indexOf" => LibraryCallMember::IndexOf,
+                    "lastIndexOf" => LibraryCallMember::LastIndexOf,
+                    "map" => LibraryCallMember::Map,
+                    "push" => LibraryCallMember::Push,
+                    "slice" => LibraryCallMember::Slice,
+                    "splice" => LibraryCallMember::Splice,
+                    _ => return LibraryMemberLookup::Missing,
+                }
+            }
+            LibraryReceiver::Declaration(owner) if self.is_map_type(owner) => {
+                if has_authored_declarations(owner) || self.resolve("Map", Meaning::Value).is_none()
+                {
+                    return LibraryMemberLookup::DeferredUntilMemberMerging;
+                }
+                match name {
+                    "get" => LibraryCallMember::MapGet,
+                    "set" => LibraryCallMember::MapSet,
+                    _ => return LibraryMemberLookup::Missing,
+                }
+            }
+            LibraryReceiver::Declaration(owner) if self.is_array_value(owner) => {
+                if name != "toString" || !self.selected_libraries.contains(&"es5") {
+                    return LibraryMemberLookup::Missing;
+                }
+                // `Function.toString` shadows `Object.toString`, so Object is
+                // not an apparent-owner dependency for this member.
+                for dependency in ["ArrayConstructor", "CallableFunction", "Function"] {
+                    let Some(dependency) = self.resolve(dependency, Meaning::Type) else {
+                        return LibraryMemberLookup::DeferredUntilMemberMerging;
+                    };
+                    if has_authored_member(dependency, name) {
+                        return LibraryMemberLookup::DeferredUntilMemberMerging;
+                    }
+                }
+                LibraryCallMember::ToString
+            }
+            LibraryReceiver::Declaration(_) => {
+                return LibraryMemberLookup::Missing;
+            }
+        };
+        LibraryMemberLookup::Found(member)
     }
 
     #[must_use]
@@ -235,8 +266,7 @@ impl StandardLibraryEnvironment {
         }
 
         let mut names = BTreeSet::new();
-        let mut string_record_type_names = BTreeSet::new();
-        let mut function_zero_argument_string_method_names = BTreeSet::new();
+        let mut homogeneous_record_type_origins = BTreeMap::new();
         for name in &selected_libraries {
             let Some(library) = library(name) else {
                 continue;
@@ -244,24 +274,18 @@ impl StandardLibraryEnvironment {
             for (entries, meaning) in [(library.type_names, 0_u8), (library.value_names, 1)] {
                 names.extend(entries.iter().map(|name| ((*name).to_string(), meaning)));
             }
-            string_record_type_names.extend(
+            homogeneous_record_type_origins.extend(
                 library
-                    .string_record_type_names
+                    .homogeneous_record_type_origins
                     .iter()
-                    .map(|name| (*name).to_string()),
-            );
-            function_zero_argument_string_method_names.extend(
-                library
-                    .function_zero_argument_string_method_names
-                    .iter()
-                    .map(|name| (*name).to_string()),
+                    .map(|origin| (origin.name.to_string(), origin)),
             );
         }
 
         let mut declarations = Vec::with_capacity(names.len());
         let mut type_names = BTreeMap::new();
         let mut value_names = BTreeMap::new();
-        let mut string_record_types = BTreeSet::new();
+        let mut homogeneous_record_types = BTreeMap::new();
         for (name, meaning) in names {
             let meaning = if meaning == 0 {
                 Meaning::Type
@@ -275,8 +299,8 @@ impl StandardLibraryEnvironment {
             match meaning {
                 Meaning::Value => value_names.insert(name.clone(), id),
                 Meaning::Type => {
-                    if string_record_type_names.contains(&name) {
-                        string_record_types.insert(id);
+                    if let Some(origin) = homogeneous_record_type_origins.get(&name) {
+                        homogeneous_record_types.insert(id, *origin);
                     }
                     type_names.insert(name.clone(), id)
                 }
@@ -301,37 +325,12 @@ impl StandardLibraryEnvironment {
             });
         }
 
-        let mut value_members = BTreeMap::new();
-        if let Some(owner) = value_names.get("Array").copied() {
-            let dependency_type_owners = ARRAY_FUNCTION_MEMBER_OWNER_TYPES
-                .iter()
-                .map(|name| type_names.get(*name).copied())
-                .collect::<Option<Vec<_>>>();
-            let members = function_zero_argument_string_method_names
-                .into_iter()
-                .enumerate()
-                .map(|(local, name)| {
-                    let member = StandardLibraryValueMember {
-                        id: StandardLibraryMemberId {
-                            owner,
-                            local: local as u32,
-                        },
-                        kind: StandardLibraryMemberKind::ZeroArgumentStringMethod,
-                        dependency_type_owners: dependency_type_owners.clone(),
-                    };
-                    (name, member)
-                })
-                .collect();
-            value_members.insert(owner, members);
-        }
-
         Self {
             selected_libraries,
             declarations,
             type_names,
             value_names,
-            value_members,
-            string_record_types,
+            homogeneous_record_types,
         }
     }
 }

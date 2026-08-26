@@ -8,10 +8,10 @@ struct LibraryIndex {
     references: Vec<String>,
     type_names: BTreeSet<String>,
     value_names: BTreeSet<String>,
-    string_record_type_names: BTreeSet<String>,
-    function_zero_argument_string_method_names: BTreeSet<String>,
-    array_search_method_names: BTreeSet<String>,
+    homogeneous_record_type_origins: BTreeMap<String, u32>,
 }
+
+type Token = (String, u32);
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -78,52 +78,43 @@ fn declaration_names(source: &str, references: Vec<String>) -> LibraryIndex {
     let mut scopes = Vec::new();
     let mut type_names = BTreeSet::new();
     let mut value_names = BTreeSet::new();
-    let mut string_record_type_names = BTreeSet::new();
-    let mut function_zero_argument_string_method_names = BTreeSet::new();
-    let mut array_search_method_names = BTreeSet::new();
+    let mut homogeneous_record_type_origins = BTreeMap::new();
 
     for (index, token) in tokens.iter().enumerate() {
-        match token.as_str() {
+        match token.0.as_str() {
             "{" => {
                 let global = is_declaration_scope(&scopes)
                     && tokens
                         .get(index.wrapping_sub(1))
-                        .is_some_and(|token| token == "global")
+                        .is_some_and(|token| token.0 == "global")
                     && tokens
                         .get(index.wrapping_sub(2))
-                        .is_some_and(|token| token == "declare");
+                        .is_some_and(|token| token.0 == "declare");
                 scopes.push(global);
             }
             "}" => {
                 scopes.pop();
             }
             _ if is_declaration_scope(&scopes) => {
-                let Some(name) = tokens.get(index + 1).filter(|name| is_identifier(name)) else {
+                let Some(name) = tokens.get(index + 1).filter(|name| is_identifier(&name.0)) else {
                     continue;
                 };
-                match token.as_str() {
+                match token.0.as_str() {
                     "interface" | "type" => {
-                        type_names.insert(name.clone());
-                        if token == "type" && is_homogeneous_string_record_alias(&tokens, index) {
-                            string_record_type_names.insert(name.clone());
-                        }
-                        if token == "interface" && name == "Function" {
-                            function_zero_argument_string_method_names
-                                .extend(zero_argument_string_methods(&tokens, index));
-                        }
-                        if token == "interface" && name == "Array" {
-                            array_search_method_names.extend(array_search_methods(&tokens, index));
+                        type_names.insert(name.0.clone());
+                        if token.0 == "type" && is_homogeneous_record_alias(&tokens, index) {
+                            homogeneous_record_type_origins.insert(name.0.clone(), name.1);
                         }
                     }
                     "class" | "enum" | "namespace" | "module" => {
-                        type_names.insert(name.clone());
-                        value_names.insert(name.clone());
+                        type_names.insert(name.0.clone());
+                        value_names.insert(name.0.clone());
                     }
                     "function" => {
-                        value_names.insert(name.clone());
+                        value_names.insert(name.0.clone());
                     }
-                    "var" | "let" | "const" if name != "enum" => {
-                        value_names.insert(name.clone());
+                    "var" | "let" | "const" if name.0 != "enum" => {
+                        value_names.insert(name.0.clone());
                     }
                     _ => {}
                 }
@@ -136,145 +127,47 @@ fn declaration_names(source: &str, references: Vec<String>) -> LibraryIndex {
         references,
         type_names,
         value_names,
-        string_record_type_names,
-        function_zero_argument_string_method_names,
-        array_search_method_names,
+        homogeneous_record_type_origins,
     }
-}
-
-/// Extract the pinned intrinsic interface member shape `name(): string`.
-///
-/// The interface name is selected by the caller while declaration tokens are
-/// still known to come from the pinned library corpus. Member spellings are
-/// data: no checker path elects a property by a source or fixture string.
-fn zero_argument_string_methods(tokens: &[String], interface_start: usize) -> BTreeSet<String> {
-    let Some(open) = tokens
-        .iter()
-        .enumerate()
-        .skip(interface_start + 2)
-        .find_map(|(index, token)| (token == "{").then_some(index))
-    else {
-        return BTreeSet::new();
-    };
-
-    let mut methods = BTreeSet::new();
-    let mut depth = 1_u32;
-    let mut index = open + 1;
-    while index < tokens.len() && depth > 0 {
-        match tokens[index].as_str() {
-            "{" => depth += 1,
-            "}" => depth -= 1,
-            _ if depth == 1 => {
-                if let Some(shape) = tokens.get(index..index + 6)
-                    && is_identifier(&shape[0])
-                    && shape[1] == "("
-                    && shape[2] == ")"
-                    && shape[3] == ":"
-                    && shape[4] == "string"
-                    && shape[5] == ";"
-                {
-                    methods.insert(shape[0].clone());
-                    index += shape.len();
-                    continue;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    methods
-}
-
-/// Extract direct members from canonical pinned `interface Array<E>`
-/// declarations whose complete callable shape is
-/// `(required E, optional number) => number`.
-fn array_search_methods(tokens: &[String], interface_start: usize) -> BTreeSet<String> {
-    let Some(header) = tokens.get(interface_start..interface_start + 6) else {
-        return BTreeSet::new();
-    };
-    if header[0] != "interface"
-        || !is_identifier(&header[1])
-        || header[2] != "<"
-        || !is_identifier(&header[3])
-        || header[4] != ">"
-        || header[5] != "{"
-    {
-        return BTreeSet::new();
-    }
-    let element_parameter = &header[3];
-    let mut methods = BTreeSet::new();
-    let mut depth = 1_u32;
-    let mut index = interface_start + header.len();
-    while index < tokens.len() && depth > 0 {
-        match tokens[index].as_str() {
-            "{" => depth += 1,
-            "}" => depth -= 1,
-            _ if depth == 1 => {
-                if let Some(shape) = tokens.get(index..index + 14)
-                    && is_identifier(&shape[0])
-                    && shape[1] == "("
-                    && is_identifier(&shape[2])
-                    && shape[3] == ":"
-                    && shape[4] == *element_parameter
-                    && shape[5] == ","
-                    && is_identifier(&shape[6])
-                    && shape[7] == "?"
-                    && shape[8] == ":"
-                    && shape[9] == "number"
-                    && shape[10] == ")"
-                    && shape[11] == ":"
-                    && shape[12] == "number"
-                    && shape[13] == ";"
-                {
-                    methods.insert(shape[0].clone());
-                    index += shape.len();
-                    continue;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    methods
 }
 
 /// Recognize the pinned-library declaration shape
 /// `<K extends keyof any, V> = { [P in K]: V }` without using its binder names.
-fn is_homogeneous_string_record_alias(tokens: &[String], start: usize) -> bool {
+fn is_homogeneous_record_alias(tokens: &[Token], start: usize) -> bool {
     let Some(shape) = tokens.get(start..start + 21) else {
         return false;
     };
-    let key_parameter = &shape[3];
-    let value_parameter = &shape[8];
-    let mapped_parameter = &shape[13];
-    shape[0] == "type"
-        && is_identifier(&shape[1])
-        && shape[2] == "<"
+    let key_parameter = &shape[3].0;
+    let value_parameter = &shape[8].0;
+    let mapped_parameter = &shape[13].0;
+    shape[0].0 == "type"
+        && is_identifier(&shape[1].0)
+        && shape[2].0 == "<"
         && is_identifier(key_parameter)
-        && shape[4] == "extends"
-        && shape[5] == "keyof"
-        && shape[6] == "any"
-        && shape[7] == ","
+        && shape[4].0 == "extends"
+        && shape[5].0 == "keyof"
+        && shape[6].0 == "any"
+        && shape[7].0 == ","
         && is_identifier(value_parameter)
-        && shape[9] == ">"
-        && shape[10] == "="
-        && shape[11] == "{"
-        && shape[12] == "["
+        && shape[9].0 == ">"
+        && shape[10].0 == "="
+        && shape[11].0 == "{"
+        && shape[12].0 == "["
         && is_identifier(mapped_parameter)
-        && shape[14] == "in"
-        && shape[15] == *key_parameter
-        && shape[16] == "]"
-        && shape[17] == ":"
-        && shape[18] == *value_parameter
-        && shape[19] == ";"
-        && shape[20] == "}"
+        && shape[14].0 == "in"
+        && shape[15].0 == *key_parameter
+        && shape[16].0 == "]"
+        && shape[17].0 == ":"
+        && shape[18].0 == *value_parameter
+        && shape[19].0 == ";"
+        && shape[20].0 == "}"
 }
 
 fn is_declaration_scope(scopes: &[bool]) -> bool {
     scopes.is_empty() || scopes.iter().all(|scope| *scope)
 }
 
-fn tokens(source: &str) -> Vec<String> {
+fn tokens(source: &str) -> Vec<Token> {
     let bytes = source.as_bytes();
     let mut tokens = Vec::new();
     let mut index = 0;
@@ -310,7 +203,7 @@ fn tokens(source: &str) -> Vec<String> {
             }
             b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'<' | b'>' | b',' | b':' | b';' | b'='
             | b'?' => {
-                tokens.push(char::from(bytes[index]).to_string());
+                tokens.push((char::from(bytes[index]).to_string(), index as u32));
                 index += 1;
             }
             byte if is_identifier_start(byte) => {
@@ -322,7 +215,7 @@ fn tokens(source: &str) -> Vec<String> {
                 {
                     index += 1;
                 }
-                tokens.push(source[start..index].to_string());
+                tokens.push((source[start..index].to_string(), start as u32));
             }
             _ => index += 1,
         }
@@ -359,24 +252,18 @@ fn generated_source(libraries: &BTreeMap<String, LibraryIndex>) -> String {
         output.push_str(&render_strings(&library.type_names));
         output.push_str(", value_names: &");
         output.push_str(&render_strings(&library.value_names));
-        output.push_str(", string_record_type_names: &");
-        output.push_str(&render_strings(&library.string_record_type_names));
-        output.push_str(", function_zero_argument_string_method_names: &");
-        output.push_str(&render_strings(
-            &library.function_zero_argument_string_method_names,
-        ));
-        output.push_str(", array_search_method_names: &");
-        output.push_str(&render_strings(&library.array_search_method_names));
+        output.push_str(", homogeneous_record_type_origins: &[");
+        for (origin, start) in &library.homogeneous_record_type_origins {
+            output.push_str(&format!(
+                "CanonicalTypeAliasOrigin {{ name: {origin:?}, path: {path:?}, source: include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), {asset:?})), name_start: {start} }}, ",
+                path = format!("lib.{name}.d.ts"),
+                asset = format!("/data/lib/{name}.d.ts"),
+            ));
+        }
+        output.push(']');
         output.push_str(" },\n");
     }
     output.push_str("];\n");
-    let array_search_method_names = libraries
-        .values()
-        .flat_map(|library| library.array_search_method_names.iter().cloned())
-        .collect::<BTreeSet<_>>();
-    output.push_str("static ARRAY_SEARCH_METHOD_NAMES: &[&str] = &");
-    output.push_str(&render_strings(&array_search_method_names));
-    output.push_str(";\n");
     output
 }
 

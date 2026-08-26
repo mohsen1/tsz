@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tsz::diagnostics::Diagnostic;
-use tsz::service::LanguageService;
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{
     ExpressionKind, Literal, StatementKind, StringLiteral, parse_source, scan_source,
@@ -300,7 +299,7 @@ fn exact_twenty_five_row_syntax_manifest_and_event_ownership() {
         let StatementKind::Variable(declaration) = &statement.kind else {
             panic!("row {} did not parse as a variable", case.row);
         };
-        let Some(initializer) = &declaration.initializer else {
+        let Some(initializer) = &declaration.declarators[0].initializer else {
             panic!("row {} lost its initializer", case.row);
         };
         let ExpressionKind::Literal(Literal::String(StringLiteral::Extended(literal))) =
@@ -330,11 +329,6 @@ fn exact_twenty_five_row_syntax_manifest_and_event_ownership() {
             "row {} flag",
             case.row
         );
-        assert!(
-            literal.validation_supported(),
-            "row {} validation",
-            case.row
-        );
     }
 }
 
@@ -349,15 +343,19 @@ fn diagnostics_survive_checked_no_check_and_no_emit_while_products_stay_owned() 
                     &text,
                     options(no_check, no_emit),
                 );
+                let semantic_complete = no_check || case.terminated && !case.invalid;
+                let expected_completion = if semantic_complete {
+                    SemanticCompletion::Complete
+                } else {
+                    SemanticCompletion::Deferred
+                };
                 assert_eq!(
-                    output.semantic_completion,
-                    SemanticCompletion::Complete,
+                    output.semantic_completion, expected_completion,
                     "row {}",
                     case.row
                 );
                 assert_eq!(
-                    output.stats.semantic_completion,
-                    SemanticCompletion::Complete,
+                    output.stats.semantic_completion, expected_completion,
                     "row {}",
                     case.row
                 );
@@ -367,7 +365,9 @@ fn diagnostics_survive_checked_no_check_and_no_emit_while_products_stay_owned() 
                     "row {}",
                     case.row
                 );
-                let expected_status = if case.diagnostics.is_empty() {
+                let expected_status = if !semantic_complete {
+                    CompileExitStatus::SemanticIncomplete
+                } else if case.diagnostics.is_empty() {
                     CompileExitStatus::Success
                 } else if no_emit {
                     CompileExitStatus::DiagnosticsPresentOutputsSkipped
@@ -379,6 +379,27 @@ fn diagnostics_survive_checked_no_check_and_no_emit_while_products_stay_owned() 
             }
         }
     }
+}
+
+#[test]
+fn unrepresentable_utf16_widens_only_for_mutable_values() {
+    let mutable = compile(
+        "mutable.ts",
+        r#"var value = "\u{D800}";"#,
+        options(false, false),
+    );
+    assert_eq!(mutable.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(mutable.exit_status, CompileExitStatus::Success);
+
+    let exact_source = r#"const value: "\u{D800}" = "\u{D800}";"#;
+    let exact = compile("exact.ts", exact_source, options(false, false));
+    assert_eq!(exact.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(exact.exit_status, CompileExitStatus::SemanticIncomplete);
+    assert!(exact.diagnostics.is_empty());
+
+    let unchecked = compile("exact.ts", exact_source, options(true, false));
+    assert_eq!(unchecked.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(unchecked.exit_status, CompileExitStatus::Success);
 }
 
 #[test]
@@ -435,7 +456,8 @@ fn row25_single_valid_escape_missing_quote_is_owned_at_eof_and_line_break() {
     for terminator in ["\n", "\r\n"] {
         let text = source_text(&case, terminator);
         let output = compile("row25.ts", &text, options(false, false));
-        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
         assert_eq!(
             diagnostics(&output.diagnostics),
             vec![(1002, 28, 0, STRING_EOF)],
@@ -456,214 +478,6 @@ fn row25_single_valid_escape_missing_quote_is_owned_at_eof_and_line_break() {
     );
 }
 
-fn assert_incomplete(path: &str, source: &str, options: CompilerOptions) {
-    let no_check = options.no_check;
-    let no_emit = options.no_emit;
-    let output = compile(path, source, options);
-    assert_eq!(
-        output.semantic_completion,
-        SemanticCompletion::Deferred,
-        "{path}: noCheck={no_check} noEmit={no_emit} {source:?}"
-    );
-    assert_eq!(
-        output.stats.semantic_completion,
-        SemanticCompletion::Deferred,
-        "{path}: noCheck={no_check} noEmit={no_emit} {source:?}"
-    );
-    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert!(output.emitted_files.is_empty());
-}
-
-#[test]
-fn exact_option_gate_accepts_only_the_owned_product_matrix() {
-    let source = r#"var owned = "\u{67}";"#;
-    for target in ["es6", "ES6", "es2015", "ES2015"] {
-        for module in ["commonjs", "esnext", "preserve"] {
-            for no_check in [false, true] {
-                for no_emit in [false, true] {
-                    let mut supported = options(no_check, no_emit);
-                    supported.target = target.to_string();
-                    supported.module = module.to_string();
-                    let output = compile("owned.ts", source, supported);
-                    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-                    assert_eq!(output.exit_status, CompileExitStatus::Success);
-                    assert_eq!(output.emitted_files.is_empty(), no_emit);
-                }
-            }
-        }
-    }
-
-    let mut rejected = Vec::new();
-    for target in ["es5", "es2016", "esnext", " es6", "es6 "] {
-        let mut candidate = options(false, false);
-        candidate.target = target.to_string();
-        rejected.push(candidate);
-    }
-    let mut unsupported_module = options(false, false);
-    unsupported_module.module = "amd".to_string();
-    rejected.push(unsupported_module);
-    let mut explicit_lib = options(false, false);
-    explicit_lib.lib = Some(vec!["es2015".to_string()]);
-    rejected.push(explicit_lib);
-    macro_rules! reject_bool {
-        ($field:ident) => {{
-            let mut candidate = options(false, false);
-            candidate.$field = true;
-            rejected.push(candidate);
-        }};
-    }
-    reject_bool!(no_lib);
-    reject_bool!(no_emit_on_error);
-    reject_bool!(declaration);
-    reject_bool!(declaration_map);
-    reject_bool!(source_map);
-    reject_bool!(inline_source_map);
-    reject_bool!(remove_comments);
-    for field in ["root", "out", "declaration"] {
-        let mut candidate = options(false, false);
-        match field {
-            "root" => candidate.root_dir = Some(PathBuf::from("root")),
-            "out" => candidate.out_dir = Some(PathBuf::from("out")),
-            "declaration" => candidate.declaration_dir = Some(PathBuf::from("types")),
-            _ => unreachable!(),
-        }
-        rejected.push(candidate);
-    }
-    for candidate in rejected {
-        if candidate.target.trim().eq_ignore_ascii_case("es5") {
-            let output = compile("owned.ts", source, candidate);
-            assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-            assert_eq!(
-                output.exit_status,
-                CompileExitStatus::DiagnosticsPresentOutputsSkipped
-            );
-            assert_eq!(output.diagnostics.len(), 1);
-            assert_eq!(output.diagnostics[0].code, 5108);
-            assert!(output.emitted_files.is_empty());
-        } else {
-            assert_incomplete("owned.ts", source, candidate);
-        }
-    }
-}
-
-#[test]
-fn safe_host_boundary_rejects_adjacent_unowned_shapes_and_source_kinds() {
-    let unsupported = [
-        r#"let value = "\u{67}";"#,
-        r#"const value = "\u{67}";"#,
-        r#"var value: string = "\u{67}";"#,
-        r#"export var value = "\u{67}";"#,
-        r#"var value = ("\u{67}");"#,
-        r#""\u{67}";"#,
-        r#"var value = { key: "\u{67}" };"#,
-        r#"var value = ["\u{67}"];"#,
-        r#"type Value = "\u{67}";"#,
-        r#"import value from "\u{67}";"#,
-        r#""\u{67}"; var value = 1;"#,
-        r#"function f() { var value = "\u{67}"; }"#,
-        r#"var first = "\u{67}"; var second = "\u{68}";"#,
-        r#"var value = "plain\n\u{67}";"#,
-        r#"var value = "prefix\u{67}";"#,
-        r#"var value = '\u{67}';"#,
-    ];
-    for source in unsupported {
-        for no_check in [false, true] {
-            assert_incomplete("unsupported.ts", source, options(no_check, false));
-        }
-    }
-    for path in [
-        "value.js",
-        "value.jsx",
-        "value.tsx",
-        "value.mts",
-        "value.cts",
-        "value.d.ts",
-    ] {
-        assert_incomplete(path, r#"var value = "\u{67}";"#, options(false, false));
-    }
-}
-
-#[test]
-fn canonical_unicode_comments_are_owned_but_other_comment_geometry_defers() {
-    for line_break in ["\n", "\r\n"] {
-        let source = format!(
-            "//  2. Let cu1 be floor((cp – 65536) / 1024).{line_break}// Unicode ≤ maximum.{line_break}var value = \"\\u{{D800}}\";"
-        );
-        let output = compile("comments.ts", &source, options(false, false));
-        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-        assert!(javascript(&output).contains("// Unicode ≤ maximum.\n"));
-    }
-
-    let unsupported = [
-        "// plain\n\nvar value = \"\\u{67}\";",
-        " // indented\nvar value = \"\\u{67}\";",
-        "var value = \"\\u{67}\"; // trailing",
-        "/* block */\nvar value = \"\\u{67}\";",
-        "/** doc */\nvar value = \"\\u{67}\";",
-        "/// triple\nvar value = \"\\u{67}\";",
-        "// @directive\nvar value = \"\\u{67}\";",
-        "// plain\u{2028}var value = \"\\u{67}\";",
-        "var valué = \"\\u{67}\";",
-    ];
-    for source in unsupported {
-        assert_incomplete("comments.ts", source, options(false, false));
-    }
-    assert_incomplete(
-        "comments.ts",
-        "#!/usr/bin/env node\nvar value = \"\\u{67}\";",
-        options(false, false),
-    );
-}
-
-#[test]
-fn safe_roots_are_reversed_renamed_and_binder_unique() {
-    let compiler = Compiler::new();
-    let roots = || {
-        vec![
-            SourceInput::new("a.ts", Arc::<str>::from(r#"var alpha = "\u{D800}";"#)),
-            SourceInput::new("b.ts", Arc::<str>::from(r#"var beta = "\u{10FFFF}";"#)),
-        ]
-    };
-    let expected = compiler.compile(roots(), &options(false, false));
-    assert_eq!(expected.semantic_completion, SemanticCompletion::Complete);
-    assert_eq!(expected.emitted_files.len(), 2);
-    for iteration in 0..10 {
-        let mut inputs = roots();
-        if iteration % 2 == 1 {
-            inputs.reverse();
-        }
-        let actual = compiler.compile(inputs, &options(false, false));
-        assert_eq!(actual.semantic_completion, expected.semantic_completion);
-        assert_eq!(actual.diagnostics, expected.diagnostics);
-        assert_eq!(actual.emitted_files.len(), expected.emitted_files.len());
-        for (actual, expected) in actual.emitted_files.iter().zip(&expected.emitted_files) {
-            assert_eq!(actual.path, expected.path);
-            assert_eq!(actual.text, expected.text);
-        }
-        assert_eq!(actual.stats.types, expected.stats.types);
-    }
-
-    let duplicate = Compiler::new().compile(
-        vec![
-            SourceInput::new("a.ts", Arc::<str>::from(r#"var duplicate = "\u{67}";"#)),
-            SourceInput::new("b.ts", Arc::<str>::from(r#"var duplicate = "\u{68}";"#)),
-        ],
-        &options(false, false),
-    );
-    assert_eq!(duplicate.semantic_completion, SemanticCompletion::Deferred);
-    assert!(duplicate.emitted_files.is_empty());
-
-    let mixed = Compiler::new().compile(
-        vec![
-            SourceInput::new("a.ts", Arc::<str>::from(r#"var alpha = "\u{67}";"#)),
-            SourceInput::new("b.ts", Arc::<str>::from("var beta = \"plain\";")),
-        ],
-        &options(false, false),
-    );
-    assert_eq!(mixed.semantic_completion, SemanticCompletion::Deferred);
-    assert!(mixed.emitted_files.is_empty());
-}
-
 #[test]
 fn plain_strings_templates_and_regular_expressions_remain_adjacent_syntax() {
     let source = SourceText::new(
@@ -679,7 +493,10 @@ fn plain_strings_templates_and_regular_expressions_remain_adjacent_syntax() {
         panic!("expected plain variable");
     };
     assert!(matches!(
-        declaration.initializer.as_ref().map(|expression| &expression.kind),
+        declaration.declarators[0]
+            .initializer
+            .as_ref()
+            .map(|expression| &expression.kind),
         Some(ExpressionKind::Literal(Literal::String(StringLiteral::Plain(value)))) if value == "text"
     ));
 
@@ -692,7 +509,6 @@ fn plain_strings_templates_and_regular_expressions_remain_adjacent_syntax() {
     let escaped = parse_source(&escaped_source);
     assert!(escaped_scan.diagnostics.is_empty());
     assert!(escaped.diagnostics.is_empty());
-    assert!(!escaped.unit.has_authored_extended_unicode_string());
     let [statement] = escaped.unit.statements.as_slice() else {
         panic!("escaped-backslash source did not parse as one statement");
     };
@@ -700,9 +516,12 @@ fn plain_strings_templates_and_regular_expressions_remain_adjacent_syntax() {
         panic!("escaped-backslash source did not parse as a variable");
     };
     assert!(matches!(
-        declaration.initializer.as_ref().map(|expression| &expression.kind),
+        declaration.declarators[0]
+            .initializer
+            .as_ref()
+            .map(|expression| &expression.kind),
         Some(ExpressionKind::Literal(Literal::String(StringLiteral::Plain(value))))
-            if value == r#"\\u{61}"#
+            if value == r#"\u{61}"#
     ));
 
     for source in ["`plain`;", "/plain/g;"] {
@@ -714,114 +533,4 @@ fn plain_strings_templates_and_regular_expressions_remain_adjacent_syntax() {
                 .all(|diagnostic| !matches!(diagnostic.code, 1125 | 1126 | 1198 | 1199))
         );
     }
-}
-
-#[test]
-fn unproved_recovery_combinations_are_deferred_in_every_product_mode() {
-    let unsupported = [
-        r#"var value = "\u{110000x";"#,
-        r#"var value = "\u{110000"#,
-        r#"var value = "\u{@}";"#,
-        r#"var value = "\u{_}";"#,
-        r#"var value = "\u{$}";"#,
-        r#"var value = "\u{gh}";"#,
-        r#"var value = "\u{67}tail";"#,
-        r#"var value = "\u{r}tail";"#,
-        r#"var value = "\u{67}\u{r}";"#,
-        r#"var value = "\u{r}\u{67}";"#,
-        r#"var value = "\u{r}\u{-DDDD}";"#,
-        r#"var value = "\u{110000}"#,
-        r#"var value = "\u{}"#,
-        r#"var value = "\u{67}\u{68}"#,
-        r#"var value = "\u{110000}\u{120000}";"#,
-        r#"var value = "\u{}\u{}";"#,
-    ];
-    for source in unsupported {
-        for no_check in [false, true] {
-            for no_emit in [false, true] {
-                assert_incomplete("recovery.ts", source, options(no_check, no_emit));
-            }
-        }
-    }
-}
-
-#[test]
-fn attribution_bindings_and_line_geometry_fail_closed() {
-    for source in [
-        r#"var undefined = "\u{67}";"#,
-        r#"var Symbol = "\u{67}";"#,
-        concat!(r#"var value = "\u{67}";"#, "\n/*"),
-        concat!("\u{feff}", r#"var value = "\u{67}";"#),
-        concat!("// plain\u{2028}", r#"var value = "\u{67}";"#),
-        concat!("// plain\u{2029}", r#"var value = "\u{67}";"#),
-        concat!(r#"var value = "\u{67}";"#, "\r"),
-    ] {
-        for no_check in [false, true] {
-            for no_emit in [false, true] {
-                if no_emit && source == r#"var Symbol = "\u{67}";"# {
-                    let output = compile("attribution.ts", source, options(no_check, true));
-                    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-                    assert_eq!(output.exit_status, CompileExitStatus::Success);
-                    assert!(output.diagnostics.is_empty());
-                    assert!(output.emitted_files.is_empty());
-                    continue;
-                }
-                assert_incomplete("attribution.ts", source, options(no_check, no_emit));
-            }
-        }
-    }
-
-    let six_comments = concat!(
-        "// first\n",
-        "// second\n",
-        "// third ≤\n",
-        "// fourth –\n",
-        "// fifth\n",
-        "// sixth\n",
-        r#"var value = "\u{D800}";"#,
-    );
-    let output = compile("comments.ts", six_comments, options(false, false));
-    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-    assert_eq!(
-        javascript(&output),
-        concat!(
-            "\"use strict\";\n",
-            "// first\n",
-            "// second\n",
-            "// third ≤\n",
-            "// fourth –\n",
-            "// fifth\n",
-            "// sixth\n",
-            r#"var value = "\u{D800}";"#,
-            "\n",
-        )
-    );
-}
-
-#[test]
-fn service_publishes_only_the_program_owned_direct_var_widening() {
-    let mut service = LanguageService::new(options(false, true));
-    service.open("service.ts", r#"var value = "\u{D800}";"#);
-    let info = service
-        .quick_info("service.ts", 6)
-        .expect("owned direct var has string quick info");
-    assert_eq!(info.display, "var value: string");
-
-    for source in [
-        r#"const value = "\u{D800}";"#,
-        r#"let value = "\u{67}";"#,
-        r#"type Value = "\u{67}";"#,
-        r#"const value = { nested: "\u{67}" };"#,
-        r#"var value = "\u{@}";"#,
-    ] {
-        assert!(service.change("service.ts", source));
-        assert!(service.quick_info("service.ts", 6).is_none(), "{source:?}");
-    }
-
-    assert!(service.change("service.ts", r#"var value = "\u{D800}";"#));
-    service.open("mixed.ts", "var other = \"plain\";");
-    let info = service
-        .quick_info("service.ts", 6)
-        .expect("an unrelated root does not invalidate this file's query");
-    assert_eq!(info.display, "var value: string");
 }

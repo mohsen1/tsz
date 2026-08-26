@@ -17,6 +17,19 @@ impl Parser<'_> {
         self.parse_parameters_with_this(true, false)
     }
 
+    pub(super) fn parse_accessor_parameters(&mut self) -> Vec<Parameter> {
+        let parameters = self.parse_parameters_with_this(true, false);
+        for parameter in &parameters {
+            if parameter.name_kind == ParameterNameKind::This {
+                self.record_contextual_grammar(
+                    parameter.name_span,
+                    crate::syntax::ContextualGrammarKind::AccessorThisParameter,
+                );
+            }
+        }
+        parameters
+    }
+
     fn parse_parameters_with_this(
         &mut self,
         allow_this: bool,
@@ -67,7 +80,9 @@ impl Parser<'_> {
         let this_parameter = allow_this && token_kind == TokenKind::This;
         let binding_start = self.index;
         let (name, name_span, name_kind) = if this_parameter {
-            let token = self.bump();
+            // TypeScript creates the special `this` parameter as an
+            // identifier node, so an authored escape is not a keyword use.
+            let token = self.bump_identifier();
             (
                 self.text(token.span).to_string(),
                 token.span,

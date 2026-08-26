@@ -273,18 +273,20 @@ fn class_member_declaration_groups_fail_closed_by_semantic_slot() {
         "class MethodField { value() {} value:number; }",
         "class NumericMethods { 1() {} 1.0() {} }",
         "class RenamedNumericMethods { 2() {} 2.0() {} }",
+        "class EscapedMethods { x() {} '\\x78'(value:number) {} }",
+        "class EscapedNumericMethods { 1() {} '\\u0031'(value:number) {} }",
     ] {
         assert_completion(&compile("case.ts", source), SemanticCompletion::Deferred);
     }
 
-    // Distinct numeric spellings are conservatively unmodeled until class
-    // member groups own canonical property-key identity.
+    // Binder-owned canonical property keys distinguish different numeric
+    // symbols while merging equivalent spellings above.
     assert_completion(
         &compile(
             "distinct-numeric.ts",
             "class DistinctNumericMethods { 1() {} 2() {} }",
         ),
-        SemanticCompletion::Deferred,
+        SemanticCompletion::Complete,
     );
 
     for source in [
@@ -294,11 +296,20 @@ fn class_member_declaration_groups_fail_closed_by_semantic_slot() {
         "class NumericAndIdentifier { 1() {} read() {} }",
         "class StaticAndInstance { connect() {} static connect() {} }",
         "function wrapper() { class Nested { first() {} second() {} } }",
-        "class AccessorPair { get value() { return 1; } set value(next:number) {} }",
-        "class StaticAndInstanceAccessor { get value() { return 1; } static get value() { return 2; } }",
         "class Ordinary { select(value:string):string; select(value:any):any {} }",
+        "class AccessorPair { get value():number { return 1; } set value(next:number) {} }",
+        "class StaticAndInstanceAccessor { get value():number { return 1; } static get value():number { return 2; } }",
     ] {
-        assert_completion(&compile("owned.ts", source), SemanticCompletion::Complete);
+        let output = compile("owned.ts", source);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "unexpected Deferred control: {source}",
+        );
+        assert_eq!(
+            output.stats.semantic_completion,
+            SemanticCompletion::Complete
+        );
     }
 }
 
@@ -443,6 +454,76 @@ fn opaque_namespace_module_and_ambient_global_hosts_defer_structurally() {
 }
 
 #[test]
+fn opaque_enum_hosts_publish_both_authored_meanings_without_missing_name_diagnostics() {
+    for (shape, source, missing) in [
+        (
+            "renamed-const",
+            concat!(
+                "const enum RenamedSignal { Ready }",
+                "function useSignal(value:RenamedSignal){return RenamedSignal.Ready;}",
+                "type Kept=MissingTop;",
+            ),
+            "MissingTop",
+        ),
+        (
+            "nested-const",
+            concat!(
+                "function wrapper(){const enum NestedSignal { Ready }",
+                "let value:NestedSignal;NestedSignal.Ready;",
+                "type Kept=MissingNested;}",
+            ),
+            "MissingNested",
+        ),
+        (
+            "ambient-const",
+            concat!(
+                "declare const enum AmbientSignal { Ready }",
+                "declare let value:AmbientSignal;AmbientSignal.Ready;",
+                "type Kept=MissingAmbient;",
+            ),
+            "MissingAmbient",
+        ),
+        (
+            "ordinary",
+            concat!(
+                "enum OrdinarySignal { Ready }",
+                "let value:OrdinarySignal;OrdinarySignal.Ready;",
+                "type Kept=MissingOrdinary;",
+            ),
+            "MissingOrdinary",
+        ),
+    ] {
+        let output = compile("enum-host.ts", source);
+        assert_completion(&output, SemanticCompletion::Deferred);
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
+                .collect::<Vec<_>>(),
+            vec![(
+                2304,
+                source.find(missing).expect("independent sibling") as u32,
+                missing.len() as u32,
+            )],
+            "{shape}: {:#?}",
+            output.diagnostics,
+        );
+    }
+
+    let ordinary_const = compile(
+        "ordinary-const.ts",
+        "const enumValue = 1; const renamedEnumValue = enumValue;",
+    );
+    assert!(
+        ordinary_const.diagnostics.is_empty(),
+        "{:#?}",
+        ordinary_const.diagnostics,
+    );
+    assert_completion(&ordinary_const, SemanticCompletion::Complete);
+}
+
+#[test]
 fn declaration_hosts_respect_program_owned_standard_library_identity() {
     let library_options = CompilerOptions {
         allow_js: true,
@@ -516,6 +597,11 @@ fn unmodeled_declaration_hosts_block_every_emit_product() {
             "global",
             "host.ts",
             "global { const value = 1; } export const runtime = 1;",
+        ),
+        (
+            "const-enum",
+            "host.ts",
+            "const enum Hidden { Value } export const runtime = 1;",
         ),
         (
             "javascript-export-type-clause",

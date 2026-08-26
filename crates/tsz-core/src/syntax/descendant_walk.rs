@@ -1,7 +1,7 @@
 use super::{
     ClassDeclaration, ClassMember, ClassMemberKind, Expression, ExpressionKind,
     FunctionDeclaration, FunctionLikeBody, FunctionLikeExpression, Parameter, Statement,
-    StatementKind, SwitchClauseKind,
+    StatementKind, SwitchClauseKind, TypeNode,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,10 +18,15 @@ pub(crate) enum DescendantContainer<'ast> {
     FunctionLike(&'ast Expression, &'ast FunctionLikeExpression),
 }
 
+pub(crate) enum ExpressionEdge<'ast> {
+    AssignmentRight(&'ast Expression),
+    PropertyInitializer(&'ast ClassMember),
+}
+
 /// Adapter over authored statement and expression edges. The syntax walker
 /// owns source order; consumers own context transitions and subtree handling.
 pub(crate) trait DescendantAdapter<'ast> {
-    type Context;
+    type Context: Clone;
 
     fn context(
         &mut self,
@@ -35,6 +40,33 @@ pub(crate) trait DescendantAdapter<'ast> {
         statement: &'ast Statement,
         next_statement: Option<&'ast Statement>,
     ) -> NestedStatement;
+
+    fn expression_edge(
+        &mut self,
+        context: &Self::Context,
+        _edge: ExpressionEdge<'ast>,
+    ) -> Self::Context {
+        context.clone()
+    }
+
+    fn type_node(&mut self, _context: &Self::Context, _node: &'ast TypeNode) {}
+
+    fn class_member(
+        &mut self,
+        context: &Self::Context,
+        member: &'ast ClassMember,
+    ) -> Self::Context {
+        match member.kind {
+            ClassMemberKind::Constructor { .. } | ClassMemberKind::Method { .. } => {
+                self.context(context, DescendantContainer::ClassMember(member))
+            }
+            ClassMemberKind::Property { .. } => context.clone(),
+        }
+    }
+
+    fn fold_context(&mut self, context: &Self::Context, _nested: &Self::Context) -> Self::Context {
+        context.clone()
+    }
 
     /// Structural adapters recurse through function-like children by default.
     fn function_like(
@@ -55,7 +87,8 @@ pub(crate) fn walk_statement_descendants<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
     statement: &'ast Statement,
-) where
+) -> A::Context
+where
     A: DescendantAdapter<'ast> + ?Sized,
 {
     match &statement.kind {
@@ -65,56 +98,72 @@ pub(crate) fn walk_statement_descendants<'ast, A>(
         | StatementKind::Break(_)
         | StatementKind::Continue(_)
         | StatementKind::Empty
-        | StatementKind::Unknown => {}
+        | StatementKind::Unknown => context.clone(),
         StatementKind::Export(declaration) => {
             if let Some(expression) = &declaration.assignment {
                 walk_expression_descendants(adapter, context, expression);
             }
+            context.clone()
         }
-        StatementKind::Variable(declaration) => {
-            if let Some(initializer) = &declaration.initializer {
-                walk_expression_descendants(adapter, context, initializer);
+        StatementKind::Variable(statement) => {
+            for declarator in &statement.declarators {
+                if let Some(annotation) = &declarator.annotation {
+                    adapter.type_node(context, annotation);
+                }
+                if let Some(initializer) = &declarator.initializer {
+                    walk_expression_descendants(adapter, context, initializer);
+                }
             }
+            context.clone()
         }
         StatementKind::Function(declaration) => {
-            let context = adapter.context(
+            let function_context = adapter.context(
                 context,
                 DescendantContainer::Function(statement, declaration),
             );
-            walk_parameter_initializers(adapter, &context, &declaration.parameters);
-            walk_statement_list(adapter, &context, &declaration.body);
+            walk_parameter_initializers(adapter, &function_context, &declaration.parameters);
+            walk_statement_list(adapter, &function_context, &declaration.body);
+            context.clone()
         }
         StatementKind::Class(declaration) => {
             let class_context =
                 adapter.context(context, DescendantContainer::Class(statement, declaration));
             walk_class_descendants(adapter, &class_context, declaration);
+            context.clone()
         }
         StatementKind::If(control_flow) => {
             walk_expression_descendants(adapter, context, &control_flow.condition);
-            walk_nested_statement(adapter, context, &control_flow.then_statement, None);
-            if let Some(statement) = &control_flow.else_statement {
-                walk_nested_statement(adapter, context, statement, None);
-            }
+            let then_context =
+                walk_nested_statement(adapter, context, &control_flow.then_statement, None);
+            let else_context = control_flow.else_statement.as_deref().map_or_else(
+                || context.clone(),
+                |statement| walk_nested_statement(adapter, context, statement, None),
+            );
+            let context = adapter.fold_context(context, &then_context);
+            adapter.fold_context(&context, &else_context)
         }
         StatementKind::Switch(control_flow) => {
-            let switch_context =
+            let mut switch_context =
                 adapter.context(context, DescendantContainer::Statement(statement));
             walk_expression_descendants(adapter, &switch_context, &control_flow.expression);
             for clause in &control_flow.clauses {
                 if let SwitchClauseKind::Case(expression) = &clause.kind {
                     walk_expression_descendants(adapter, &switch_context, expression);
                 }
-                walk_statement_list(adapter, &switch_context, &clause.statements);
+                switch_context = walk_statement_list(adapter, &switch_context, &clause.statements);
             }
+            switch_context
         }
         StatementKind::Return(expression) => {
             if let Some(expression) = expression {
                 walk_expression_descendants(adapter, context, expression);
             }
+            context.clone()
         }
         StatementKind::Block(statements) => walk_statement_list(adapter, context, statements),
         StatementKind::Expression(expression) => {
             walk_expression_descendants(adapter, context, expression);
+            context.clone()
         }
     }
 }
@@ -127,6 +176,7 @@ pub(crate) fn walk_class_descendants<'ast, A>(
     A: DescendantAdapter<'ast> + ?Sized,
 {
     for member in &declaration.members {
+        let context = adapter.class_member(context, member);
         match &member.kind {
             ClassMemberKind::Constructor {
                 parameters, body, ..
@@ -134,13 +184,14 @@ pub(crate) fn walk_class_descendants<'ast, A>(
             | ClassMemberKind::Method {
                 parameters, body, ..
             } => {
-                let context = adapter.context(context, DescendantContainer::ClassMember(member));
                 walk_parameter_initializers(adapter, &context, parameters);
                 walk_statement_list(adapter, &context, body);
             }
             ClassMemberKind::Property { initializer, .. } => {
                 if let Some(initializer) = initializer {
-                    walk_expression_descendants(adapter, context, initializer);
+                    let context = adapter
+                        .expression_edge(&context, ExpressionEdge::PropertyInitializer(member));
+                    walk_expression_descendants(adapter, &context, initializer);
                 }
             }
         }
@@ -162,7 +213,9 @@ pub(crate) fn walk_function_like_descendants<'ast, A>(
     walk_parameter_initializers(adapter, &context, &function.parameters);
     match function.syntax.body() {
         FunctionLikeBody::Expression(body) => walk_expression_descendants(adapter, &context, body),
-        FunctionLikeBody::Statements(body) => walk_statement_list(adapter, &context, body),
+        FunctionLikeBody::Statements(body) => {
+            walk_statement_list(adapter, &context, body);
+        }
     }
 }
 
@@ -192,23 +245,38 @@ pub(crate) fn walk_expression_descendants<'ast, A>(
         }
         ExpressionKind::Call {
             callee, arguments, ..
-        }
-        | ExpressionKind::New {
-            callee, arguments, ..
         } => {
             walk_expression_descendants(adapter, context, callee);
             for argument in arguments {
                 walk_expression_descendants(adapter, context, argument);
             }
         }
+        ExpressionKind::New {
+            callee,
+            type_arguments,
+            arguments,
+            ..
+        } => {
+            walk_expression_descendants(adapter, context, callee);
+            for argument in type_arguments {
+                adapter.type_node(context, argument);
+            }
+            for argument in arguments {
+                walk_expression_descendants(adapter, context, argument);
+            }
+        }
         ExpressionKind::Member { object, .. }
+        | ExpressionKind::NonNull(object)
         | ExpressionKind::Unary {
             operand: object, ..
         }
-        | ExpressionKind::Parenthesized(object)
-        | ExpressionKind::As {
-            expression: object, ..
-        } => walk_expression_descendants(adapter, context, object),
+        | ExpressionKind::Parenthesized(object) => {
+            walk_expression_descendants(adapter, context, object);
+        }
+        ExpressionKind::As { expression, ty } => {
+            walk_expression_descendants(adapter, context, expression);
+            adapter.type_node(context, ty);
+        }
         ExpressionKind::ElementAccess { object, index } => {
             walk_expression_descendants(adapter, context, object);
             walk_expression_descendants(adapter, context, index);
@@ -216,10 +284,15 @@ pub(crate) fn walk_expression_descendants<'ast, A>(
         ExpressionKind::FunctionLike(function) => {
             adapter.function_like(context, expression, function);
         }
-        ExpressionKind::Binary { left, right, .. }
-        | ExpressionKind::Assignment { left, right, .. } => {
+        ExpressionKind::Binary { left, right, .. } => {
             walk_expression_descendants(adapter, context, left);
             walk_expression_descendants(adapter, context, right);
+        }
+        ExpressionKind::Assignment { left, right, .. } => {
+            walk_expression_descendants(adapter, context, left);
+            let context =
+                adapter.expression_edge(context, ExpressionEdge::AssignmentRight(expression));
+            walk_expression_descendants(adapter, &context, right);
         }
     }
 }
@@ -238,16 +311,20 @@ fn walk_parameter_initializers<'ast, A>(
     }
 }
 
-fn walk_statement_list<'ast, A>(
+pub(crate) fn walk_statement_list<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
     statements: &'ast [Statement],
-) where
+) -> A::Context
+where
     A: DescendantAdapter<'ast> + ?Sized,
 {
-    for (index, statement) in statements.iter().enumerate() {
-        walk_nested_statement(adapter, context, statement, statements.get(index + 1));
-    }
+    statements
+        .iter()
+        .enumerate()
+        .fold(context.clone(), |context, (index, statement)| {
+            walk_nested_statement(adapter, &context, statement, statements.get(index + 1))
+        })
 }
 
 fn walk_nested_statement<'ast, A>(
@@ -255,56 +332,67 @@ fn walk_nested_statement<'ast, A>(
     context: &A::Context,
     statement: &'ast Statement,
     next_statement: Option<&'ast Statement>,
-) where
+) -> A::Context
+where
     A: DescendantAdapter<'ast> + ?Sized,
 {
-    let context = adapter.context(context, DescendantContainer::Statement(statement));
-    if adapter.nested_statement(&context, statement, next_statement) == NestedStatement::Descend {
-        walk_statement_descendants(adapter, &context, statement);
-    }
+    let parent = context;
+    let local = adapter.context(parent, DescendantContainer::Statement(statement));
+    let nested = if adapter.nested_statement(&local, statement, next_statement)
+        == NestedStatement::Descend
+    {
+        walk_statement_descendants(adapter, &local, statement)
+    } else {
+        local.clone()
+    };
+    adapter.fold_context(parent, &nested)
 }
 
-struct StatementVisitor<'visit, F, P> {
-    visit: &'visit mut F,
-    descend: &'visit mut P,
+struct ClosureAdapter<'visit, C, S, E> {
+    container: &'visit mut C,
+    statement: &'visit mut S,
+    expression: &'visit mut E,
 }
 
-impl<'ast, F, P> DescendantAdapter<'ast> for StatementVisitor<'_, F, P>
+impl<'ast, C, S, E> DescendantAdapter<'ast> for ClosureAdapter<'_, C, S, E>
 where
-    F: FnMut(&'ast Statement),
-    P: FnMut(DescendantContainer<'ast>) -> bool,
+    C: FnMut(DescendantContainer<'ast>) -> bool,
+    S: FnMut(&'ast Statement),
+    E: FnMut(&'ast Expression),
 {
     type Context = bool;
 
-    fn context(
-        &mut self,
-        context: &Self::Context,
-        container: DescendantContainer<'ast>,
-    ) -> Self::Context {
-        *context && (self.descend)(container)
+    fn context(&mut self, context: &bool, container: DescendantContainer<'ast>) -> bool {
+        *context && (self.container)(container)
     }
 
     fn nested_statement(
         &mut self,
-        context: &Self::Context,
+        context: &bool,
         statement: &'ast Statement,
         _next_statement: Option<&'ast Statement>,
     ) -> NestedStatement {
         if !context {
             return NestedStatement::Handled;
         }
-        (self.visit)(statement);
+        (self.statement)(statement);
         NestedStatement::Descend
     }
 
     fn function_like(
         &mut self,
-        context: &Self::Context,
+        context: &bool,
         expression: &'ast Expression,
         function: &'ast FunctionLikeExpression,
     ) {
         if *context {
             walk_function_like_descendants(self, context, expression, function);
+        }
+    }
+
+    fn expression(&mut self, context: &bool, expression: &'ast Expression) {
+        if *context {
+            (self.expression)(expression);
         }
     }
 }
@@ -320,7 +408,12 @@ impl Statement {
         visit: &mut impl FnMut(&'ast Statement),
     ) {
         visit(self);
-        let mut adapter = StatementVisitor { visit, descend };
+        let mut ignore = |_| {};
+        let mut adapter = ClosureAdapter {
+            container: descend,
+            statement: visit,
+            expression: &mut ignore,
+        };
         walk_statement_descendants(&mut adapter, &true, self);
     }
 }
@@ -343,66 +436,8 @@ pub(crate) enum ExpressionTraversal {
 
 pub(crate) enum ExpressionRoot<'ast> {
     Expression(&'ast Expression),
+    Statement(&'ast Statement),
     Statements(&'ast [Statement]),
-    Class(&'ast ClassDeclaration),
-}
-
-struct ExpressionFinder<'visit, F> {
-    traversal: ExpressionTraversal,
-    predicate: &'visit mut F,
-    found: bool,
-}
-
-impl<'ast, F> DescendantAdapter<'ast> for ExpressionFinder<'_, F>
-where
-    F: FnMut(&'ast Expression) -> bool,
-{
-    type Context = bool;
-
-    fn context(
-        &mut self,
-        context: &Self::Context,
-        container: DescendantContainer<'ast>,
-    ) -> Self::Context {
-        !self.found
-            && *context
-            && match container {
-                DescendantContainer::Function(_, _)
-                | DescendantContainer::Class(_, _)
-                | DescendantContainer::FunctionLike(_, _) => {
-                    self.traversal == ExpressionTraversal::All
-                }
-                DescendantContainer::Statement(_) | DescendantContainer::ClassMember(_) => true,
-            }
-    }
-
-    fn nested_statement(
-        &mut self,
-        context: &Self::Context,
-        _statement: &'ast Statement,
-        _next_statement: Option<&'ast Statement>,
-    ) -> NestedStatement {
-        if *context {
-            NestedStatement::Descend
-        } else {
-            NestedStatement::Handled
-        }
-    }
-
-    fn function_like(
-        &mut self,
-        context: &Self::Context,
-        expression: &'ast Expression,
-        function: &'ast FunctionLikeExpression,
-    ) {
-        if *context {
-            walk_function_like_descendants(self, context, expression, function);
-        }
-    }
-
-    fn expression(&mut self, context: &Self::Context, expression: &'ast Expression) {
-        self.found |= *context && (self.predicate)(expression);
-    }
 }
 
 pub(crate) fn contains_matching_expression<'ast>(
@@ -410,23 +445,40 @@ pub(crate) fn contains_matching_expression<'ast>(
     traversal: ExpressionTraversal,
     mut predicate: impl FnMut(&'ast Expression) -> bool,
 ) -> bool {
-    let mut finder = ExpressionFinder {
-        traversal,
-        predicate: &mut predicate,
-        found: false,
+    let found = std::cell::Cell::new(false);
+    let mut container = |container| {
+        !found.get()
+            && (traversal == ExpressionTraversal::All
+                || !matches!(
+                    container,
+                    DescendantContainer::Function(_, _)
+                        | DescendantContainer::Class(_, _)
+                        | DescendantContainer::FunctionLike(_, _)
+                ))
+    };
+    let mut statement = |_| {};
+    let mut expression = |candidate| {
+        if !found.get() && predicate(candidate) {
+            found.set(true);
+        }
+    };
+    let mut finder = ClosureAdapter {
+        container: &mut container,
+        statement: &mut statement,
+        expression: &mut expression,
     };
     match root {
         ExpressionRoot::Expression(expression) => {
             walk_expression_descendants(&mut finder, &true, expression)
+        }
+        ExpressionRoot::Statement(statement) => {
+            walk_statement_descendants(&mut finder, &true, statement);
         }
         ExpressionRoot::Statements(statements) => {
             for statement in statements {
                 walk_statement_descendants(&mut finder, &true, statement);
             }
         }
-        ExpressionRoot::Class(declaration) => {
-            walk_class_descendants(&mut finder, &true, declaration)
-        }
     }
-    finder.found
+    found.get()
 }

@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::bind::{Meaning, ScopeId, bind_source};
 use crate::source::FileId;
+use crate::syntax::{ExpressionKind, StatementKind, TypeNodeKind, parse_source};
+use crate::{Compiler, CompilerOptions, SourceInput};
 
 use super::*;
 
@@ -17,6 +20,26 @@ fn scan(text: &str) -> (SourceText, ScanOutput) {
     let source = source(text);
     let output = scan_source(&source);
     (source, output)
+}
+
+fn checked_contextual_diagnostics(
+    text: &str,
+    no_check: bool,
+) -> Vec<crate::diagnostics::Diagnostic> {
+    Compiler::new()
+        .compile(
+            vec![SourceInput::new(
+                "contextual-grammar.ts",
+                Arc::<str>::from(text),
+            )],
+            &CompilerOptions {
+                no_check,
+                no_emit: true,
+                target: "es2022".to_string(),
+                ..CompilerOptions::default()
+            },
+        )
+        .diagnostics
 }
 
 fn assert_one(text: &str, expected: TokenKind) {
@@ -235,6 +258,776 @@ fn scans_numeric_private_decorator_and_identifier_escape_forms() {
 }
 
 #[test]
+fn cooks_identifier_escapes_once_and_retains_authored_provenance() {
+    let text = r"\u0052ow \u{0052}ow \u{102A7} a\u0062\u{0063} #\u0061 \u0069f \u{0069}f";
+    let (source, output) = scan(text);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(
+        output
+            .tokens
+            .iter()
+            .map(|token| token.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            TokenKind::Identifier,
+            TokenKind::Identifier,
+            TokenKind::Identifier,
+            TokenKind::Identifier,
+            TokenKind::PrivateIdentifier,
+            TokenKind::If,
+            TokenKind::If,
+            TokenKind::EndOfFile,
+        ]
+    );
+    assert_eq!(
+        output
+            .identifier_values
+            .iter()
+            .map(|identifier| {
+                (
+                    source.slice(identifier.span),
+                    identifier.cooked.as_str(),
+                    identifier.escape,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (r"\u0052ow", "Row", IdentifierEscapeProvenance::Unicode,),
+            (
+                r"\u{0052}ow",
+                "Row",
+                IdentifierEscapeProvenance::ExtendedUnicode,
+            ),
+            (
+                r"\u{102A7}",
+                "𐊧",
+                IdentifierEscapeProvenance::ExtendedUnicode,
+            ),
+            (
+                r"a\u0062\u{0063}",
+                "abc",
+                IdentifierEscapeProvenance::UnicodeAndExtendedUnicode,
+            ),
+            (r"#\u0061", "#a", IdentifierEscapeProvenance::Unicode,),
+            (r"\u0069f", "if", IdentifierEscapeProvenance::Unicode),
+            (
+                r"\u{0069}f",
+                "if",
+                IdentifierEscapeProvenance::ExtendedUnicode,
+            ),
+        ]
+    );
+    assert_eq!(
+        output.identifier_values[5].escape,
+        IdentifierEscapeProvenance::Unicode
+    );
+    assert_eq!(
+        output.identifier_values[6].escape,
+        IdentifierEscapeProvenance::ExtendedUnicode
+    );
+}
+
+#[test]
+fn rejects_each_fixed_width_surrogate_and_non_identifier_escape_independently() {
+    // Pinned by `unicodeEscapesInNames02.ts` and
+    // `invalidUnicodeEscapeSequance4.ts`: fixed-width surrogate escapes do
+    // not combine, and an escape must be valid for its identifier position.
+    let text = r"\uD800\uDEA7 \u0031a a\u002Dx";
+    let (source, output) = scan(text);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (1127, 0, 0, "Invalid character."),
+            (1127, 6, 0, "Invalid character."),
+            (1127, 13, 0, "Invalid character."),
+            (1127, 22, 0, "Invalid character."),
+        ]
+    );
+    assert_eq!(
+        output
+            .tokens
+            .iter()
+            .map(|token| (token.kind, source.slice(token.span)))
+            .collect::<Vec<_>>(),
+        vec![
+            (TokenKind::Identifier, "\\"),
+            (TokenKind::Identifier, "uD800"),
+            (TokenKind::Identifier, "\\"),
+            (TokenKind::Identifier, "uDEA7"),
+            (TokenKind::Identifier, "\\"),
+            (TokenKind::Identifier, "u0031a"),
+            (TokenKind::Identifier, "a"),
+            (TokenKind::Identifier, "\\"),
+            (TokenKind::Identifier, "u002Dx"),
+            (TokenKind::EndOfFile, ""),
+        ]
+    );
+    assert!(output.identifier_values.is_empty());
+}
+
+#[test]
+fn escaped_keywords_are_diagnosed_only_in_keyword_grammar_positions() {
+    let reserved = source(r"\u0069f (true) {}");
+    let reserved_parse = parse_source(&reserved);
+    assert!(matches!(
+        reserved_parse.unit.statements.as_slice(),
+        [statement] if matches!(&statement.kind, StatementKind::If(_))
+    ));
+    assert_eq!(reserved_parse.diagnostics.len(), 1);
+    assert_eq!(
+        (
+            reserved_parse.diagnostics[0].code,
+            reserved_parse.diagnostics[0].start,
+            reserved_parse.diagnostics[0].length,
+            reserved_parse.diagnostics[0].message_text.as_str(),
+        ),
+        (1260, 0, 7, "Keywords cannot contain escape characters.",)
+    );
+    assert_eq!(
+        &reserved.text[..reserved_parse.diagnostics[0].length as usize],
+        r"\u0069f"
+    );
+
+    let contextual = source(r"type typ\u{0065} = string;");
+    let contextual_parse = parse_source(&contextual);
+    assert!(
+        contextual_parse.diagnostics.is_empty(),
+        "escaped contextual keyword used as a name is legal: {:?}",
+        contextual_parse.diagnostics
+    );
+    let [statement] = contextual_parse.unit.statements.as_slice() else {
+        panic!("one contextual-keyword alias expected")
+    };
+    let StatementKind::TypeAlias(alias) = &statement.kind else {
+        panic!("contextual-keyword name must remain a type alias")
+    };
+    assert_eq!(alias.name, "type");
+    assert_eq!((alias.name_span.start, alias.name_span.end), (5, 16));
+    assert_eq!(contextual.slice(alias.name_span), r"typ\u{0065}");
+
+    // `scannerUnicodeEscapeInKeyword2.ts` pins contextual keywords as legal
+    // identifier nodes in bindings, expressions, arrows, names, properties,
+    // tuple labels, and the special `this` parameter.
+    for text in [
+        r"const typ\u0065 = 1;",
+        r"const value = typ\u0065;",
+        r"const value = \u0061sync;",
+        r"const arrow = typ\u0065 => type;",
+        r"const value = class typ\u0065 {};",
+        r"const value = { def\u0061ult: 1 };",
+        r"const value = object.def\u0061ult;",
+        r"const value = `x${typ\u0065}`;",
+        r"type Tuple = [typ\u0065: string];",
+        r"function f(th\u0069s: string): void;",
+        r"type Query = typeof th\u0069s;",
+    ] {
+        let source = source(text);
+        let parsed = parse_source(&source);
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "escaped contextual identifier must remain legal in {text:?}: {:?}",
+            parsed.diagnostics
+        );
+    }
+
+    let expression = source(r"const value = typ\u0065;");
+    let expression_parse = parse_source(&expression);
+    let [statement] = expression_parse.unit.statements.as_slice() else {
+        panic!("one contextual identifier expression expected")
+    };
+    let StatementKind::Variable(declaration) = &statement.kind else {
+        panic!("a variable declaration was expected")
+    };
+    let Some(initializer) = &declaration.declarators[0].initializer else {
+        panic!("the contextual identifier initializer must be retained")
+    };
+    let ExpressionKind::Identifier {
+        name, name_span, ..
+    } = &initializer.kind
+    else {
+        panic!("the initializer must remain an identifier expression")
+    };
+    assert_eq!(name, "type");
+    assert_eq!(expression.slice(*name_span), r"typ\u0065");
+
+    for (text, start, length) in [
+        (r"\u0076ar x = 1;", 0, 8),
+        (r"\u{0076}ar x = 1;", 0, 10),
+        (r"\u0061sync function f() {}", 0, 10),
+        (r"typ\u0065 NotOk = 0;", 0, 9),
+        (r"type T = str\u0069ng;", 9, 11),
+        (r"type T = th\u0069s;", 9, 9),
+    ] {
+        let source = source(text);
+        let parsed = parse_source(&source);
+        let matching = parsed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 1260)
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1, "wrong TS1260 set for {text:?}");
+        assert_eq!((matching[0].start, matching[0].length), (start, length));
+        assert_eq!(
+            matching[0].message_text,
+            "Keywords cannot contain escape characters."
+        );
+    }
+}
+
+#[test]
+fn escaped_hard_keywords_use_binding_diagnostics_without_a_false_ts1260() {
+    for (text, code, start, authored, message) in [
+        (
+            r"const \u0069f = 1;",
+            1389,
+            "const ".len() as u32,
+            r"\u0069f",
+            "'if' is not allowed as a variable declaration name.",
+        ),
+        (
+            r"function \u0072eturn() {}",
+            1359,
+            "function ".len() as u32,
+            r"\u0072eturn",
+            "Identifier expected. '\\u0072eturn' is a reserved word that cannot be used here.",
+        ),
+    ] {
+        let source = source(text);
+        let parsed = parse_source(&source);
+        assert_eq!(
+            parsed.diagnostics.first().map(|diagnostic| (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            )),
+            Some((code, start, authored.len() as u32, message)),
+            "wrong escaped hard-keyword binding diagnostic for {text:?}",
+        );
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != 1260),
+            "a BindingIdentifier is not a keyword-consumption position: {:?}",
+            parsed.diagnostics,
+        );
+    }
+}
+
+#[test]
+fn escaped_yield_is_a_keyword_only_inside_authored_generators() {
+    let text = concat!(
+        r"var \u0079ield = 0;",
+        "\n",
+        r"function *gen() {",
+        "\n",
+        r"  \u0079ield 1;",
+        "\n",
+        r"  function inner() { \u0079ield + 3; }",
+        "\n",
+        r"  const arrow = () => \u0079ield + 4;",
+        "\n",
+        r"}",
+        "\n",
+        r"function *renamed() { \u{0079}ield 2; }",
+    );
+    let source = source(text);
+    let parsed = parse_source(&source);
+    let fixed_start = text.find(r"\u0079ield 1").unwrap() as u32;
+    let extended_start = text.find(r"\u{0079}ield 2").unwrap() as u32;
+    assert_eq!(
+        parsed
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                1260,
+                fixed_start,
+                r"\u0079ield".len() as u32,
+                "Keywords cannot contain escape characters.",
+            ),
+            (
+                1260,
+                extended_start,
+                r"\u{0079}ield".len() as u32,
+                "Keywords cannot contain escape characters.",
+            ),
+        ]
+    );
+
+    let StatementKind::Function(generator) = &parsed.unit.statements[1].kind else {
+        panic!("the first generator declaration must retain its function owner")
+    };
+    let StatementKind::Expression(expression) = &generator.body[0].kind else {
+        panic!("the generator keyword must retain an expression node")
+    };
+    let ExpressionKind::Identifier {
+        name, entity_name, ..
+    } = &expression.kind
+    else {
+        panic!("the temporary generator model must retain the cooked keyword")
+    };
+    assert_eq!(name, "yield");
+    assert!(!entity_name, "a grammar keyword is not a value reference");
+}
+
+#[test]
+fn escaped_await_is_a_keyword_only_inside_authored_async_functions() {
+    let text = concat!(
+        r"var \u0061wait = 0;",
+        "\n",
+        r"async function main() {",
+        "\n",
+        r"  \u0061wait 12;",
+        "\n",
+        r"  function inner() { \u0061wait + 1; }",
+        "\n",
+        r"  const arrow = () => \u0061wait + 2;",
+        "\n",
+        r"}",
+        "\n",
+        r"const asyncArrow = async () => { \u{0061}wait 13; };",
+    );
+    let source = source(text);
+    let parsed = parse_source(&source);
+    let function_start = text.find(r"\u0061wait 12").unwrap() as u32;
+    let arrow_start = text.find(r"\u{0061}wait 13").unwrap() as u32;
+    assert_eq!(
+        parsed
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 1260)
+            .map(|diagnostic| (
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                function_start,
+                r"\u0061wait".len() as u32,
+                "Keywords cannot contain escape characters.",
+            ),
+            (
+                arrow_start,
+                r"\u{0061}wait".len() as u32,
+                "Keywords cannot contain escape characters.",
+            ),
+        ]
+    );
+}
+
+#[test]
+fn escaped_await_uses_the_external_module_expression_context_without_reserving_bindings() {
+    for (text, authored) in [
+        (r"var \u0061wait = 1; \u0061wait; export {};", r"\u0061wait"),
+        (
+            r"var \u{0061}wait = 1; \u{0061}wait; export {};",
+            r"\u{0061}wait",
+        ),
+    ] {
+        let source = source(text);
+        let parsed = parse_source(&source);
+        let expression_start = text.rfind(authored).unwrap() as u32;
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
+                .collect::<Vec<_>>(),
+            vec![
+                (1260, expression_start, authored.len() as u32),
+                (
+                    1109,
+                    expression_start + authored.len() as u32,
+                    ";".len() as u32,
+                ),
+            ],
+            "wrong external-module await diagnostics for {text:?}",
+        );
+    }
+
+    for path in ["case.cts", "case.mts", "case.cjs", "case.mjs"] {
+        let text = r"var \u0061wait = 1; \u0061wait;";
+        let source = SourceText::new(FileId(7), PathBuf::from(path), Arc::<str>::from(text));
+        let parsed = parse_source(&source);
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![1260, 1109],
+            "module-format extension must establish the await expression context for {path}",
+        );
+    }
+
+    let source = source(concat!(
+        "export {};",
+        r"var \u0061wait = 1;",
+        r"function nested() { var \u0061wait = 2; \u0061wait; }",
+        r"class C { method() { var \u{0061}wait = 3; \u{0061}wait; } }",
+    ));
+    let parsed = parse_source(&source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "bindings and ordinary function/method bodies reset the module await expression context: {:?}",
+        parsed.diagnostics,
+    );
+}
+
+#[test]
+fn escaped_await_and_yield_bindings_follow_function_grammar_contexts() {
+    for (text, code, message) in [
+        (
+            r"async function f(\u0061wait: number) {}",
+            1359,
+            "Identifier expected. '\\u0061wait' is a reserved word that cannot be used here.",
+        ),
+        (
+            r"async function outer() { function \u0061wait() {} }",
+            1359,
+            "Identifier expected. '\\u0061wait' is a reserved word that cannot be used here.",
+        ),
+        (
+            r"function *g(\u0079ield: number) {}",
+            1212,
+            "Identifier expected. '\\u0079ield' is a reserved word in strict mode.",
+        ),
+        (
+            r"function *\u0079ield() {}",
+            1212,
+            "Identifier expected. '\\u0079ield' is a reserved word in strict mode.",
+        ),
+        (
+            r"function *g<\u0079ield>() {}",
+            1212,
+            "Identifier expected. '\\u0079ield' is a reserved word in strict mode.",
+        ),
+        (
+            r"function *outer() { function inner(\u0079ield: number) {} }",
+            1212,
+            "Identifier expected. '\\u0079ield' is a reserved word in strict mode.",
+        ),
+        (
+            r"class C { *m(\u0079ield: number) {} }",
+            1213,
+            "Identifier expected. '\\u0079ield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+        ),
+        (
+            r"class C { async m(\u0061wait: number) {} }",
+            1359,
+            "Identifier expected. '\\u0061wait' is a reserved word that cannot be used here.",
+        ),
+    ] {
+        let diagnostics = checked_contextual_diagnostics(text, false);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.message_text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(code, message)],
+            "wrong contextual binding diagnostics for {text:?}",
+        );
+        assert!(
+            checked_contextual_diagnostics(text, true).is_empty(),
+            "--noCheck must suppress contextual binding diagnostics for {text:?}",
+        );
+    }
+
+    for text in [
+        r"async function \u0061wait() {}",
+        r"async function f<\u0061wait>() {}",
+        r"async function outer() { function inner(\u0061wait: number) {} }",
+        r"async function f() { const o = { \u0061wait: 1 }; }",
+        r"function *g() { const o = { \u0079ield: 1 }; }",
+        r"class C { \u0061wait() {} \u0079ield() {} }",
+    ] {
+        let source = source(text);
+        let parsed = parse_source(&source);
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "IdentifierName/property contexts remain legal in {text:?}: {:?}",
+            parsed.diagnostics,
+        );
+    }
+}
+
+#[test]
+fn class_strict_context_covers_the_whole_definition_and_then_resets() {
+    for (text, authored) in [
+        (r"class \u0079ield {}", r"\u0079ield"),
+        (r"class \u{0079}ield {}", r"\u{0079}ield"),
+        (r"class C<\u0079ield> {}", r"\u0079ield"),
+        (r"class C<\u{0079}ield> {}", r"\u{0079}ield"),
+        (r"class C extends \u0079ield {}", r"\u0079ield"),
+        (r"class C extends \u{0079}ield {}", r"\u{0079}ield"),
+        (r"class C implements \u0079ield {}", r"\u0079ield"),
+        (r"class C implements \u{0079}ield {}", r"\u{0079}ield"),
+        (r"const value = class \u0079ield {};", r"\u0079ield"),
+        (r"const value = class C<\u{0079}ield> {};", r"\u{0079}ield"),
+        (r"const value = class extends \u0079ield {};", r"\u0079ield"),
+        (r"class C { field = \u0079ield; }", r"\u0079ield"),
+        (r"class C { field = \u{0079}ield; }", r"\u{0079}ield"),
+        (r"class C { method() { \u0079ield; } }", r"\u0079ield"),
+        (r"class C { method() { \u{0079}ield; } }", r"\u{0079}ield"),
+    ] {
+        let diagnostics = checked_contextual_diagnostics(text, false);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.message_text.clone()))
+                .collect::<Vec<_>>(),
+            vec![(
+                1213,
+                format!(
+                    "Identifier expected. '{authored}' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+                ),
+            )],
+            "wrong class strict-context diagnostics for {text:?}",
+        );
+        assert!(
+            checked_contextual_diagnostics(text, true).is_empty(),
+            "--noCheck must suppress class strict-context diagnostics for {text:?}",
+        );
+    }
+
+    let trailing_source = source(r"class C {} var \u0079ield = 1;");
+    let parsed = parse_source(&trailing_source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "class strict context must not leak into the following variable: {:?}",
+        parsed.diagnostics,
+    );
+
+    let source = source(concat!(
+        "export {};",
+        r"class C { field = \u0061wait; method() { \u{0061}wait; } }",
+    ));
+    let parsed = parse_source(&source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "module await context must not leak into ordinary class fields or methods: {:?}",
+        parsed.diagnostics,
+    );
+}
+
+#[test]
+fn generator_yield_context_distinguishes_class_bindings_from_heritage_and_decorators() {
+    for text in [
+        "function *parameterized() { class Owner<yield> {} }",
+        "function *outer() { class Renamed extends (yield 1) {} }",
+        "function *implemented() { class Owner implements yield {} }",
+        "function *changed() { const value = class Nested extends (yield) {}; }",
+        "function *wrapped() { { class Inner extends (yield 2) {} } }",
+        "function *decorated() { class Owner { @(yield 'tag') method() {} } }",
+        "function ordinary() { class Owner { @(yield 'tag') method() {} } }",
+    ] {
+        for no_check in [false, true] {
+            let diagnostics = checked_contextual_diagnostics(text, no_check);
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| !matches!(diagnostic.code, 1212 | 1213)),
+                "a class heritage or recovered decorator expression must not publish a strict binding diagnostic in {text:?}: {diagnostics:?}",
+            );
+        }
+    }
+
+    for text in [
+        "function *named() { class yield {} }",
+        "function *outer() { const value = class yield {}; }",
+        "function ordinary() { class Direct extends yield {} }",
+        "function *outer() { function nested() { class Reset extends yield {} } }",
+        "function *outer() { class Owner { method(yield: number) {} } }",
+        "function *outer() { class Owner { field = yield; } }",
+    ] {
+        let expected_start = text.find("yield").unwrap() as u32;
+        let diagnostics = checked_contextual_diagnostics(text, false);
+        let contextual = diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 1213)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contextual
+                .iter()
+                .map(|diagnostic| (
+                    diagnostic.code,
+                    diagnostic.start,
+                    diagnostic.length,
+                    diagnostic.message_text.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![(
+                1213,
+                expected_start,
+                "yield".len() as u32,
+                "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+            )],
+            "an ordinary function must reset the surrounding generator's Yield context in {text:?}",
+        );
+        assert!(
+            checked_contextual_diagnostics(text, true)
+                .iter()
+                .all(|diagnostic| diagnostic.code != 1213),
+            "--noCheck must suppress the contextual class-strict diagnostic for {text:?}",
+        );
+    }
+}
+
+#[test]
+fn async_parenthesized_arrow_parameters_enter_await_context_before_the_body() {
+    for (text, authored) in [
+        (r"const fixed = async (\u0061wait) => 1;", r"\u0061wait"),
+        (
+            r"const extended = async (\u{0061}wait) => 2;",
+            r"\u{0061}wait",
+        ),
+    ] {
+        let diagnostics = checked_contextual_diagnostics(text, false);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.message_text.clone()))
+                .collect::<Vec<_>>(),
+            vec![(
+                1359,
+                format!(
+                    "Identifier expected. '{authored}' is a reserved word that cannot be used here."
+                ),
+            )],
+            "wrong async-arrow parameter diagnostics for {text:?}",
+        );
+        assert!(
+            checked_contextual_diagnostics(text, true).is_empty(),
+            "--noCheck must suppress async-arrow parameter diagnostics for {text:?}",
+        );
+    }
+
+    let source = source(r"const nested = async () => () => \u0061wait + 4;");
+    let parsed = parse_source(&source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "an ordinary nested arrow resets the await body context: {:?}",
+        parsed.diagnostics,
+    );
+}
+
+#[test]
+fn ordinary_arrow_parameters_inherit_outer_await_and_yield_keyword_contexts() {
+    for (text, authored) in [
+        (
+            r"async function outer() { const f = (\u0061wait: number) => 0; }",
+            r"\u0061wait",
+        ),
+        (
+            r"async function outer() { const f = (\u{0061}wait: number) => 0; }",
+            r"\u{0061}wait",
+        ),
+        (
+            r"function *outer() { const f = (\u0079ield: number) => 0; }",
+            r"\u0079ield",
+        ),
+        (
+            r"function *outer() { const f = (\u{0079}ield: number) => 0; }",
+            r"\u{0079}ield",
+        ),
+    ] {
+        let source = source(text);
+        let parsed = parse_source(&source);
+        let expected_start = text.find(authored).unwrap() as u32;
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| matches!(diagnostic.code, 1212 | 1260 | 1359))
+                .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
+                .collect::<Vec<_>>(),
+            vec![(1260, expected_start, authored.len() as u32)],
+            "ordinary-arrow parameters must consume inherited await/yield as keywords in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn cooked_identifier_names_reach_binder_identity_without_losing_raw_spans() {
+    let source = source(r"type \u0052ow=keyof {tag:number};type Box<\u0052ow>=[Row,\u{0052}ow];");
+    let parsed = parse_source(&source);
+    assert!(
+        parsed.diagnostics.is_empty(),
+        "unexpected parser diagnostics: {:?}",
+        parsed.diagnostics
+    );
+    let [_, box_alias] = parsed.unit.statements.as_slice() else {
+        panic!("two type aliases expected")
+    };
+    let StatementKind::TypeAlias(alias) = &box_alias.kind else {
+        panic!("Box must parse as a type alias")
+    };
+    let [parameter] = alias.type_parameters.as_slice() else {
+        panic!("one type parameter expected")
+    };
+    assert_eq!(parameter.name, "Row");
+    assert_eq!(source.slice(parameter.name_span), r"\u0052ow");
+    let TypeNodeKind::Tuple(elements) = &alias.ty.kind else {
+        panic!("tuple alias body expected")
+    };
+    let [plain, escaped] = elements.as_slice() else {
+        panic!("two tuple elements expected")
+    };
+    let TypeNodeKind::Reference {
+        name: plain_name,
+        name_span: plain_span,
+        ..
+    } = &plain.kind
+    else {
+        panic!("plain reference expected")
+    };
+    let TypeNodeKind::Reference {
+        name: escaped_name,
+        name_span: escaped_span,
+        ..
+    } = &escaped.kind
+    else {
+        panic!("escaped reference expected")
+    };
+    assert_eq!((plain_name.as_str(), escaped_name.as_str()), ("Row", "Row"));
+    assert_eq!(source.slice(*plain_span), "Row");
+    assert_eq!(source.slice(*escaped_span), r"\u{0052}ow");
+
+    let bindings = bind_source(source.id, &parsed.unit);
+    let declaration = bindings
+        .resolve(ScopeId(0), "Row", Meaning::Type)
+        .and_then(|declaration| bindings.declaration(declaration))
+        .expect("the cooked alias identity must resolve through the binder");
+    assert_eq!(declaration.name, "Row");
+    assert_eq!(source.slice(declaration.name_span), r"\u0052ow");
+    assert_eq!(
+        bindings.resolve(ScopeId(0), r"\u0052ow", Meaning::Type),
+        None,
+        "authored escape spelling must not become a second semantic name"
+    );
+}
+
+#[test]
 fn scans_nested_template_chunks_without_losing_delimiter_spans() {
     assert_one("`plain`", TokenKind::NoSubstitutionTemplateLiteral);
 
@@ -429,6 +1222,64 @@ fn valid_modern_lexical_forms_do_not_report_invalid_characters() {
             .all(|diagnostic| diagnostic.code != 1127),
         "valid lexical forms produced TS1127: {:?}",
         output.diagnostics
+    );
+}
+
+#[test]
+fn no_check_preserves_contextual_async_binding_products_without_diagnostics() {
+    let source = concat!(
+        r"export async function task(\u0061wait: number): Promise<void> {}",
+        "\n",
+        r"export class Worker { async run(\u{0061}wait: number): Promise<void> {} }",
+        "\n",
+    );
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "contextual-async.ts",
+            Arc::<str>::from(source),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            no_check: true,
+            module: "esnext".to_string(),
+            target: "es2017".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    assert_eq!(
+        output.semantic_completion,
+        crate::program::SemanticCompletion::Complete
+    );
+    assert_eq!(output.exit_status.code(), 0);
+    let product = |path: &str| {
+        output
+            .emitted_files
+            .iter()
+            .find(|file| file.path.to_string_lossy() == path)
+            .unwrap_or_else(|| panic!("missing {path}"))
+            .text
+            .as_str()
+    };
+    assert_eq!(
+        product("contextual-async.js"),
+        concat!(
+            r"export async function task(\u0061wait) { }",
+            "\n",
+            "export class Worker {\n",
+            r"    async run(\u{0061}wait) { }",
+            "\n}\n",
+        ),
+    );
+    assert_eq!(
+        product("contextual-async.d.ts"),
+        concat!(
+            r"export declare function task(\u0061wait: number): Promise<void>;",
+            "\n",
+            "export declare class Worker {\n",
+            r"    run(\u{0061}wait: number): Promise<void>;",
+            "\n}\n",
+        ),
     );
 }
 

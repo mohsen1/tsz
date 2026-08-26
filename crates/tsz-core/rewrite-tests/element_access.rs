@@ -98,6 +98,7 @@ fn expression_shape(expression: &Expression) -> String {
             callee,
             type_arguments,
             arguments,
+            ..
         } => format!(
             "New<{}>({}, [{}])",
             type_arguments.len(),
@@ -116,6 +117,7 @@ fn expression_shape(expression: &Expression) -> String {
         ),
         ExpressionKind::Parenthesized(inner) => format!("Paren({})", expression_shape(inner)),
         ExpressionKind::As { expression, .. } => format!("As({})", expression_shape(expression)),
+        ExpressionKind::NonNull(inner) => format!("NonNull({})", expression_shape(inner)),
         kind => panic!("unexpected expression shape: {kind:?}"),
     }
 }
@@ -300,27 +302,27 @@ fn constructor_member_access_has_exact_ast_grouping_and_javascript_emit() {
 }
 
 #[test]
-fn postfix_non_null_recovery_keeps_the_erased_receiver_and_later_suffixes() {
+fn postfix_non_null_assertions_retain_their_receiver_and_later_suffixes() {
     for (source, expected_shape, emitted) in [
-        ("value!;", "value", "value;"),
+        ("value!;", "NonNull(value)", "value;"),
         (
             "value!.property;",
-            "Member(value, property)",
+            "Member(NonNull(value), property)",
             "value.property;",
         ),
-        ("value![0];", "Element(value, 0)", "value[0];"),
-        ("value!();", "Call<0>(value, [])", "value();"),
-        ("value!!;", "value", "value;"),
+        ("value![0];", "Element(NonNull(value), 0)", "value[0];"),
+        ("value!();", "Call<0>(NonNull(value), [])", "value();"),
+        ("value!!;", "NonNull(NonNull(value))", "value;"),
         (
             r#"null! as { [K in keyof number[] as Exclude<K,"length">]: (number[])[K] };"#,
-            "As(null)",
+            "As(NonNull(null))",
             "null;",
         ),
     ] {
         assert_eq!(parsed_expression_shape(source), expected_shape, "{source}");
         assert_eq!(
             unchecked_compile(source).semantic_completion,
-            SemanticCompletion::Deferred,
+            SemanticCompletion::Complete,
             "{source}"
         );
         assert_eq!(
@@ -339,6 +341,134 @@ fn postfix_non_null_recovery_keeps_the_erased_receiver_and_later_suffixes() {
 }
 
 #[test]
+fn postfix_non_null_emit_preserves_authored_parentheses_and_comment_gaps() {
+    let source = concat!(
+        "declare let value: string | undefined;\n",
+        "const inside = (value!);\n",
+        "const outside = (value)!;\n",
+        "const nested = ((value!)!);\n",
+        "const gap = value /* gap */!;\n",
+        "const insideGap = (value /* inner */!);\n",
+        "const outsideGap = (value /* outer */)!;\n",
+    );
+    assert_eq!(
+        unchecked_javascript(source),
+        concat!(
+            "\"use strict\";\n",
+            "const inside = (value);\n",
+            "const outside = (value);\n",
+            "const nested = ((value));\n",
+            "const gap = value /* gap */;\n",
+            "const insideGap = (value /* inner */);\n",
+            "const outsideGap = (value /* outer */);\n",
+        )
+    );
+}
+
+#[test]
+fn inferred_non_null_declarations_withhold_only_the_affected_file_product() {
+    for no_check in [false, true] {
+        let output = Compiler::new().compile(
+            vec![
+                SourceInput::new(
+                    "affected.ts",
+                    Arc::<str>::from("export const inferred=null!;"),
+                ),
+                SourceInput::new(
+                    "stable.ts",
+                    Arc::<str>::from("export const annotated:never=null!;"),
+                ),
+            ],
+            &CompilerOptions {
+                declaration: true,
+                module: "esnext".to_string(),
+                target: "es2015".to_string(),
+                strict: true,
+                no_check,
+                ..CompilerOptions::default()
+            },
+        );
+        assert_eq!(output.diagnostics, [], "noCheck={no_check}");
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "noCheck={no_check}"
+        );
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert_eq!(
+            output
+                .emitted_files
+                .iter()
+                .map(|file| (file.path.to_string_lossy().into_owned(), file.text.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("affected.js".to_string(), "export const inferred = null;\n"),
+                (
+                    "stable.d.ts".to_string(),
+                    "export declare const annotated: never;\n",
+                ),
+                ("stable.js".to_string(), "export const annotated = null;\n"),
+            ],
+            "noCheck={no_check}"
+        );
+    }
+}
+
+#[test]
+fn postfix_non_null_reduces_only_owned_strict_nullish_types() {
+    assert_complete(concat!(
+        "declare let optional:string|undefined;",
+        "declare let absent:void;",
+        "const direct:string=optional!;",
+        "const wrapped:string=(optional)!;",
+        "const nullValue:never=null!;",
+        "const undefinedValue:never=undefined!;",
+        "const voidValue:never=absent!;",
+    ));
+
+    let strict_off = compile(
+        "declare let optional:string|undefined;const value:string=optional!;",
+        false,
+        true,
+    );
+    assert_eq!(strict_off.diagnostics, []);
+    assert_eq!(strict_off.semantic_completion, SemanticCompletion::Complete);
+
+    for (source, message) in [
+        (
+            concat!(
+                "declare let mixed:string|number|undefined;",
+                "const numberOnly:number=mixed!;",
+            ),
+            "Type 'string | number' is not assignable to type 'number'.",
+        ),
+        (
+            "declare let uncertain:unknown;const numberOnly:number=uncertain!;",
+            "Type '{}' is not assignable to type 'number'.",
+        ),
+    ] {
+        let output = compile(source, true, true);
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.message_text.as_str()))
+                .collect::<Vec<_>>(),
+            [(2322, message)]
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    }
+
+    let generic = compile(
+        "function unwrap<Item>(value?:Item):Item{return value!;}",
+        true,
+        true,
+    );
+    assert_eq!(generic.diagnostics, []);
+    assert_eq!(generic.semantic_completion, SemanticCompletion::Deferred);
+}
+
+#[test]
 fn nested_new_preserves_the_inner_element_callee_and_omitted_outer_argument_list() {
     assert_eq!(
         parsed_expression_shape("new new C[0]();"),
@@ -347,7 +477,7 @@ fn nested_new_preserves_the_inner_element_callee_and_omitted_outer_argument_list
 }
 
 #[test]
-fn constructor_element_callee_precedes_type_arguments_without_broadening_generic_emit() {
+fn constructor_element_callee_precedes_and_erases_type_arguments_in_javascript() {
     let source = "new C[0]<T>(a);";
     assert_eq!(
         parsed_expression_shape(source),
@@ -355,9 +485,12 @@ fn constructor_element_callee_precedes_type_arguments_without_broadening_generic
     );
     let output = unchecked_compile(source);
     assert_eq!(output.diagnostics, []);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert!(output.emitted_files.is_empty());
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(output.exit_status, CompileExitStatus::Success);
+    assert_eq!(
+        unchecked_javascript(source),
+        "\"use strict\";\nnew C[0](a);\n"
+    );
 }
 
 #[test]
