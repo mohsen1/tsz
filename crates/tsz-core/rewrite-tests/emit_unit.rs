@@ -721,6 +721,36 @@ fn keeps_expression_grouping_while_erasing_assertions() {
 }
 
 #[test]
+fn new_callee_parentheses_follow_assertion_erased_precedence() {
+    let file = program_file(
+        "new-assertions.ts",
+        concat!(
+            "declare const C: any; declare const factory: any; ",
+            "declare const namespaceValue: any;\n",
+            "new (factory() as any);\n",
+            "new ((new C()) as any);\n",
+            "new (C as any)();\n",
+            "new (namespaceValue.Member as any)();\n",
+        ),
+    );
+    let options = CompilerOptions {
+        target: "es2015".to_string(),
+        ..CompilerOptions::default()
+    };
+    let output = emit_file(&file, &options);
+    assert_eq!(
+        output[0].text,
+        concat!(
+            "\"use strict\";\n",
+            "new (factory());\n",
+            "new (new C());\n",
+            "new C();\n",
+            "new namespaceValue.Member();\n",
+        )
+    );
+}
+
+#[test]
 fn derives_module_extension_outputs_without_losing_module_identity() {
     let file = program_file("src/value.mts", "export const value: number = 1;\n");
     let options = CompilerOptions {

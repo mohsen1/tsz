@@ -107,6 +107,103 @@ fn quick_info_keeps_same_offset_merged_interfaces_across_root_orders() {
 }
 
 #[test]
+fn quick_info_projects_local_var_through_bound_identity_without_widening_claims() {
+    let source = concat!(
+        "var global: string;",
+        "function shell() { var local: string; var query: typeof local; local; ",
+        "const fixed: string = 'x'; }",
+    );
+    let mut service = LanguageService::new(CompilerOptions::default());
+    service.open("case.ts", Arc::<str>::from(source));
+
+    for offset in [
+        source.find("local").unwrap(),
+        source.find("typeof local").unwrap() + "typeof ".len(),
+        source.rfind("local").unwrap(),
+    ] {
+        let info = service.quick_info("case.ts", offset as u32).unwrap();
+        assert_eq!(info.kind, "local var");
+        assert_eq!(
+            info.text_span,
+            TextSpan {
+                start: offset as u32,
+                length: "local".len() as u32,
+            }
+        );
+        assert_eq!(info.display, "(local var) local: string");
+    }
+    assert_eq!(
+        service
+            .quick_info("case.ts", source.find("global").unwrap() as u32)
+            .unwrap()
+            .display,
+        "var global: string"
+    );
+    assert_eq!(
+        service
+            .quick_info("case.ts", source.find("fixed").unwrap() as u32)
+            .unwrap()
+            .display,
+        "const fixed: string"
+    );
+
+    let exported = "export var publicValue: string; publicValue;";
+    service.open("module.ts", Arc::<str>::from(exported));
+    assert_eq!(
+        service
+            .quick_info("module.ts", exported.rfind("publicValue").unwrap() as u32)
+            .unwrap()
+            .display,
+        "var publicValue: string"
+    );
+    let module_local = "var hidden: string; hidden; export {};";
+    service.open("hidden.ts", Arc::<str>::from(module_local));
+    assert_eq!(
+        service
+            .quick_info("hidden.ts", module_local.rfind("hidden").unwrap() as u32)
+            .unwrap()
+            .display,
+        "var hidden: string"
+    );
+    let block = "if (true) { var scoped: string; scoped; }";
+    service.open("block.ts", Arc::<str>::from(block));
+    for offset in [
+        block.find("scoped").unwrap(),
+        block.rfind("scoped").unwrap(),
+    ] {
+        let info = service.quick_info("block.ts", offset as u32).unwrap();
+        assert_eq!(info.kind, "var");
+        assert_eq!(info.display, "var scoped: string");
+    }
+    let alias = "import { publicValue as alias } from './module'; alias;";
+    service.open("use.ts", Arc::<str>::from(alias));
+    assert!(
+        service
+            .quick_info("use.ts", alias.rfind("alias").unwrap() as u32)
+            .is_none()
+    );
+
+    let documented = "/** @type {number} */ const value = 1; value;";
+    let mut js_service = LanguageService::new(CompilerOptions {
+        allow_js: true,
+        check_js: Some(true),
+        no_emit: true,
+        ..CompilerOptions::default()
+    });
+    js_service.open("documented.js", Arc::<str>::from(documented));
+    for offset in [
+        documented.find("value").unwrap(),
+        documented.rfind("value").unwrap(),
+    ] {
+        assert!(
+            js_service
+                .quick_info("documented.js", offset as u32)
+                .is_none()
+        );
+    }
+}
+
+#[test]
 fn navigation_keys_follow_bound_declaration_groups_across_root_orders() {
     let sources = [
         (

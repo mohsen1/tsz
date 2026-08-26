@@ -53,13 +53,12 @@ impl Printer<'_> {
                 }
             },
             ExpressionKind::Unary { .. } => PREC_UNARY,
-            ExpressionKind::Call { .. }
-            | ExpressionKind::New { .. }
-            | ExpressionKind::Member { .. }
-            | ExpressionKind::ElementAccess { .. } => PREC_POSTFIX,
+            ExpressionKind::Call { .. } | ExpressionKind::New { .. } => PREC_POSTFIX,
             ExpressionKind::As { expression, .. } => self.expression_precedence(expression),
             ExpressionKind::NonNull(inner) => self.expression_precedence(inner),
-            ExpressionKind::Identifier { .. }
+            ExpressionKind::Member { .. }
+            | ExpressionKind::ElementAccess { .. }
+            | ExpressionKind::Identifier { .. }
             | ExpressionKind::This
             | ExpressionKind::Literal(_)
             | ExpressionKind::Template(_)
@@ -122,8 +121,6 @@ pub(super) const fn unary_operator_text(operator: UnaryOperator) -> &'static str
 }
 
 pub(super) const fn unary_operator_is_keyword(operator: UnaryOperator) -> bool {
-    matches!(
-        operator,
-        UnaryOperator::TypeOf | UnaryOperator::Void | UnaryOperator::Delete | UnaryOperator::Await
-    )
+    use UnaryOperator::{Await, Delete, TypeOf, Void};
+    matches!(operator, TypeOf | Void | Delete | Await)
 }

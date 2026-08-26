@@ -1,18 +1,12 @@
-//! Declaration-identity navigation shared by the service operations.
-//!
-//! When a source location binds to a declaration, TypeScript 7 uses that same
-//! identity for definition, references, highlights, and rename. TSZ does the
-//! same here through a single immutable index over the program's bound files.
+//! One immutable index shares bound declaration identity across service navigation.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::bind::{BoundDeclaration, DeclarationKind, Meaning, ScopeId};
-use crate::program::{CompileOutput, Program, ProgramFile};
-use crate::semantics::{
-    DeclarationDisplayParts, DeclarationDisplaySummaries, DeclarationDisplaySummary,
-};
+use crate::program::{CapabilityTarget, CompileOutput, Program, ProgramFile};
+use crate::semantics::{DeclarationDisplayParts, DeclarationDisplaySummary};
 use crate::source::{DeclId, FileId, Span};
 
 use super::{QuickInfo, TextSpan, normalize_path};
@@ -137,6 +131,7 @@ enum SymbolKey {
 struct DeclarationMetadata {
     name: String,
     kind: &'static str,
+    function_local: bool,
     is_local: bool,
     summary: DeclarationDisplaySummary,
 }
@@ -163,7 +158,7 @@ impl NavigationIndex {
         let mut index = Self::default();
 
         for file in &program.files {
-            index.collect_bound_declarations(program, file, &output.declaration_display_summaries);
+            index.collect_bound_declarations(output, file);
         }
         for file in &program.files {
             index.collect_references(program, file);
@@ -205,13 +200,17 @@ impl NavigationIndex {
     }
 
     pub(super) fn quick_info(&self, path: &str, offset: u32) -> Option<QuickInfo> {
-        let occurrence = self.occurrence_at(path, offset)?;
-        let declaration = occurrence.declaration.as_ref()?;
-        let kind = declaration.summary.quick_info_kind?;
+        let (occurrence, _, declaration) = self.declaration_at(path, offset)?;
+        let mut kind = declaration.summary.quick_info_kind?;
+        let mut display = declaration.summary.display.clone();
+        if declaration.kind == "local var" && declaration.function_local {
+            kind = declaration.kind;
+            display.replace_range(.."var".len(), "(local var)");
+        }
         Some(QuickInfo {
             kind: kind.to_string(),
             text_span: occurrence.span,
-            display: declaration.summary.display.clone(),
+            display,
         })
     }
 
@@ -350,20 +349,14 @@ impl NavigationIndex {
         Some((occurrence, location, declaration))
     }
 
-    fn collect_bound_declarations(
-        &mut self,
-        program: &Program,
-        file: &ProgramFile,
-        summaries: &DeclarationDisplaySummaries,
-    ) {
+    fn collect_bound_declarations(&mut self, output: &CompileOutput, file: &ProgramFile) {
+        let program = &output.program;
+        let summaries = &output.declaration_display_summaries;
         let file_name = normalize_path(&file.source.path.to_string_lossy());
         let module_file = file.is_external_module();
 
         for declaration in &file.bindings.declarations {
-            // Type-member groups are binder facts for checking. Until the
-            // service owns merged overload/call/index display provenance,
-            // exposing each declaration as an independent property would be
-            // a false quickinfo/rename success.
+            // Type-member groups lack merged display provenance; do not fabricate results.
             if matches!(
                 declaration.kind,
                 DeclarationKind::TypeMember | DeclarationKind::AnonymousSignature
@@ -384,7 +377,7 @@ impl NavigationIndex {
             }) {
                 continue;
             }
-            let summary = summaries.get(&declaration.id).cloned().unwrap_or_else(|| {
+            let mut summary = summaries.get(&declaration.id).cloned().unwrap_or_else(|| {
                 let (kind, display) = fallback_metadata(declaration.kind, &declaration.name);
                 DeclarationDisplaySummary {
                     kind,
@@ -395,6 +388,15 @@ impl NavigationIndex {
                     display_parts: DeclarationDisplayParts::Text,
                     quick_info_kind: None,
                 }
+            });
+            summary.quick_info_kind = summary.quick_info_kind.filter(|_| {
+                file.capability_scope_at(declaration.name_span.start)
+                    .is_some_and(|scope| {
+                        output
+                            .capabilities
+                            .claim(CapabilityTarget::QuickInfo, scope)
+                            .is_claimed()
+                    })
             });
             let context_span = summary.context_span.map(text_span);
             let is_local = declaration.scope != ScopeId(0)
@@ -407,6 +409,7 @@ impl NavigationIndex {
             let metadata = DeclarationMetadata {
                 name: declaration.name.clone(),
                 kind,
+                function_local: file.bindings.scope_is_function_local(declaration.scope),
                 is_local,
                 summary,
             };

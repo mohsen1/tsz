@@ -50,3 +50,38 @@ fn every_typescript_line_terminator_starts_a_new_utf16_line() {
         );
     }
 }
+
+#[test]
+fn declaration_source_paths_match_case_sensitive_cross_platform_basenames() {
+    for path in [
+        "value.d.ts",
+        "value.d.mts",
+        "value.d.cts",
+        "value.d.html.ts",
+        "value.d.ts/",
+        r"value.d.mts\",
+        "value.d.html.ts/",
+    ] {
+        assert!(super::is_declaration_source_path(
+            PathBuf::from(path).as_path()
+        ));
+    }
+    for path in [
+        "value.D.ts",
+        "value.d.html.TS",
+        "value.d.html.mts",
+        "value.d.html.cts",
+        "value.d.html.tsx",
+        "value.d.ts//",
+        "value.d.html.ts//",
+        r"folder.d.parts\ordinary.ts",
+        "http://server.d.ts",
+        "file://server.d.html.ts/",
+        "//server.d.ts",
+        r"\\server.d.html.ts\",
+    ] {
+        assert!(!super::is_declaration_source_path(
+            PathBuf::from(path).as_path()
+        ));
+    }
+}

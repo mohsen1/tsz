@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 
 use super::{CompilerOptions, JavaScriptAssignments, ProgramFile};
 
+pub(crate) use crate::source::is_declaration_source_path as is_declaration_source;
+
 mod declaration_groups;
 mod emit_targets;
 mod flow_containment;
@@ -1485,11 +1487,6 @@ fn add_nonclaims(
             deletion,
         });
     }
-}
-
-pub(crate) fn is_declaration_source(path: &Path) -> bool {
-    let path = path.to_string_lossy().to_ascii_lowercase();
-    path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
 }
 
 pub(crate) fn is_effective_commonjs(path: &Path, module: &str) -> bool {

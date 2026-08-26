@@ -169,15 +169,7 @@ impl SourceText {
 
     #[must_use]
     pub(crate) fn is_declaration_source(&self) -> bool {
-        self.path
-            .file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .is_some_and(|name| {
-                let name = name.to_ascii_lowercase();
-                [".d.ts", ".d.mts", ".d.cts"]
-                    .iter()
-                    .any(|suffix| name.ends_with(suffix))
-            })
+        is_declaration_source_path(&self.path)
     }
 
     #[must_use]
@@ -231,6 +223,19 @@ impl SourceText {
             .unwrap_or(&self.path);
         display_path(path)
     }
+}
+
+pub(crate) fn is_declaration_source_path(path: &Path) -> bool {
+    let path = display_path(path);
+    let path = path.strip_suffix('/').unwrap_or(&path);
+    let root = path.starts_with("//") && !path[2..].contains('/')
+        || path
+            .split_once("://")
+            .is_some_and(|(_, path)| !path.contains('/'));
+    let name = path.rsplit('/').next().filter(|_| !root).unwrap_or("");
+    name.ends_with(".d.mts")
+        || name.ends_with(".d.cts")
+        || name.ends_with(".ts") && name.contains(".d.")
 }
 
 impl SourceCoordinateIndex {

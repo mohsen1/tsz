@@ -248,6 +248,10 @@ impl BoundFile {
             .and_then(|scope| scope.lexical_this)
     }
 
+    pub(crate) fn scope_is_function_local(&self, scope: ScopeId) -> bool {
+        self.scopes[scope.0 as usize].flow_container.is_some()
+    }
+
     #[must_use]
     pub(crate) fn this_type_declaration(&self, span: Span) -> Option<DeclId> {
         self.this_type_references.get(&span).copied()

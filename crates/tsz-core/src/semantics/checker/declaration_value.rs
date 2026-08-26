@@ -44,10 +44,14 @@ impl Checker<'_> {
         file: FileId,
         scope: ScopeId,
         owner: NodeId,
-        declaration_kind: VariableKind,
+        kind: VariableKind,
         ambient: bool,
         declaration: &VariableDeclarator,
     ) {
+        if !ambient && kind == VariableKind::Const && declaration.initializer.is_none() {
+            let message = "'const' declarations must be initialized.".into();
+            self.push_diagnostic(file, declaration.name_span, message, 1155);
+        }
         if ambient
             && declaration.annotation.is_none()
             && declaration.initializer.is_none()
@@ -106,7 +110,7 @@ impl Checker<'_> {
             .map(|candidate| candidate.id)
         {
             let initializer = initializer.map(|inferred| {
-                if declaration_kind == VariableKind::Const {
+                if kind == VariableKind::Const {
                     inferred
                 } else {
                     self.widen(inferred)
@@ -129,16 +133,13 @@ impl Checker<'_> {
     }
 
     pub(super) fn declaration_value_type(&mut self, id: DeclId) -> Completion<TypeId> {
-        let javascript_root = self.program.javascript_assignments.root(id);
-        let javascript_expando = javascript_root.is_some()
-            || !self
-                .program
-                .javascript_assignments
-                .declarations(id)
-                .is_empty();
+        let assignments = &self.program.javascript_assignments;
+        let javascript_root = assignments.root(id);
         if javascript_root == Some(true) {
             return Completion::Deferred;
         }
+        let javascript_expando =
+            javascript_root.is_some() || !assignments.declarations(id).is_empty();
         if let Some(declaration) = self.program.standard_library_declaration(id) {
             if self.program.standard_library.is_array_value(id)
                 || self
@@ -225,9 +226,7 @@ impl Checker<'_> {
         };
         let mut result = match result {
             Completion::Complete(base) => self.javascript_expando_value_type(id, base),
-            Completion::Deferred => Completion::Deferred,
-            Completion::Cycle => Completion::Cycle,
-            Completion::Limit => Completion::Limit,
+            incomplete => incomplete,
         };
         let captured = self.completion.finish_capture();
         self.observe_file_completion(id.file, captured);
@@ -249,10 +248,7 @@ impl Checker<'_> {
             {
                 self.value_queries.insert(id, ValueQueryState::Ready(value));
             }
-            Completion::Complete(_)
-            | Completion::Deferred
-            | Completion::Cycle
-            | Completion::Limit => {
+            _ => {
                 self.value_queries.remove(&id);
             }
         }
@@ -265,12 +261,10 @@ impl Checker<'_> {
             .javascript_assignments
             .declarations(canonical)
             .to_vec();
-        if declarations.is_empty() {
-            return Completion::Deferred;
-        }
-        if declarations
-            .iter()
-            .any(|declaration| !self.semantic_declaration_is_claimed(*declaration))
+        if declarations.is_empty()
+            || declarations
+                .iter()
+                .any(|declaration| !self.semantic_declaration_is_claimed(*declaration))
         {
             return Completion::Deferred;
         }

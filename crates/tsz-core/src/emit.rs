@@ -662,7 +662,7 @@ impl<'a> Printer<'a> {
                 ..
             } => {
                 self.output.push_str("new ");
-                self.write_expression(callee, PREC_POSTFIX);
+                self.write_expression(callee, PREC_PRIMARY);
                 if let Some(close) = type_argument_list_close {
                     self.write_gap(End(callee.span.end), false, Gap::None);
                     self.consume_comments_before(close.end);

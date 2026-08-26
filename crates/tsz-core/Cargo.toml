@@ -130,6 +130,10 @@ name = "rewrite_instanceof_expression"
 path = "rewrite-tests/instanceof_expression.rs"
 
 [[test]]
+name = "rewrite_variable_declaration_grammar"
+path = "rewrite-tests/variable_declaration_grammar.rs"
+
+[[test]]
 name = "rewrite_class_property_initialization"
 path = "rewrite-tests/class_property_initialization.rs"
 
