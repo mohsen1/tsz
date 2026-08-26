@@ -126,6 +126,10 @@ name = "rewrite_binary_unsigned_shift"
 path = "rewrite-tests/binary_unsigned_shift.rs"
 
 [[test]]
+name = "rewrite_instanceof_expression"
+path = "rewrite-tests/instanceof_expression.rs"
+
+[[test]]
 name = "rewrite_class_property_initialization"
 path = "rewrite-tests/class_property_initialization.rs"
 

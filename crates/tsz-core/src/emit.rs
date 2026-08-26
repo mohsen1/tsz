@@ -9,7 +9,6 @@ mod functions;
 mod literals;
 mod operators;
 mod reachability;
-mod regular_expression;
 mod statements;
 #[cfg(test)]
 #[path = "../rewrite-tests/emit_target_boundaries.rs"]
@@ -629,7 +628,7 @@ impl<'a> Printer<'a> {
                 .output
                 .push_str(&self.literal_text(literal, expression.span)),
             ExpressionKind::Template(_) => unreachable!("unclaimed template emit"),
-            ExpressionKind::RegularExpression(literal) => self.write_regular_expression(literal),
+            ExpressionKind::RegularExpression(literal) => self.output.push_str(&literal.raw),
             ExpressionKind::Object(properties) => {
                 self.write_object_literal(expression.span, properties)
             }
@@ -1173,7 +1172,7 @@ impl<'a> Printer<'a> {
             self.output.push_str(raw);
         } else if is_identifier_name(name)
             || is_numeric_property_name(name)
-            || is_private_identifier(name)
+            || name.strip_prefix('#').is_some_and(is_identifier_name)
         {
             self.output.push_str(name);
         } else {
@@ -1289,10 +1288,6 @@ pub(crate) const fn variable_kind_text(kind: VariableKind) -> &'static str {
         VariableKind::Const => "const",
         VariableKind::Var => "var",
     }
-}
-
-fn is_private_identifier(text: &str) -> bool {
-    text.strip_prefix('#').is_some_and(is_identifier_name)
 }
 
 fn is_quoted(text: &str) -> bool {

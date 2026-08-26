@@ -38,7 +38,7 @@ pub(super) fn add_nonclaims(
         ] {
             add_semantic(nonclaims, &[target], scope, gap);
         }
-        if file.syntax.parser_recovery_facts().iter().any(|recovery| {
+        if file.syntax.parser_recovery_facts.iter().any(|recovery| {
             function.span.start <= recovery.authored_span.start
                 && recovery.authored_span.end <= function.span.end
         }) {

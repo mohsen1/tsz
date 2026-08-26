@@ -71,8 +71,16 @@ fn recovered_generator_declarator_keeps_its_exact_typed_owner() {
             deletion: DeletionCondition::DeepestSemanticOwner(SyntaxGap::GeneratorFunctionLike,),
         }],
     );
-    assert!(analysis.semantic_check_node_allows_claimed_descendants(file.source.id, owner));
-    assert!(!analysis.semantic_check_node_allows_recovery_identifiers(file.source.id, owner));
+    assert!(
+        analysis
+            .semantic_check_node_descendant_permissions(file.source.id, owner)
+            .0
+    );
+    assert!(
+        !analysis
+            .semantic_check_node_descendant_permissions(file.source.id, owner)
+            .1
+    );
     assert!(
         analysis
             .claim(CapabilityTarget::DeclarationModel, scope)
@@ -114,7 +122,7 @@ fn jsx_text_and_entity_fragments_share_the_opening_expression_recovery_owner() {
     let file = program_file(0, "jsx-recovery.tsx", source);
     let opening = file
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|recovery| recovery.authored_span.start == 0)
         .expect("opening JSX recovery");

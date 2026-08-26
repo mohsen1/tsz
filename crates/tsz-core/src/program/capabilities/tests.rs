@@ -138,7 +138,7 @@ fn authored_function_expression_modifiers_fail_both_emit_products_closed() {
             let async_start = source.find("async").expect("async token") as u32;
             let recovery = file
                 .syntax
-                .parser_recovery_facts()
+                .parser_recovery_facts
                 .iter()
                 .find(|recovery| recovery.authored_span.start == async_start)
                 .expect("async FunctionExpression recovery");
@@ -162,7 +162,7 @@ fn rejected_generic_arrow_prefixes_fail_only_their_file_products_closed() {
     let stable = program_file(1, "stable.ts", "export const sibling = 1;");
     let recovery = affected
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|recovery| recovery.kind == ParserRecoveryKind::RejectedGenericArrowPrefix)
         .copied()
@@ -212,7 +212,7 @@ fn rejected_generic_arrow_prefixes_fail_only_their_file_products_closed() {
         assert!(
             ordinary
                 .syntax
-                .parser_recovery_facts()
+                .parser_recovery_facts
                 .iter()
                 .all(|recovery| recovery.kind != ParserRecoveryKind::RejectedGenericArrowPrefix),
             "{source}",
@@ -220,7 +220,7 @@ fn rejected_generic_arrow_prefixes_fail_only_their_file_products_closed() {
         assert!(
             ordinary
                 .syntax
-                .parser_recovery_facts()
+                .parser_recovery_facts
                 .iter()
                 .any(|recovery| { recovery.kind == ParserRecoveryKind::AngleAssertion })
         );
@@ -378,7 +378,7 @@ fn exact_template_recovery_may_reenter_a_claimed_arrow_required_type_owner() {
     let file = program_file(0, "required-arrow.ts", source);
     assert_eq!(
         file.syntax
-            .parser_recovery_facts()
+            .parser_recovery_facts
             .iter()
             .filter(|fact| fact.kind == ParserRecoveryKind::Template)
             .count(),
@@ -442,16 +442,11 @@ fn named_tuple_arrow_recovery_is_owned_by_its_function_like_signature() {
     let file = program_file(0, "recovered-arrow-header.ts", source);
     let labels = file
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .filter(|recovery| recovery.kind == ParserRecoveryKind::Type)
         .collect::<Vec<_>>();
-    assert_eq!(
-        labels.len(),
-        2,
-        "{:#?}",
-        file.syntax.parser_recovery_facts()
-    );
+    assert_eq!(labels.len(), 2, "{:#?}", file.syntax.parser_recovery_facts);
     assert!(labels.iter().all(|recovery| {
         recovery.authored_span.start >= source.find("label").unwrap() as u32
             && recovery.recovery_extent.end < source.find("values;").unwrap() as u32
@@ -497,7 +492,7 @@ fn recovered_type_members_use_the_type_recovery_product_owner() {
         let file = program_file(0, "recovered-type-member.ts", source);
         let facts = file
             .syntax
-            .parser_recovery_facts()
+            .parser_recovery_facts
             .iter()
             .filter(|recovery| recovery.kind == ParserRecoveryKind::Type)
             .collect::<Vec<_>>();

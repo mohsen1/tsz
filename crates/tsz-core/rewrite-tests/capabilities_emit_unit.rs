@@ -61,7 +61,7 @@ fn typescript_type_declarations_preserve_emit_claims() {
     assert!(
         ordinary
             .syntax
-            .parser_recovery_facts()
+            .parser_recovery_facts
             .iter()
             .any(|fact| { fact.kind == ParserRecoveryKind::Declaration })
     );

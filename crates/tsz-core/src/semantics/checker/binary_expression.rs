@@ -1,4 +1,4 @@
-use crate::bind::ScopeId;
+use crate::bind::{ScopeId, TypeofWitness};
 use crate::program::SemanticCompletion;
 use crate::semantics::relation::{RelationContext, RelationMode};
 use crate::semantics::types::{
@@ -7,7 +7,9 @@ use crate::semantics::types::{
 use crate::source::{FileId, Span};
 use crate::syntax::{BinaryOperator, Expression, ExpressionKind};
 
-use super::{Checker, relation_diagnostic::RelationDiagnosticStyle};
+use super::{
+    Checker, capabilities::completion_state, relation_diagnostic::RelationDiagnosticStyle,
+};
 
 pub(super) struct BinaryEvaluation {
     pub(super) value: Option<TypeId>,
@@ -68,6 +70,8 @@ impl BinaryEvaluation {
 
 const LEFT_ARITHMETIC_MESSAGE: &str = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
 const RIGHT_ARITHMETIC_MESSAGE: &str = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
+const LEFT_INSTANCEOF_MESSAGE: &str = "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.";
+const RIGHT_INSTANCEOF_MESSAGE: &str = "The right-hand side of an 'instanceof' expression must be either of type 'any', a class, function, or other type assignable to the 'Function' interface type, or an object type with a 'Symbol.hasInstance' method.";
 
 impl Checker<'_> {
     pub(super) fn infer_authored_binary_expression(
@@ -85,11 +89,11 @@ impl Checker<'_> {
         else {
             unreachable!("binary inference requires a binary expression")
         };
+        if *operator == BinaryOperator::InstanceOf {
+            return self.infer_instanceof_expression(file, scope, left, right);
+        }
         let left_type = self.infer_expression(file, scope, left, None);
         let right_type = self.infer_expression(file, scope, right, None);
-        if *operator == BinaryOperator::InstanceOf {
-            self.observe_completion(SemanticCompletion::Deferred);
-        }
         if let Some(operator) = deferred_operator(*operator) {
             return self.infer_binary_expression(
                 file,
@@ -112,6 +116,94 @@ impl Checker<'_> {
             }));
         }
         self.store.builtins.boolean
+    }
+
+    fn infer_instanceof_expression(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        left: &Expression,
+        right: &Expression,
+    ) -> TypeId {
+        let left_type = self.infer_expression(file, scope, left, None);
+        let right_type = self.infer_expression(file, scope, right, None);
+        for (operand, expression, right, code, message) in [
+            (left_type, left, false, 2358, LEFT_INSTANCEOF_MESSAGE),
+            (right_type, right, true, 2359, RIGHT_INSTANCEOF_MESSAGE),
+        ] {
+            let outcome = self.instanceof_operand(operand, right, 0);
+            if let Completion::Complete(false) = self.require_completion(outcome) {
+                self.push_diagnostic(file, expression.span, message.into(), code);
+            }
+        }
+        self.store.builtins.boolean
+    }
+
+    fn instanceof_operand(
+        &mut self,
+        operand: TypeId,
+        right: bool,
+        depth: usize,
+    ) -> Completion<bool> {
+        if right
+            && let TypeKind::Deferred(DeferredType::Value(declaration)) = self.store.kind(operand)
+            && self
+                .program
+                .standard_library
+                .is_instanceof_constructor_value(*declaration)
+        {
+            return Completion::Complete(true);
+        }
+        let operand = completed!(self.force_operand(operand, depth));
+        if right
+            && let TypeKind::LibraryReference { declaration, .. } = self.store.kind(operand)
+            && self.program.standard_library.is_function_type(*declaration)
+        {
+            return Completion::Complete(true);
+        }
+        match self.store.kind(operand).clone() {
+            TypeKind::TypeParameter { .. } => {
+                match completed!(self.type_parameter_constraint(operand)) {
+                    None => Completion::Complete(!right),
+                    Some(constraint) => {
+                        let constraint = completed!(self.force_operand(constraint, depth + 1));
+                        if matches!(
+                            self.store.kind(constraint),
+                            TypeKind::TypeParameter { .. }
+                                | TypeKind::Union(_)
+                                | TypeKind::Intersection(_)
+                        ) {
+                            Completion::Deferred
+                        } else if right && matches!(self.store.kind(constraint), TypeKind::Any) {
+                            Completion::Complete(false)
+                        } else {
+                            self.instanceof_operand(constraint, right, depth + 1)
+                        }
+                    }
+                }
+            }
+            TypeKind::Union(members) => {
+                let mut incomplete = SemanticCompletion::Complete;
+                for member in members {
+                    let outcome = self.instanceof_operand(member, right, depth + 1);
+                    match outcome {
+                        Completion::Complete(value) if value == !right => {
+                            return Completion::Complete(value);
+                        }
+                        Completion::Complete(_) => {}
+                        _ => incomplete = incomplete.combine(completion_state(&outcome)),
+                    }
+                }
+                match incomplete {
+                    SemanticCompletion::Complete => Completion::Complete(right),
+                    SemanticCompletion::Deferred => Completion::Deferred,
+                    SemanticCompletion::Cycle => Completion::Cycle,
+                    SemanticCompletion::Limit => Completion::Limit,
+                }
+            }
+            kind => instanceof_atomic(&kind, right, self.options.effective_strict_null_checks())
+                .map_or(Completion::Deferred, Completion::Complete),
+        }
     }
 
     pub(super) fn infer_compound_add_assignment(
@@ -494,4 +586,29 @@ fn known_truthiness(kind: &TypeKind) -> Option<bool> {
         TypeKind::LiteralNumber(value, _) => Some(value.is_truthy()),
         _ => None,
     }
+}
+
+fn instanceof_atomic(kind: &TypeKind, right: bool, strict_nulls: bool) -> Option<bool> {
+    use TypeKind::*;
+    let (domain, object_like) = Checker::flow_type_domain(kind);
+    Some(match right {
+        false if domain.is_some() && !object_like => false,
+        false if matches!(kind, Never | Void) => false,
+        false => (!matches!(
+            kind,
+            TypeParameter { .. }
+                | Union(_)
+                | Intersection(_)
+                | LibraryReference { .. }
+                | Deferred(_)
+        ))
+        .then_some(true)?,
+        true if domain == Some(TypeofWitness::Function) => true,
+        true if matches!(kind, Any | Never | Error | Invalid(_)) => true,
+        true if matches!(kind, Null | Undefined) && !strict_nulls => true,
+        true if domain.is_some() && !object_like => false,
+        true if matches!(kind, Unknown | Void | ObjectKeyword) => false,
+        true if matches!(kind, Object(shape) if shape.properties.is_empty()) => false,
+        true => return None,
+    })
 }

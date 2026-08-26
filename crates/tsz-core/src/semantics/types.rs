@@ -5,7 +5,7 @@ use crate::source::{DeclId, FileId, NodeId};
 use crate::syntax::{KeywordType, parse_number_literal};
 use crate::text::quote_string;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeId(pub u32);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -554,7 +554,7 @@ pub(crate) enum UnionPolicy {
     PreserveAuthoredStructuralOrder,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BuiltinTypes {
     pub error: TypeId,
     pub any: TypeId,
@@ -610,21 +610,7 @@ impl TypeStore {
         let mut store = Self {
             kinds: Vec::new(),
             interned: HashMap::new(),
-            builtins: BuiltinTypes {
-                error: TypeId(0),
-                any: TypeId(0),
-                unknown: TypeId(0),
-                never: TypeId(0),
-                void: TypeId(0),
-                undefined: TypeId(0),
-                null: TypeId(0),
-                boolean: TypeId(0),
-                number: TypeId(0),
-                string: TypeId(0),
-                bigint: TypeId(0),
-                object: TypeId(0),
-                symbol: TypeId(0),
-            },
+            builtins: BuiltinTypes::default(),
         };
         store.builtins = BuiltinTypes {
             error: store.intern(TypeKind::Error),
@@ -969,22 +955,17 @@ impl TypeStore {
         }
     }
 
-    /// Allocate an incomplete anonymous shape without giving it interned
-    /// semantic identity. Required boundaries always force this to
-    /// `Completion::Deferred`, and definitive caches reject it.
+    /// Allocate a fresh identity-free incomplete shape rejected by definitive caches.
     pub fn deferred_object_shape(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::ObjectShape)
     }
 
-    /// Allocate an identity-free nonclaim for generic function/constructor
-    /// syntax until a binder-owned function-type declaration identity exists.
+    /// Allocate a fresh generic-function nonclaim until binder-owned identity exists.
     pub fn deferred_generic_function(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::GenericFunction)
     }
 
-    /// Allocate a query-local nonclaim for a generic call whose authored
-    /// signature has not yet been instantiated. Keeping this fresh prevents
-    /// unrelated call sites from sharing recursion identity or a force entry.
+    /// Allocate a fresh generic-call nonclaim until instantiation, isolating query identity.
     pub fn deferred_generic_call(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::GenericCall)
     }
@@ -1020,27 +1001,22 @@ impl TypeStore {
         }))
     }
 
-    /// Allocate a source-free nonclaim for `unique symbol` until its
-    /// declaration-owned nominal identity and host grammar are modeled.
+    /// Allocate a source-free `unique symbol` nonclaim until declaration-owned identity exists.
     pub fn deferred_unique_symbol(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::UniqueSymbol)
     }
 
-    /// Preserve `BigInt` literal syntax without collapsing distinct values to
-    /// `bigint` before canonical arbitrary-precision identity is modeled.
+    /// Preserve `BigInt` syntax until canonical arbitrary-precision literal identity is modeled.
     pub fn deferred_bigint_literal(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::BigIntLiteral)
     }
 
-    /// Allocate a fresh nonclaim for scanner recovery whose numeric value is
-    /// not owned. Authored malformed text never enters literal interning.
+    /// Allocate a fresh malformed-numeric nonclaim that cannot enter literal interning.
     pub fn deferred_numeric_recovery(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::NumericRecovery)
     }
 
-    /// Allocate an identity-free typed nonclaim for an ordinary string value
-    /// that cannot be represented by Rust `String` without losing UTF-16
-    /// code units. The authored units never enter the type interner.
+    /// Allocate a fresh string nonclaim when Rust `String` would lose authored UTF-16 units.
     pub fn deferred_utf16_string_literal(&mut self) -> TypeId {
         self.fresh_deferred(DeferredType::Utf16StringLiteral)
     }

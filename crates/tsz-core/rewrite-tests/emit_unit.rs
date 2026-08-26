@@ -1320,7 +1320,7 @@ fn invalid_new_type_argument_lists_remain_parser_owned() {
         Arc::<str>::from(recovered),
     ));
     assert!(!parsed.diagnostics.is_empty());
-    assert!(!parsed.unit.parser_recovery_facts().is_empty());
+    assert!(!parsed.unit.parser_recovery_facts.is_empty());
     for no_check in [false, true] {
         let output = Compiler::new().compile(
             vec![SourceInput::new(

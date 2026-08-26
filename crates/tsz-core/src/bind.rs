@@ -296,7 +296,7 @@ pub(crate) fn bind_source_with_kind(
         javascript_property_uses: Vec::new(),
         javascript_expando_initializers: BTreeSet::new(),
         flow_facts: PendingFlowFacts::default(),
-        unmodeled_declaration_hosts: unit.unmodeled_declaration_hosts().to_vec(),
+        unmodeled_declaration_hosts: unit.unmodeled_declaration_hosts.clone(),
     };
     for statement in &unit.statements {
         binder.bind_statement(statement, ScopeId(0), None);

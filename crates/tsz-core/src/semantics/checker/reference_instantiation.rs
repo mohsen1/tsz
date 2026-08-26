@@ -269,31 +269,11 @@ impl Checker<'_> {
     ) -> Completion<Result<(), RelationFailure>> {
         let mut relation_source = argument;
         let mut constrained_parameter = false;
-        if let TypeKind::TypeParameter {
-            declaration, index, ..
-        } = self.store.kind(argument).clone()
+        if matches!(self.store.kind(argument), TypeKind::TypeParameter { .. })
+            && let Some(constraint) = completed!(self.type_parameter_constraint(argument))
         {
-            let Some((parameters, scope)) = self
-                .models
-                .get(&declaration)
-                .copied()
-                .and_then(DeclarationModel::type_parameters)
-            else {
-                return Completion::Deferred;
-            };
-            let Some(parameter) = parameters.get(index as usize) else {
-                return Completion::Deferred;
-            };
-            if let Some(parameter_constraint) = &parameter.constraint {
-                let substitutions = self.substitution(declaration, parameters, &[]);
-                relation_source = self.resolve_type_node(
-                    declaration.file,
-                    scope,
-                    parameter_constraint,
-                    &substitutions,
-                );
-                constrained_parameter = true;
-            }
+            relation_source = constraint;
+            constrained_parameter = true;
         }
         relation_source = completed!(self.force_operand(relation_source, depth));
         constraint = completed!(self.force_operand(constraint, depth));
@@ -398,6 +378,39 @@ impl Checker<'_> {
             }],
             ..ObjectShape::default()
         })))
+    }
+
+    pub(super) fn type_parameter_constraint(
+        &mut self,
+        operand: TypeId,
+    ) -> Completion<Option<TypeId>> {
+        let TypeKind::TypeParameter {
+            declaration, index, ..
+        } = self.store.kind(operand).clone()
+        else {
+            return Completion::Deferred;
+        };
+        let Some((parameters, scope)) = self
+            .models
+            .get(&declaration)
+            .copied()
+            .and_then(DeclarationModel::type_parameters)
+        else {
+            return Completion::Deferred;
+        };
+        let Some(constraint) = parameters
+            .get(index as usize)
+            .and_then(|parameter| parameter.constraint.as_ref())
+        else {
+            return Completion::Complete(None);
+        };
+        let substitutions = self.substitution(declaration, parameters, &[]);
+        Completion::Complete(Some(self.resolve_type_node(
+            declaration.file,
+            scope,
+            constraint,
+            &substitutions,
+        )))
     }
 
     pub(super) fn symbolic_keyof_operand_supported(&self, operand: TypeId) -> Completion<()> {

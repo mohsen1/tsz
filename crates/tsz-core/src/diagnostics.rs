@@ -27,7 +27,7 @@ impl DiagnosticCategory {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedInformation {
     pub file: String,
     pub start: u32,
@@ -43,12 +43,10 @@ impl RelatedInformation {
     #[must_use]
     pub fn unlocated(message_text: impl Into<String>, code: u32, depth: u32) -> Self {
         Self {
-            file: String::new(),
-            start: 0,
-            length: 0,
             message_text: message_text.into(),
             code,
             depth,
+            ..Self::default()
         }
     }
 }

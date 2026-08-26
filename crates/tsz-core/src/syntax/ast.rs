@@ -151,43 +151,12 @@ pub(crate) enum UnmodeledDeclarationHostKind {
 
 impl SourceUnit {
     #[must_use]
-    pub(crate) fn authored_literal_facts(&self) -> &[AuthoredLiteralFact] {
-        &self.authored_literal_facts
-    }
-
-    #[must_use]
-    pub(crate) fn parser_recovery_facts(&self) -> &[ParserRecoveryFact] {
-        &self.parser_recovery_facts
-    }
-
-    #[must_use]
-    pub(crate) fn unmodeled_declaration_hosts(&self) -> &[UnmodeledDeclarationHostFact] {
-        &self.unmodeled_declaration_hosts
-    }
-
-    #[must_use]
-    pub(crate) const fn source_check_directive(&self) -> Option<SourceCheckDirective> {
-        self.source_check_directive
-    }
-
-    #[must_use]
     pub(crate) fn has_source_syntax_fact(&self, fact: SourceSyntaxFact) -> bool {
         self.source_syntax_facts.binary_search(&fact).is_ok()
     }
 
     pub(crate) fn contextual_grammar_facts(&self) -> &[ContextualGrammarFact] {
         &self.contextual_grammar_facts
-    }
-
-    pub(crate) fn javascript_jsdoc_casts(
-        &self,
-    ) -> impl Iterator<Item = (NodeId, JavaScriptJSDocCastKind)> + '_ {
-        self.source_syntax_facts
-            .iter()
-            .filter_map(|fact| match fact {
-                SourceSyntaxFact::JavaScriptJSDocCast(owner, kind) => Some((*owner, *kind)),
-                _ => None,
-            })
     }
 
     /// Whether this file owns a module-local root scope rather than
@@ -238,22 +207,6 @@ impl SourceUnit {
 
     pub(crate) fn comments(&self) -> &[CommentTrivia] {
         &self.comments
-    }
-
-    #[must_use]
-    pub(crate) const fn has_unicode_line_comment_terminator(&self) -> bool {
-        self.has_unicode_line_comment_terminator
-    }
-
-    pub(crate) fn literal_syntax_boundaries(
-        &self,
-    ) -> impl Iterator<Item = (AuthoredLiteralKind, LiteralSyntaxBoundary)> + '_ {
-        self.source_syntax_facts
-            .iter()
-            .filter_map(|fact| match fact {
-                SourceSyntaxFact::LiteralBoundary(family, boundary) => Some((*family, *boundary)),
-                _ => None,
-            })
     }
 }
 
@@ -970,7 +923,18 @@ impl TypeNode {
     /// these positions; callers that do not own that filter fail closed.
     #[must_use]
     pub fn contains_type_query(&self) -> bool {
-        self.contains(TypeContainment::TypeQuery)
+        walk_authored_item(
+            AuthoredTypeItem::Type(self, AuthoredTypeEdge::Nested),
+            &mut |item| match item {
+                AuthoredTypeItem::Type(node, _)
+                    if matches!(node.kind, TypeNodeKind::TypeQuery { .. }) =>
+                {
+                    TypeWalkControl::Stop
+                }
+                AuthoredTypeItem::Member(member) if member.recovered => TypeWalkControl::Prune,
+                _ => TypeWalkControl::Continue,
+            },
+        )
     }
 
     /// Visit the `infer` declarations introduced by one conditional extends
@@ -1012,33 +976,6 @@ impl TypeNode {
                 _ => TypeWalkControl::Continue,
             },
         )
-    }
-
-    fn contains(&self, containment: TypeContainment) -> bool {
-        walk_authored_item(
-            AuthoredTypeItem::Type(self, AuthoredTypeEdge::Nested),
-            &mut |item| containment.control(item),
-        )
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TypeContainment {
-    TypeQuery,
-}
-
-impl TypeContainment {
-    fn control(self, item: AuthoredTypeItem<'_>) -> TypeWalkControl {
-        match item {
-            AuthoredTypeItem::Type(node, _)
-                if self == Self::TypeQuery
-                    && matches!(node.kind, TypeNodeKind::TypeQuery { .. }) =>
-            {
-                TypeWalkControl::Stop
-            }
-            AuthoredTypeItem::Member(member) if member.recovered => TypeWalkControl::Prune,
-            _ => TypeWalkControl::Continue,
-        }
     }
 }
 

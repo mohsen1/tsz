@@ -223,7 +223,7 @@ impl CapabilityAnalysis {
         let mut function_like_owners = Vec::new();
         let mut file_semantic_modes = vec![FileSemanticMode::Checked; files.len()];
         for file in files {
-            let mode = match file.syntax.source_check_directive().map(|item| item.kind) {
+            let mode = match file.syntax.source_check_directive.map(|item| item.kind) {
                 Some(SourceCheckDirectiveKind::NoCheck) => {
                     FileSemanticMode::UncheckedBySourceDirective
                 }
@@ -380,29 +380,7 @@ impl CapabilityAnalysis {
             })
     }
 
-    /// Whether a nonclaimed syntax-recovery container may still enter nested
-    /// statements that carry their own stable capability identities. Direct
-    /// names remain owned only by an identified recovered initializer or a
-    /// typed flow region; broader program/file gaps never allow descent.
-    pub(crate) fn semantic_check_node_allows_claimed_descendants(
-        &self,
-        file: FileId,
-        owner: NodeId,
-    ) -> bool {
-        self.semantic_check_node_descendant_permissions(file, owner)
-            .0
-    }
-
-    pub(crate) fn semantic_check_node_allows_recovery_identifiers(
-        &self,
-        file: FileId,
-        owner: NodeId,
-    ) -> bool {
-        self.semantic_check_node_descendant_permissions(file, owner)
-            .1
-    }
-
-    fn semantic_check_node_descendant_permissions(
+    pub(crate) fn semantic_check_node_descendant_permissions(
         &self,
         file: FileId,
         owner: NodeId,
@@ -998,12 +976,16 @@ fn derive_file_nonclaims(
     );
     let javascript_jsdoc_casts = file
         .syntax
-        .javascript_jsdoc_casts()
-        .map(|(owner, _)| owner)
+        .source_syntax_facts
+        .iter()
+        .filter_map(|fact| match fact {
+            SourceSyntaxFact::JavaScriptJSDocCast(owner, _) => Some(*owner),
+            _ => None,
+        })
         .collect();
     let mut nodes = flow_containment::semantic_node_inventory(
         &file.syntax.statements,
-        file.syntax.parser_recovery_facts(),
+        &file.syntax.parser_recovery_facts,
         &javascript_jsdoc_casts,
     );
     inferred_products::add_nonclaims(nonclaims, file);
@@ -1045,14 +1027,14 @@ fn derive_file_nonclaims(
     {
         add_dts(nonclaims, scope, SyntaxGap::Declaration);
     }
-    if !file.syntax.unmodeled_declaration_hosts().is_empty()
+    if !file.syntax.unmodeled_declaration_hosts.is_empty()
         || is_javascript && nodes.boundaries.contains(&FileBoundary::Declaration)
     {
         add_both_emit(nonclaims, scope, SyntaxGap::DeclarationHost);
         if is_javascript && nodes.boundaries.contains(&FileBoundary::Declaration)
             || file
                 .syntax
-                .unmodeled_declaration_hosts()
+                .unmodeled_declaration_hosts
                 .iter()
                 .any(|host| host.kind != UnmodeledDeclarationHostKind::Enum)
         {
@@ -1215,10 +1197,18 @@ fn derive_file_nonclaims(
     for (owner, gap) in nodes.recovered_function_likes {
         add_function_like_recovery_nonclaims(nonclaims, CapabilityScope::node(id, owner), gap);
     }
-    for (family, boundary) in file.syntax.literal_syntax_boundaries() {
+    for (family, boundary) in file
+        .syntax
+        .source_syntax_facts
+        .iter()
+        .filter_map(|fact| match fact {
+            SourceSyntaxFact::LiteralBoundary(family, boundary) => Some((*family, *boundary)),
+            _ => None,
+        })
+    {
         add_literal_boundary_nonclaims(nonclaims, file, family, boundary);
     }
-    if file.syntax.has_unicode_line_comment_terminator() {
+    if file.syntax.has_unicode_line_comment_terminator {
         add_semantic_diagnostics(nonclaims, scope, SyntaxGap::UnicodeLineCommentTerminator);
     }
     if file.has_unmodeled_javascript_module_products() {
@@ -1302,8 +1292,8 @@ fn add_unmodeled_declaration_host_nodes(
     file: &ProgramFile,
 ) {
     let mut found = false;
-    let mut unmapped = file.syntax.unmodeled_declaration_hosts().is_empty();
-    for host in file.syntax.unmodeled_declaration_hosts() {
+    let mut unmapped = file.syntax.unmodeled_declaration_hosts.is_empty();
+    for host in &file.syntax.unmodeled_declaration_hosts {
         if host.kind == UnmodeledDeclarationHostKind::Global {
             add_declaration_host_nonclaims(nonclaims, CapabilityScope::Program);
             continue;
@@ -1350,7 +1340,7 @@ fn derive_program_nonclaims(
 ) {
     if files
         .iter()
-        .any(|file| file.syntax.has_unicode_line_comment_terminator())
+        .any(|file| file.syntax.has_unicode_line_comment_terminator)
     {
         add_both_emit(
             nonclaims,

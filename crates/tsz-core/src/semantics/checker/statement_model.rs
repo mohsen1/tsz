@@ -89,7 +89,8 @@ impl Checker<'_> {
             self.observe_file_completion(file, SemanticCompletion::Deferred);
             if self
                 .capabilities
-                .semantic_check_node_allows_claimed_descendants(file, statement.id)
+                .semantic_check_node_descendant_permissions(file, statement.id)
+                .0
             {
                 self.check_recovery_statement_descendants(
                     file,
@@ -232,7 +233,8 @@ impl Checker<'_> {
         };
         let allow_identifier_semantics = self
             .capabilities
-            .semantic_check_node_allows_recovery_identifiers(file, statement.id);
+            .semantic_check_node_descendant_permissions(file, statement.id)
+            .1;
         let mut adapter = SemanticDescendantAdapter {
             checker: self,
             file,

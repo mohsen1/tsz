@@ -19,12 +19,6 @@ struct ReturnSite<'a> {
     expression: Option<&'a Expression>,
 }
 
-#[derive(Default)]
-struct ReturnAnalysis<'a> {
-    sites: Vec<ReturnSite<'a>>,
-    supported: bool,
-}
-
 impl Checker<'_> {
     pub(super) fn declared_function_type(&mut self, id: DeclId) -> Completion<TypeId> {
         let Some(DeclarationModel::Function { declaration, scope }) = self.models.get(&id).copied()
@@ -118,26 +112,8 @@ impl Checker<'_> {
         modeled && has_function
     }
 
-    fn collides_with_global_standard_library_value(&self, id: DeclId) -> bool {
-        let Some(file) = self.program.file(id.file) else {
-            return true;
-        };
-        let Some(declaration) = file.bindings.declaration(id) else {
-            return true;
-        };
-        declaration.scope == ScopeId(0)
-            && !file.is_external_module()
-            && self
-                .program
-                .standard_library
-                .resolve(&declaration.name, Meaning::Value)
-                .is_some()
-    }
-
-    /// Whether the binder-owned value group is inside this checkpoint's
-    /// declaration-host boundary. Cross-kind peers and repeated class value
-    /// hosts require merge diagnostics, while multiple function
-    /// implementations require TS2393; none of those owners is modeled yet.
+    /// Whether the binder-owned value group has a modeled declaration host.
+    /// Cross-kind peers, repeated classes, and multiple implementations do not.
     pub(super) fn declaration_value_host_is_modeled(
         &self,
         id: DeclId,
@@ -148,7 +124,23 @@ impl Checker<'_> {
             return false;
         }
         if expected_kind == DeclarationKind::Function
-            && self.collides_with_global_standard_library_value(id)
+            && self
+                .program
+                .file(id.file)
+                .and_then(|file| {
+                    file.bindings
+                        .declaration(id)
+                        .map(|declaration| (file, declaration))
+                })
+                .is_none_or(|(file, declaration)| {
+                    declaration.scope == ScopeId(0)
+                        && !file.is_external_module()
+                        && self
+                            .program
+                            .standard_library
+                            .resolve(&declaration.name, Meaning::Value)
+                            .is_some()
+                })
         {
             return false;
         }
@@ -161,7 +153,7 @@ impl Checker<'_> {
             return false;
         }
         let mut function_implementations = 0;
-        for candidate in group {
+        group.into_iter().all(|candidate| {
             let Some(bound) = self.program.files[candidate.file.0 as usize]
                 .bindings
                 .declaration(candidate)
@@ -171,24 +163,19 @@ impl Checker<'_> {
             if bound.kind != expected_kind {
                 return false;
             }
-            if expected_kind == DeclarationKind::Function {
-                let Some(DeclarationModel::Function { declaration, .. }) =
-                    self.models.get(&candidate)
-                else {
-                    return false;
-                };
-                function_implementations += usize::from(declaration.has_body);
-                if function_implementations > 1 {
-                    return false;
-                }
+            if expected_kind != DeclarationKind::Function {
+                return true;
             }
-        }
-        true
+            let Some(DeclarationModel::Function { declaration, .. }) = self.models.get(&candidate)
+            else {
+                return false;
+            };
+            function_implementations += usize::from(declaration.has_body);
+            function_implementations <= 1
+        })
     }
 
-    /// Validate only the overload owners modeled at this checkpoint. Calls
-    /// and projections still use the demand gateway above; an unsupported
-    /// compatibility owner makes the whole check an honest nonclaim.
+    /// Validate only modeled overload owners; unsupported compatibility defers.
     pub(super) fn validate_function_overload_group(&mut self, id: DeclId) {
         let group = self.function_group_ids(id);
         if group.len() < 2 {
@@ -207,7 +194,6 @@ impl Checker<'_> {
         if self.javascript_function_redeclaration_group_is_modeled(&self.value_group_ids(id)) {
             return;
         }
-
         if group.iter().any(|candidate| {
             matches!(
                 self.models.get(candidate),
@@ -218,15 +204,11 @@ impl Checker<'_> {
                         || !declaration.overload_context_is_recovery_free()
             )
         }) {
-            // TS1064, default-export overload ownership, and the invalid
-            // abstract-function modifier are not modeled by this bounded
-            // ordinary-overload checkpoint.
+            // This checkpoint does not own TS1064, default export, or abstract functions.
             let _ = self.require_completion(Completion::<()>::Deferred);
             return;
         }
-
         self.validate_function_overload_modifiers(&group);
-
         let implementations = group
             .iter()
             .copied()
@@ -243,7 +225,6 @@ impl Checker<'_> {
             }
             return;
         };
-
         let overloads = group
             .iter()
             .copied()
@@ -256,8 +237,7 @@ impl Checker<'_> {
             .collect::<Vec<_>>();
         for overload in overloads {
             if !self.function_overload_is_compatibly_modeled(*implementation, overload) {
-                // TS2394 requires the full erased-signature owner. Until that
-                // owner is modeled, do not cache or publish a Complete result.
+                // TS2394 awaits the full erased-signature owner.
                 let _ = self.require_completion(Completion::<()>::Deferred);
                 return;
             }
@@ -354,7 +334,6 @@ impl Checker<'_> {
         {
             return false;
         }
-
         let Completion::Complete(implementation_type) = self.declared_function_type(implementation)
         else {
             return false;
@@ -370,10 +349,8 @@ impl Checker<'_> {
         let TypeKind::Function(overload_signature) = self.store.kind(overload_type).clone() else {
             return false;
         };
-
         self.signatures_are_compatibly_modeled(&implementation_signature, &overload_signature)
     }
-
     pub(super) fn class_overload_is_compatibly_modeled(
         &mut self,
         file: FileId,
@@ -900,12 +877,12 @@ impl Checker<'_> {
             }
             self.resolve_type_node(id.file, scope, return_type, &type_parameters)
         } else if !declaration.has_body {
-            // A signature without a body has no empty block from which to
-            // infer `void`. TS7010 owns the strict-mode diagnostic, while the
-            // authored callable signature recovers with an `any` return.
+            // Bodyless signatures recover with `any`; TS7010 owns strict diagnostics.
             self.store.builtins.any
+        } else if declaration.declared || declaration.is_async {
+            return Completion::Deferred;
         } else {
-            completed!(self.infer_function_return(id, declaration, scope))
+            completed!(self.infer_block_return(id.file, &declaration.body, scope))
         };
         Completion::Complete(self.store.function(
             (!declaration.type_parameters.is_empty()).then_some(id),
@@ -967,49 +944,31 @@ impl Checker<'_> {
         type_parameters
     }
 
-    fn infer_function_return(
-        &mut self,
-        id: DeclId,
-        declaration: &FunctionDeclaration,
-        scope: ScopeId,
-    ) -> Completion<TypeId> {
-        if declaration.declared || declaration.is_async {
-            return Completion::Deferred;
-        }
-        self.infer_block_return(id.file, &declaration.body, scope)
-    }
-
     fn infer_block_return(
         &mut self,
         file: FileId,
         body: &[Statement],
         scope: ScopeId,
     ) -> Completion<TypeId> {
-        let mut analysis = ReturnAnalysis {
-            sites: Vec::new(),
-            supported: true,
-        };
-        let definitely_returns = collect_return_sites(body, &mut analysis);
-        if !analysis.supported {
+        let mut sites = Vec::new();
+        let Some(definitely_returns) = collect_return_sites(body, &mut sites) else {
             return Completion::Deferred;
-        }
-        if analysis.sites.iter().any(|site| {
+        };
+        if sites.iter().any(|site| {
             !self
                 .capabilities
                 .semantic_check_node_is_claimed(file, site.statement.id)
         }) {
             return Completion::Deferred;
         }
-        if analysis.sites.is_empty() || analysis.sites.iter().all(|site| site.expression.is_none())
-        {
+        if sites.is_empty() || sites.iter().all(|site| site.expression.is_none()) {
             return Completion::Complete(self.store.builtins.void);
         }
         if !definitely_returns {
             return Completion::Deferred;
         }
-
-        let mut return_types = Vec::with_capacity(analysis.sites.len());
-        for site in analysis.sites {
+        let mut return_types = Vec::with_capacity(sites.len());
+        for site in sites {
             let Some(expression) = site.expression else {
                 return_types.push(self.store.builtins.undefined);
                 continue;
@@ -1063,58 +1022,42 @@ fn javascript_signature_is_untyped(
 const fn bounded_inferred_return(kind: &TypeKind) -> bool {
     matches!(
         kind,
-        TypeKind::Any
-            | TypeKind::Unknown
-            | TypeKind::Never
-            | TypeKind::Void
-            | TypeKind::Undefined
-            | TypeKind::Null
-            | TypeKind::Boolean
-            | TypeKind::Number
-            | TypeKind::String
-            | TypeKind::BigInt
-            | TypeKind::ObjectKeyword
-            | TypeKind::Symbol
-            | TypeKind::LiteralBoolean(_, _)
-            | TypeKind::LiteralNumber(_, _)
-            | TypeKind::LiteralString(_, _)
-            | TypeKind::Array(_)
+        TypeKind::Array(_)
             | TypeKind::Tuple(_)
             | TypeKind::ClassInstance { .. }
-            | TypeKind::ClassConstructor { .. }
-    )
+            | non_recursive_type_kind!()
+    ) && !matches!(kind, TypeKind::TypeParameter { .. })
 }
 
 fn collect_return_sites<'a>(
     statements: &'a [Statement],
-    analysis: &mut ReturnAnalysis<'a>,
-) -> bool {
+    sites: &mut Vec<ReturnSite<'a>>,
+) -> Option<bool> {
     let mut definitely_returns = false;
     for statement in statements {
         definitely_returns |= match &statement.kind {
             StatementKind::Return(expression) => {
-                analysis.sites.push(ReturnSite {
+                sites.push(ReturnSite {
                     statement,
                     expression: expression.as_ref(),
                 });
                 true
             }
-            StatementKind::Block(statements) => collect_return_sites(statements, analysis),
+            StatementKind::Block(statements) => collect_return_sites(statements, sites)?,
             StatementKind::If(control_flow) => {
                 let then_returns = collect_return_sites(
                     std::slice::from_ref(control_flow.then_statement.as_ref()),
-                    analysis,
-                );
-                let else_statement = control_flow.else_statement.as_deref();
-                let else_returns = else_statement.is_some_and(|statement| {
-                    collect_return_sites(std::slice::from_ref(statement), analysis)
-                });
+                    sites,
+                )?;
+                let else_returns = control_flow
+                    .else_statement
+                    .as_deref()
+                    .map_or(Some(false), |statement| {
+                        collect_return_sites(std::slice::from_ref(statement), sites)
+                    })?;
                 then_returns && else_returns
             }
-            StatementKind::Switch(_) | StatementKind::Unknown => {
-                analysis.supported = false;
-                false
-            }
+            StatementKind::Switch(_) | StatementKind::Unknown => return None,
             StatementKind::Import(_)
             | StatementKind::Export(_)
             | StatementKind::Variable(_)
@@ -1128,5 +1071,5 @@ fn collect_return_sites<'a>(
             | StatementKind::Empty => false,
         };
     }
-    definitely_returns
+    Some(definitely_returns)
 }

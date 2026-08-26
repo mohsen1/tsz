@@ -60,7 +60,7 @@ fn nested_parser_recovery_owns_the_smallest_statement() {
     };
     let gap = &function.body[0];
     let kept = function.body.last().expect("kept nested statement");
-    let recovery_facts = file.syntax.parser_recovery_facts();
+    let recovery_facts = &file.syntax.parser_recovery_facts;
     assert_eq!(
         recovery_facts
             .iter()
@@ -122,7 +122,7 @@ fn recovered_binding_pattern_extent_includes_declarator_continuations() {
         let file = program_file(0, "binding-pattern.ts", source);
         let recovery = file
             .syntax
-            .parser_recovery_facts()
+            .parser_recovery_facts
             .iter()
             .find(|fact| fact.kind == ParserRecoveryKind::Declaration)
             .expect("binding-pattern recovery fact");
@@ -149,7 +149,8 @@ fn recovered_binding_pattern_extent_includes_declarator_continuations() {
         assert!(!analysis.semantic_check_node_is_claimed(file.source.id, dependent_owner));
         assert_eq!(
             analysis
-                .semantic_check_node_allows_recovery_identifiers(file.source.id, dependent_owner,),
+                .semantic_check_node_descendant_permissions(file.source.id, dependent_owner,)
+                .1,
             allows_identifiers,
         );
     }
@@ -165,7 +166,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let body = statement_starting_at(&object, object_source, "MissingOwnedBody");
     let tail = statement_starting_at(&object, object_source, "MissingTail");
     assert!(
-        object.syntax.parser_recovery_facts().is_empty(),
+        object.syntax.parser_recovery_facts.is_empty(),
         "both authored function bodies must keep their ordinary syntax owners",
     );
     let analysis = default_analysis(&object);
@@ -182,7 +183,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let spread = program_file(0, "object-spread-fragment.ts", spread_source);
     let spread_recovery = spread
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|fact| fact.authored_span.start == spread_source.find("...").unwrap() as u32)
         .expect("object spread recovery fact");
@@ -199,7 +200,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let arrow = program_file(0, "arrow-spread-fragment.ts", arrow_source);
     let arrow_recovery = arrow
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|fact| fact.authored_span.start == arrow_source.find("...").unwrap() as u32)
         .expect("arrow spread recovery fact");
@@ -216,7 +217,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let header = program_file(0, "recovered-function-header.ts", header_source);
     let header_recovery = header
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|fact| fact.authored_span.start == header_source.find("function").unwrap() as u32)
         .expect("function header recovery fact");
@@ -236,7 +237,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     );
     let template_recovery = template
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|fact| fact.kind == ParserRecoveryKind::Template)
         .expect("template recovery fact");
@@ -264,14 +265,14 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let template_analysis = default_analysis(&template);
     assert!(
         template_analysis
-            .semantic_check_node_allows_claimed_descendants(template.source.id, template_fragment,),
+            .semantic_check_node_descendant_permissions(template.source.id, template_fragment,)
+            .0,
         "mixed exact recovery may discover independently claimed nested owners",
     );
     assert!(
-        !template_analysis.semantic_check_node_allows_recovery_identifiers(
-            template.source.id,
-            template_fragment,
-        ),
+        !template_analysis
+            .semantic_check_node_descendant_permissions(template.source.id, template_fragment)
+            .1,
         "a represented recovery fragment cannot publish direct names",
     );
 
@@ -282,7 +283,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     );
     let declaration_tail_recovery = declaration_tail
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|fact| fact.kind == ParserRecoveryKind::Template)
         .expect("template recovery fact with declaration tail");
@@ -349,7 +350,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let hidden = &function.body[0];
     let signature_recovery = signature
         .syntax
-        .parser_recovery_facts()
+        .parser_recovery_facts
         .iter()
         .find(|fact| fact.owner.statement == root.id)
         .expect("signature recovery fact");
@@ -382,11 +383,11 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
         let file = program_file(0, path, source);
         assert!(
             file.syntax
-                .parser_recovery_facts()
+                .parser_recovery_facts
                 .iter()
                 .all(|fact| fact.kind != ParserRecoveryKind::Declaration),
             "a valid declarator list has no recovery owner: {:#?}",
-            file.syntax.parser_recovery_facts(),
+            file.syntax.parser_recovery_facts,
         );
         let [statement] = file.syntax.statements.as_slice() else {
             panic!(
@@ -458,17 +459,21 @@ fn flow_contained_recovery_fragments_allow_name_only_descendant_discovery() {
                 if has_recovery && has_flow_region {
                     mixed_owner_count += 1;
                     assert!(
-                        analysis.semantic_check_node_allows_claimed_descendants(
-                            file.source.id,
-                            statement.id,
-                        ),
+                        analysis
+                            .semantic_check_node_descendant_permissions(
+                                file.source.id,
+                                statement.id,
+                            )
+                            .0,
                         "{name} must remain discoverable below {statement:#?}: {reasons:#?}",
                     );
                     assert!(
-                        analysis.semantic_check_node_allows_recovery_identifiers(
-                            file.source.id,
-                            statement.id,
-                        ),
+                        analysis
+                            .semantic_check_node_descendant_permissions(
+                                file.source.id,
+                                statement.id,
+                            )
+                            .1,
                         "{name} must retain name discovery below {statement:#?}: {reasons:#?}",
                     );
                 }
@@ -558,6 +563,83 @@ fn declaration_nonclaims_follow_direct_and_return_value_owners() {
 }
 
 #[test]
+fn recovered_return_continuations_nonclaim_only_the_nearest_inferred_function_value() {
+    let source = concat!(
+        "class Cedar {} class Birch {}\n",
+        "function chooseTree(flag: boolean) {",
+        "return flag ? new Cedar() : new Birch();}\n",
+        "function recoveredBranch() {",
+        "if ((null as any)`head${\"gap\"}tail`) { return new Cedar(); }",
+        "return new Birch();}\n",
+        "function typedFlag(flag: boolean): boolean {",
+        "return flag ? true : false;}\n",
+        "function wrapper() {",
+        "function nestedTree(flag: boolean) {",
+        "return flag ? new Cedar() : new Birch();}",
+        "return 1;}\n",
+        "function arrowWrapper() {",
+        "const callback = (flag: boolean) => flag ? new Cedar() : new Birch();",
+        "return 1;}\n",
+        "function independent(flag: boolean) { return flag; }\n",
+    );
+    let file = program_file(0, "recovered-return-continuation.ts", source);
+    let analysis = default_analysis(&file);
+    let owner = |name: &str| {
+        let mut found = None;
+        for_each_statement_in(&file.syntax.statements, &mut |statement| {
+            if matches!(&statement.kind, StatementKind::Function(function) if function.name == name)
+            {
+                found = Some(statement.id);
+            }
+        });
+        found.unwrap_or_else(|| panic!("function {name}"))
+    };
+
+    for (name, gap) in [
+        ("chooseTree", SyntaxGap::Expression),
+        ("recoveredBranch", SyntaxGap::Template),
+        ("nestedTree", SyntaxGap::Expression),
+    ] {
+        let scope = CapabilityScope::node(file.source.id, owner(name));
+        let CapabilityClaim::Nonclaimed(reasons) =
+            analysis.claim(CapabilityTarget::DeclarationValue, scope)
+        else {
+            panic!("{name} must not publish its recovered inferred return");
+        };
+        assert_eq!(
+            reasons.copied().collect::<Vec<_>>(),
+            vec![CapabilityNonclaim {
+                target: CapabilityTarget::DeclarationValue,
+                scope,
+                reason: NonclaimReason::Syntax(gap),
+                deletion: DeletionCondition::DeepestSemanticOwner(gap),
+            }]
+        );
+        for target in [
+            CapabilityTarget::DeclarationModel,
+            CapabilityTarget::SemanticCheck,
+        ] {
+            assert!(
+                analysis.claim(target, scope).is_claimed(),
+                "{name}: {target:?}"
+            );
+        }
+    }
+
+    for name in ["typedFlag", "wrapper", "arrowWrapper", "independent"] {
+        assert!(
+            analysis
+                .claim(
+                    CapabilityTarget::DeclarationValue,
+                    CapabilityScope::node(file.source.id, owner(name)),
+                )
+                .is_claimed(),
+            "{name} has a complete return producer",
+        );
+    }
+}
+
+#[test]
 fn zero_width_eof_recovery_keeps_its_nested_statement_owner() {
     let source = concat!("function wrapper() {\n", "  type Broken =",);
     let file = program_file(0, "nested-eof.ts", source);
@@ -567,13 +649,13 @@ fn zero_width_eof_recovery_keeps_its_nested_statement_owner() {
     };
     let nested = function.body.first().expect("nested recovered type alias");
     assert!(
-        file.syntax.parser_recovery_facts().iter().any(|fact| {
+        file.syntax.parser_recovery_facts.iter().any(|fact| {
             fact.authored_span.end == source.len() as u32
                 && fact.owner.root_statement == root.id
                 && fact.owner.statement == nested.id
         }),
         "root={root:#?}, nested={nested:#?}, facts={:#?}",
-        file.syntax.parser_recovery_facts(),
+        file.syntax.parser_recovery_facts,
     );
     let declaration = file
         .bindings
@@ -602,7 +684,7 @@ fn opaque_namespace_extent_nonclaims_every_recovered_root_fragment() {
     );
     let host = file
         .syntax
-        .unmodeled_declaration_hosts()
+        .unmodeled_declaration_hosts
         .first()
         .expect("namespace host fact");
     let analysis = default_analysis(&file);
@@ -1060,9 +1142,15 @@ fn recovery_in_a_signature_seeds_only_its_executable_body_container() {
         &CompilerOptions::default(),
         CapabilityContext::default(),
     );
-    assert!(analysis.semantic_check_node_allows_claimed_descendants(file.source.id, root.id));
     assert!(
-        !analysis.semantic_check_node_allows_recovery_identifiers(file.source.id, root.id),
+        analysis
+            .semantic_check_node_descendant_permissions(file.source.id, root.id)
+            .0
+    );
+    assert!(
+        !analysis
+            .semantic_check_node_descendant_permissions(file.source.id, root.id)
+            .1,
         "a generic recovered signature may discover body statements, not header fragments",
     );
     assert!(
@@ -1089,7 +1177,9 @@ fn recovery_in_a_signature_seeds_only_its_executable_body_container() {
         "type-only declarations remain independently checkable",
     );
     assert!(
-        !analysis.semantic_check_node_allows_claimed_descendants(file.source.id, nested.id),
+        !analysis
+            .semantic_check_node_descendant_permissions(file.source.id, nested.id)
+            .0,
         "the nested function declaration belongs to the outer suffix",
     );
     let StatementKind::Function(nested_function) = &nested.kind else {
@@ -1148,31 +1238,39 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
 
     assert!(
         analysis(vec![recovery(requested_scope)])
-            .semantic_check_node_allows_claimed_descendants(file, owner),
+            .semantic_check_node_descendant_permissions(file, owner)
+            .0,
         "an exact-node semantic recovery owner may enter independently claimed descendants",
     );
     let mixed = analysis(vec![recovery(requested_scope), fragment(requested_scope)]);
     assert!(
-        mixed.semantic_check_node_allows_claimed_descendants(file, owner),
+        mixed
+            .semantic_check_node_descendant_permissions(file, owner)
+            .0,
         "an exact semantic owner may discover descendants through its represented fragment",
     );
     assert!(
-        !mixed.semantic_check_node_allows_recovery_identifiers(file, owner),
+        !mixed
+            .semantic_check_node_descendant_permissions(file, owner)
+            .1,
         "a represented fragment does not publish direct names",
     );
     assert!(
         !analysis(vec![fragment(requested_scope)])
-            .semantic_check_node_allows_claimed_descendants(file, owner),
+            .semantic_check_node_descendant_permissions(file, owner)
+            .0,
         "a representational fragment alone cannot discover semantic descendants",
     );
     assert!(
         analysis(vec![recovery(requested_scope), flow(requested_scope)])
-            .semantic_check_node_allows_claimed_descendants(file, owner),
+            .semantic_check_node_descendant_permissions(file, owner)
+            .0,
         "an exact-node flow region may accompany its exact-node recovery owner",
     );
     assert!(
         !analysis(vec![flow(requested_scope)])
-            .semantic_check_node_allows_claimed_descendants(file, owner),
+            .semantic_check_node_descendant_permissions(file, owner)
+            .0,
         "a pure flow region does not itself authorize descendant traversal",
     );
     assert!(
@@ -1223,17 +1321,20 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
     for broader_scope in [CapabilityScope::Program, CapabilityScope::File(file)] {
         assert!(
             !analysis(vec![recovery(broader_scope)])
-                .semantic_check_node_allows_claimed_descendants(file, owner),
+                .semantic_check_node_descendant_permissions(file, owner)
+                .0,
             "a {broader_scope:?} recovery reason cannot unlock node descent",
         );
         assert!(
             !analysis(vec![recovery(broader_scope), flow(requested_scope)])
-                .semantic_check_node_allows_claimed_descendants(file, owner),
+                .semantic_check_node_descendant_permissions(file, owner)
+                .0,
             "an exact-node flow reason cannot narrow a {broader_scope:?} recovery reason",
         );
         assert!(
             !analysis(vec![recovery(requested_scope), flow(broader_scope)])
-                .semantic_check_node_allows_claimed_descendants(file, owner),
+                .semantic_check_node_descendant_permissions(file, owner)
+                .0,
             "an exact-node recovery reason cannot narrow a {broader_scope:?} flow reason",
         );
         assert!(

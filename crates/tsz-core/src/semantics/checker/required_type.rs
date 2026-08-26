@@ -1176,7 +1176,7 @@ impl Checker<'_> {
         match self.force_type(ty, 0) {
             Completion::Complete(forced) => {
                 resolved = forced;
-                state = state.combine(completion_state(
+                state = state.combine(super::capabilities::completion_state(
                     &self.visit_required_type(forced, active, references),
                 ));
             }
@@ -1213,7 +1213,7 @@ impl Checker<'_> {
     ) {
         for child in children {
             let completion = self.visit_required_type(child, active, references);
-            *state = state.combine(completion_state(&completion));
+            *state = state.combine(super::capabilities::completion_state(&completion));
         }
     }
 }
@@ -1331,14 +1331,6 @@ fn is_entity_name_expression(expression: &Expression) -> bool {
     }
 }
 
-const fn completion_state<T>(completion: &Completion<T>) -> SemanticCompletion {
-    match completion {
-        Completion::Complete(_) => SemanticCompletion::Complete,
-        Completion::Deferred => SemanticCompletion::Deferred,
-        Completion::Cycle => SemanticCompletion::Cycle,
-        Completion::Limit => SemanticCompletion::Limit,
-    }
-}
 const fn synthetic_identity(file: FileId, start: u32) -> DeclId {
     DeclId {
         file,

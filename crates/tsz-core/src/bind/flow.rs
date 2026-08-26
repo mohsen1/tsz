@@ -235,6 +235,7 @@ pub(crate) enum UnsupportedFlowKind {
     Mutation,
     SwitchExit,
     UnsupportedCase,
+    InstanceOf,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -802,15 +803,54 @@ impl FlowBuilder<'_> {
             );
             return;
         }
+        let mut condition = branch.condition.peel_parentheses();
+        if let ExpressionKind::Unary {
+            operator: UnaryOperator::Not,
+            operand,
+        } = &condition.kind
+            && matches!(
+                operand.peel_parentheses().kind,
+                ExpressionKind::Binary {
+                    operator: BinaryOperator::InstanceOf,
+                    ..
+                }
+            )
+        {
+            condition = operand.peel_parentheses();
+        }
         let ExpressionKind::Binary {
             left,
             operator,
             right,
             ..
-        } = &branch.condition.peel_parentheses().kind
+        } = &condition.kind
         else {
             return;
         };
+        if *operator == BinaryOperator::InstanceOf {
+            let Some((reference, path)) = self.predicate_subject(left) else {
+                return;
+            };
+            let antecedent = self.antecedent(reference.expression);
+            let node = self.unsupported(
+                antecedent,
+                reference.declaration,
+                UnsupportedFlowKind::InstanceOf,
+            );
+            let routes = [PredicateRoute {
+                path: &path,
+                unknown: node,
+            }; 2];
+            self.assign_if_nodes(
+                statement,
+                reference.declaration,
+                [node; 2],
+                Some(routes),
+                [true; 2],
+                IfFlowEffects::AllMutations,
+            );
+            return;
+        }
         if *operator == BinaryOperator::LogicalAnd
             && self
                 .predicate_subject(left)

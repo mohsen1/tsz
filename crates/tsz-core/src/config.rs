@@ -30,8 +30,7 @@ pub enum ProjectSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectRequest {
     pub selection: ProjectSelection,
-    /// Discovery-affecting command-line override. Other explicit overrides are
-    /// applied by the adapter after resolution.
+    /// Discovery override; the adapter applies other overrides after resolution.
     pub allow_js: Option<bool>,
     pub check_js: Option<bool>,
     pub out_dir: Option<PathBuf>,
@@ -104,7 +103,7 @@ macro_rules! compiler_option_schema {
         string_property($options, $json)
     };
     (@decode path, $options:ident, $json:literal, $origin:ident) => {
-        path_property($options, $json, $origin)
+        string_property($options, $json).map(|value| absolute_path($origin, Path::new(&value)))
     };
     (@apply bool, $source:expr, $target:expr) => {
         if let Some(value) = $source { $target = *value; }
@@ -141,11 +140,8 @@ macro_rules! compiler_option_schema {
         $target = Some(value); true
     }};
     ($($variant:ident => $field:ident, $json:literal, $kind:ident;)+) => {
-        /// A compiler option whose source can affect diagnostic ownership.
-        ///
-        /// Process adapters clear an origin when a command-line value replaces
-        /// the configuration value. This keeps config-owned diagnostics located
-        /// without making provenance ambient compiler state.
+        /// An option whose source locates diagnostics; process overrides clear it
+        /// when replacing the configuration value, without ambient provenance.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
         pub enum CompilerOptionKey { $($variant,)+ }
 
@@ -156,9 +152,7 @@ macro_rules! compiler_option_schema {
                 match self { $(Self::$variant => $json,)+ }
             }
 
-            /// Resolve the case-insensitive command-line spelling used by
-            /// TypeScript. The spelling is the JSON option name with case
-            /// folded by the process adapter.
+            /// Resolve TypeScript's case-insensitive CLI spelling of a JSON option.
             #[must_use]
             pub fn from_cli_name(name: &str) -> Option<Self> {
                 Self::ALL
@@ -173,8 +167,7 @@ macro_rules! compiler_option_schema {
             }
         }
 
-        /// Explicit compiler-option values from a configuration layer or a
-        /// process invocation. Absence is distinct from a false/default value.
+        /// Explicit config/process values; absence differs from false/default.
         #[derive(Debug, Clone, Default, PartialEq, Eq)]
         pub struct CompilerOptionPatch {
             $(pub $field: compiler_option_schema!(@type $kind),)+
@@ -213,8 +206,7 @@ macro_rules! compiler_option_schema {
     };
 }
 
-/// Value domain for one compiler option in the shared configuration/process
-/// schema.
+/// Value domain for one option in the shared configuration/process schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompilerOptionValueKind {
     Boolean,
@@ -374,8 +366,7 @@ impl ResolvedProject {
         self.graph.reference_count()
     }
 
-    /// Apply explicit process/service overrides and remove configuration
-    /// provenance for exactly the keys that supplied a value.
+    /// Apply explicit overrides and clear provenance only for supplied keys.
     #[must_use]
     pub fn apply_option_patch(&mut self, patch: &CompilerOptionPatch) -> CompilerOptions {
         for key in CompilerOptionKey::ALL
@@ -391,8 +382,7 @@ impl ResolvedProject {
     }
 }
 
-/// Resolve inherited options, project references, and deterministic root-file
-/// selection. Literal `files` roots are never filtered by `exclude`.
+/// Resolve inherited options/references/roots; `exclude` never filters literal `files`.
 #[must_use]
 pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> ResolvedProject {
     let mut resolver = Resolver::new(host, request);
@@ -416,7 +406,10 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
             (options, roots)
         }
         ProjectSelection::Project(path) => resolver.resolve_explicit_project(path),
-        ProjectSelection::Search(start) => resolver.resolve_searched_project(start),
+        ProjectSelection::Search(start) => find_config_file(host, start).map_or_else(
+            || (CompilerOptions::default(), Vec::new()),
+            |candidate| resolver.resolve_config_entry(candidate),
+        ),
     };
     let root_files = deduplicate_paths(roots, host.use_case_sensitive_file_names());
     let mut inputs = Vec::with_capacity(root_files.len());
@@ -492,8 +485,7 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
     }
 }
 
-/// Search a directory and its ancestors for `tsconfig.json` without parsing
-/// or expanding the project.
+/// Search ancestors for `tsconfig.json` without parsing or expanding the project.
 #[must_use]
 pub fn find_config_file(host: &dyn ProgramHost, start: &Path) -> Option<PathBuf> {
     let absolute = absolute_path(host.current_directory(), start);
@@ -624,13 +616,6 @@ impl<'a> Resolver<'a> {
                 absolute
             };
         self.resolve_config_entry(config_path)
-    }
-
-    fn resolve_searched_project(&mut self, start: &Path) -> (CompilerOptions, Vec<PathBuf>) {
-        find_config_file(self.host, start).map_or_else(
-            || (CompilerOptions::default(), Vec::new()),
-            |candidate| self.resolve_config_entry(candidate),
-        )
     }
 
     fn resolve_config_entry(&mut self, config_path: PathBuf) -> (CompilerOptions, Vec<PathBuf>) {
@@ -934,9 +919,7 @@ impl<'a> Resolver<'a> {
 struct LoadedConfig {
     id: ProjectConfigId,
     merged: MergedConfig,
-    /// Only complete loads may enter the resolver cache. Cycle recovery can
-    /// contribute partial options to this traversal without becoming a
-    /// definitive answer for a later branch.
+    /// Cache only complete loads; cycle recovery remains traversal-local.
     complete: bool,
 }
 
@@ -1595,7 +1578,7 @@ fn supported_source_file(path: &Path, allow_js: bool) -> bool {
 }
 
 fn unsupported_root_message(display_name: &str, path: &Path, allow_js: bool) -> (u32, String) {
-    if has_javascript_extension(path) && !allow_js {
+    if !allow_js && !supported_source_file(path, false) && supported_source_file(path, true) {
         return (
             6504,
             format!(
@@ -1614,17 +1597,6 @@ fn unsupported_root_message(display_name: &str, path: &Path, allow_js: bool) -> 
             "File '{display_name}' has an unsupported extension. The only supported extensions are {extensions}."
         ),
     )
-}
-
-fn has_javascript_extension(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    name.ends_with(".js")
-        || name.ends_with(".jsx")
-        || name.ends_with(".cjs")
-        || name.ends_with(".mjs")
 }
 
 fn root_file_diagnostic(message_text: String, code: u32, reason: RootReason) -> Diagnostic {
@@ -1664,10 +1636,6 @@ fn bool_property(object: &Map<String, Value>, name: &str) -> Option<bool> {
 
 fn string_property(object: &Map<String, Value>, name: &str) -> Option<String> {
     object.get(name).and_then(Value::as_str).map(str::to_string)
-}
-
-fn path_property(object: &Map<String, Value>, name: &str, origin: &Path) -> Option<PathBuf> {
-    string_property(object, name).map(|value| absolute_path(origin, Path::new(&value)))
 }
 
 fn json_array(values: &[String]) -> String {
@@ -1713,9 +1681,7 @@ fn logical_source_path_from_host(host: &dyn ProgramHost, path: &Path) -> PathBuf
     let current_directory = normalize_path(host.current_directory());
     let path = normalize_path(path);
     if let Ok(relative) = path.strip_prefix(&current_directory) {
-        // Preserve the user's spelling for ordinary and symlink-rooted
-        // projects. Realpath is only an identity fallback for transport
-        // aliases such as macOS `/var` versus `/private/var`.
+        // Preserve authored paths; realpath only resolves transport aliases such as `/var`.
         return relative.to_path_buf();
     }
     logical_path_from_host(&host.realpath(&current_directory), &host.realpath(&path))

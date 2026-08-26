@@ -516,7 +516,7 @@ impl Checker<'_> {
         }
     }
 
-    const fn flow_type_domain(kind: &TypeKind) -> (Option<TypeofWitness>, bool) {
+    pub(super) const fn flow_type_domain(kind: &TypeKind) -> (Option<TypeofWitness>, bool) {
         use TypeKind::*;
         match kind {
             String | LiteralString(_, _) => (Some(TypeofWitness::String), false),

@@ -351,29 +351,6 @@ fn template_literal_diagnostics_escape_cooked_line_breaks() {
 }
 
 #[test]
-fn instanceof_defers_until_the_binary_diagnostic_owner_is_dependency_closed() {
-    for source in [
-        "const result = ((`a${0}b`)) instanceof function () {};",
-        "const result = (0 as any) instanceof `a${0}b`;",
-        "const text = `a${0}b`; const result = text instanceof function () {};",
-        "const result = \"\" instanceof function () {};",
-    ] {
-        let output = compile(
-            "instanceof.ts",
-            source,
-            CompilerOptions {
-                no_emit: true,
-                strict: true,
-                ..options("es2015")
-            },
-        );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-        assert!(output.diagnostics.is_empty(), "{source:?}");
-    }
-}
-
-#[test]
 fn sixteen_logical_shapes_and_es2015_es6_twins_preserve_exact_tokens() {
     let shapes = [
         r"`\0\x00\u0000 0 00 0000`",

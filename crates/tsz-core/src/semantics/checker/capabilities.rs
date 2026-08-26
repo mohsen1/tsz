@@ -12,6 +12,14 @@ pub(super) struct CompletionTracker {
     captures: Vec<SemanticCompletion>,
 }
 
+pub(super) const fn completion_state<T>(completion: &Completion<T>) -> SemanticCompletion {
+    match completion {
+        Completion::Complete(_) => SemanticCompletion::Complete,
+        Completion::Deferred => SemanticCompletion::Deferred,
+        Completion::Cycle => SemanticCompletion::Cycle,
+        Completion::Limit => SemanticCompletion::Limit,
+    }
+}
 impl CompletionTracker {
     pub(super) fn new(file_count: usize) -> Self {
         Self {
@@ -125,12 +133,7 @@ impl Checker<'_> {
     /// The active root file receives the same verdict so service consumers do
     /// not republish an unrelated root's incompleteness.
     pub(super) fn require_completion<T>(&mut self, completion: Completion<T>) -> Completion<T> {
-        let observed = match &completion {
-            Completion::Complete(_) => SemanticCompletion::Complete,
-            Completion::Deferred => SemanticCompletion::Deferred,
-            Completion::Cycle => SemanticCompletion::Cycle,
-            Completion::Limit => SemanticCompletion::Limit,
-        };
+        let observed = completion_state(&completion);
         self.observe_completion(observed);
         completion
     }
@@ -140,12 +143,7 @@ impl Checker<'_> {
         file: FileId,
         completion: Completion<T>,
     ) -> Completion<T> {
-        let observed = match &completion {
-            Completion::Complete(_) => SemanticCompletion::Complete,
-            Completion::Deferred => SemanticCompletion::Deferred,
-            Completion::Cycle => SemanticCompletion::Cycle,
-            Completion::Limit => SemanticCompletion::Limit,
-        };
+        let observed = completion_state(&completion);
         self.observe_file_completion(file, observed);
         completion
     }

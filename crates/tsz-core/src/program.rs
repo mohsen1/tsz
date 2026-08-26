@@ -131,26 +131,19 @@ impl Default for CompilerOptions {
 impl CompilerOptions {
     #[must_use]
     pub const fn effective_strict_null_checks(&self) -> bool {
-        match self.strict_null_checks {
-            Some(value) => value,
-            None => self.strict,
-        }
+        matches!(self.strict_null_checks, Some(true))
+            || self.strict_null_checks.is_none() && self.strict
     }
 
     #[must_use]
     pub const fn effective_strict_property_initialization(&self) -> bool {
-        match self.strict_property_initialization {
-            Some(value) => value,
-            None => self.strict,
-        }
+        matches!(self.strict_property_initialization, Some(true))
+            || self.strict_property_initialization.is_none() && self.strict
     }
 
     #[must_use]
     pub const fn effective_no_implicit_any(&self) -> bool {
-        match self.no_implicit_any {
-            Some(value) => value,
-            None => self.strict,
-        }
+        matches!(self.no_implicit_any, Some(true)) || self.no_implicit_any.is_none() && self.strict
     }
 }
 
@@ -162,16 +155,13 @@ pub struct ProgramFile {
 }
 
 impl ProgramFile {
-    /// Whether this source owns a module-local root scope. Module-format
-    /// extensions are modules by path even without authored import/export syntax.
+    /// Whether this source owns a module-local root scope, including module-format extensions.
     #[must_use]
     pub fn is_external_module(&self) -> bool {
         self.syntax.is_external_module() || self.has_source_extension(&["mts", "cts", "mjs", "cjs"])
     }
 
-    /// Whether emit needs module-format lowering that the current printers do
-    /// not own. `.mjs`/`.cjs` runtime markers and declaration elision differ by
-    /// product format, including when imports or exports are authored.
+    /// Whether `.mjs`/`.cjs` runtime markers or declaration elision need unmodeled lowering.
     #[must_use]
     pub(crate) fn has_unmodeled_javascript_module_products(&self) -> bool {
         self.has_source_extension(&["mjs", "cjs"])
@@ -354,12 +344,9 @@ pub struct CompileOutput {
     pub(crate) declaration_display_summaries: DeclarationDisplaySummaries,
 }
 
-/// Whether every required semantic operation reached a definitive result.
-///
-/// Dominance is deterministic and ordered from least to most severe:
-/// `Complete < Deferred < Cycle < Limit`. A symbolic type that later resolves
-/// does not affect this verdict; only an incomplete result escaping at a
-/// user-visible checking boundary is aggregated.
+/// Aggregate truth for semantic operations required by a public consumer.
+/// Dominance is `Complete < Deferred < Cycle < Limit`; symbolic work matters only when an
+/// incomplete result escapes a user-visible checking boundary.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SemanticCompletion {
@@ -396,30 +383,22 @@ impl SemanticCompletion {
     }
 }
 
-/// TypeScript's process-level compile result.
-///
-/// "Outputs skipped" is not equivalent to an empty emitted-file list: a
-/// collision can skip one product while safe products from the same program
-/// are still generated.
+/// TypeScript process result; skipped outputs differ from an empty emitted-file list.
+/// A collision may block one product while safe products from the same program are emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompileExitStatus {
-    Success,
-    DiagnosticsPresentOutputsSkipped,
-    DiagnosticsPresentOutputsGenerated,
+    Success = 0,
+    DiagnosticsPresentOutputsSkipped = 1,
+    DiagnosticsPresentOutputsGenerated = 2,
     /// Checking could not decide at least one required semantic operation.
     /// This is a compiler capability nonclaim, not a TypeScript diagnostic.
-    SemanticIncomplete,
+    SemanticIncomplete = 3,
 }
 
 impl CompileExitStatus {
     #[must_use]
     pub const fn code(self) -> i32 {
-        match self {
-            Self::Success => 0,
-            Self::DiagnosticsPresentOutputsSkipped => 1,
-            Self::DiagnosticsPresentOutputsGenerated => 2,
-            Self::SemanticIncomplete => 3,
-        }
+        self as i32
     }
 }
 

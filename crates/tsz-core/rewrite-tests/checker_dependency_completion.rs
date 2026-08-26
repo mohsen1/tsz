@@ -984,3 +984,164 @@ fn predicate_leaf_reduces_top_union_boolean_and_proven_intersection_types() {
         output.diagnostics,
     );
 }
+
+#[test]
+fn recovered_conditional_returns_defer_only_dependent_instanceof_operands() {
+    let declarations = concat!(
+        "class Cedar {} class Birch {}",
+        "function chooseValue(flag:boolean){",
+        "return flag ? new Cedar() : new Birch();}",
+        "function chooseConstructor(flag:boolean){return flag ? Cedar : Birch;}",
+    );
+    let cases = [
+        "if (!(((chooseValue(true))) instanceof ((chooseConstructor(false))))) {}",
+        "if ((chooseValue(true)) instanceof Cedar) {}",
+        "if ((new Cedar()) instanceof (chooseConstructor(false))) {}",
+    ];
+    let diagnostic_identity = |output: &tsz::CompileOutput,
+                               declaration_source: &str,
+                               declaration_file: &str,
+                               independent_source: &str,
+                               independent_file: &str| {
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        let mut actual = output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic.file.as_str(),
+                    diagnostic.code,
+                    diagnostic.start,
+                    diagnostic.length,
+                    diagnostic.category,
+                    diagnostic.message_text.as_str(),
+                    diagnostic.related_information.len(),
+                )
+            })
+            .collect::<Vec<_>>();
+        actual.sort_by_key(|identity| (identity.0, identity.2, identity.1));
+        let mut expected = ["? new Cedar", ": new Birch", "? Cedar", ": Birch"]
+            .map(|token| {
+                (
+                    declaration_file,
+                    1109,
+                    declaration_source.find(token).unwrap() as u32,
+                    1,
+                    DiagnosticCategory::Error,
+                    "Expression expected.",
+                    0,
+                )
+            })
+            .to_vec();
+        expected.push((
+            independent_file,
+            2322,
+            independent_source.find("independent").unwrap() as u32,
+            "independent".len() as u32,
+            DiagnosticCategory::Error,
+            "Type 'number' is not assignable to type 'string'.",
+            0,
+        ));
+        expected.sort_by_key(|identity| (identity.0, identity.2, identity.1));
+        assert_eq!(
+            actual, expected,
+            "unexpected diagnostics: {:#?}",
+            output.diagnostics,
+        );
+    };
+
+    for condition in cases {
+        let source = format!("{declarations}{condition}const independent:string=1;");
+        let first = compile(&source);
+        diagnostic_identity(&first, &source, "case.ts", &source, "case.ts");
+        let repeated = compile(&source);
+        diagnostic_identity(&repeated, &source, "case.ts", &source, "case.ts");
+    }
+
+    let consumer = concat!(
+        "if (!((chooseValue(true)) instanceof (chooseConstructor(false)))) {}",
+        "const independent:string=1;",
+    );
+    for files in [
+        [("producer.ts", declarations), ("consumer.ts", consumer)],
+        [("consumer.ts", consumer), ("producer.ts", declarations)],
+    ] {
+        let output = compile_files(&files);
+        diagnostic_identity(
+            &output,
+            declarations,
+            "producer.ts",
+            consumer,
+            "consumer.ts",
+        );
+    }
+}
+
+#[test]
+fn ordinary_and_annotated_returns_remain_classifiable_for_instanceof() {
+    let ordinary = concat!(
+        "class Cedar {}",
+        "function scalar(flag:boolean){return flag;}",
+        "if ((scalar(true)) instanceof Cedar) {}",
+    );
+    let output = compile(ordinary);
+    let [diagnostic] = output.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+    };
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        (
+            diagnostic.code,
+            diagnostic.start,
+            diagnostic.length,
+            diagnostic.message_text.as_str(),
+        ),
+        (
+            2358,
+            ordinary.find("(scalar(true))").unwrap() as u32,
+            "(scalar(true))".len() as u32,
+            "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.",
+        )
+    );
+
+    let annotated = concat!(
+        "class Birch {}",
+        "function typedFlag(flag:boolean):boolean{return flag ? true : false;}",
+        "if ((typedFlag(true)) instanceof Birch) {}",
+    );
+    let output = compile(annotated);
+    let [first, second, diagnostic] = output.diagnostics.as_slice() else {
+        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
+    };
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    for (recovery, token) in [(first, "? true"), (second, ": false")] {
+        assert_eq!(
+            (
+                recovery.code,
+                recovery.start,
+                recovery.length,
+                recovery.message_text.as_str(),
+            ),
+            (
+                1109,
+                annotated.find(token).unwrap() as u32,
+                1,
+                "Expression expected.",
+            )
+        );
+    }
+    assert_eq!(
+        (
+            diagnostic.code,
+            diagnostic.start,
+            diagnostic.length,
+            diagnostic.message_text.as_str(),
+        ),
+        (
+            2358,
+            annotated.find("(typedFlag(true))").unwrap() as u32,
+            "(typedFlag(true))".len() as u32,
+            "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.",
+        )
+    );
+}

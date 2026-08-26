@@ -170,6 +170,16 @@ impl StandardLibraryEnvironment {
         self.resolve("Array", Meaning::Value) == Some(id)
     }
 
+    pub(crate) fn is_instanceof_constructor_value(&self, id: DeclId) -> bool {
+        ["Function", "Object"]
+            .into_iter()
+            .any(|name| self.resolve(name, Meaning::Value) == Some(id))
+    }
+
+    pub(crate) fn is_function_type(&self, id: DeclId) -> bool {
+        self.resolve("Function", Meaning::Type) == Some(id)
+    }
+
     pub(crate) fn is_map_type(&self, id: DeclId) -> bool {
         self.resolve("Map", Meaning::Type) == Some(id)
     }
