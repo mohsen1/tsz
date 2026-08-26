@@ -40,8 +40,7 @@ impl CommentIndex {
         while self
             .comments
             .get(self.next)
-            .copied()
-            .is_some_and(&mut predicate)
+            .is_some_and(|comment| predicate(*comment))
         {
             self.next += 1;
         }
@@ -73,9 +72,7 @@ impl Printer<'_> {
                 .last()
                 .map_or(unit.span.start, |statement| statement.span.end),
         );
-        let comments = self
-            .comment_index
-            .take_prefix(|c| c.span.end <= unit.span.end);
+        let comments = self.comment_index.take_before(unit.span.end);
         self.write_comment_sequence(&comments, false, true);
     }
 
@@ -143,7 +140,10 @@ impl Printer<'_> {
 
     pub(super) fn write_comments_before_close(&mut self, end: u32) -> bool {
         let comments = self.comment_index.take_before(end);
-        self.write_comment_sequence(&comments, false, true)
+        let followed_by_token = comments
+            .last()
+            .is_some_and(|comment| comment.placement == CommentPlacement::Leading);
+        self.write_comment_sequence(&comments, followed_by_token, true)
     }
 
     pub(super) fn consume_comments_through_token(&mut self, end: u32) {

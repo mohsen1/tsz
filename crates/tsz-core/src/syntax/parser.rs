@@ -210,7 +210,7 @@ impl<'a> Parser<'a> {
                 StatementKind::Return(expression)
             }
             TokenKind::LeftBrace => StatementKind::Block(self.parse_block().0),
-            _ if self.recover_stray_statement_close() => StatementKind::Unknown,
+            _ if self.recover_stray_statement() => StatementKind::Unknown,
             TokenKind::Semicolon => {
                 self.bump();
                 StatementKind::Empty

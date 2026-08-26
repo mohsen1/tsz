@@ -359,14 +359,14 @@ fn rejects_each_fixed_width_surrogate_and_non_identifier_escape_independently() 
             .map(|token| (token.kind, source.slice(token.span)))
             .collect::<Vec<_>>(),
         vec![
-            (TokenKind::Identifier, "\\"),
+            (TokenKind::InvalidCharacter, "\\"),
             (TokenKind::Identifier, "uD800"),
-            (TokenKind::Identifier, "\\"),
+            (TokenKind::InvalidCharacter, "\\"),
             (TokenKind::Identifier, "uDEA7"),
-            (TokenKind::Identifier, "\\"),
+            (TokenKind::InvalidCharacter, "\\"),
             (TokenKind::Identifier, "u0031a"),
             (TokenKind::Identifier, "a"),
-            (TokenKind::Identifier, "\\"),
+            (TokenKind::InvalidCharacter, "\\"),
             (TokenKind::Identifier, "u002Dx"),
             (TokenKind::EndOfFile, ""),
         ]

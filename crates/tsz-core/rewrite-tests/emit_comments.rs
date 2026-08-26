@@ -803,6 +803,48 @@ fn nested_delimiter_owners_keep_inline_and_multiline_closing_trivia() {
 }
 
 #[test]
+fn leading_block_comments_are_separated_from_closing_delimiters() {
+    let source = concat!(
+        "const parenthesized = (\n",
+        "    value\n",
+        "    // line\n",
+        "    /* leading */);\n",
+        "const emptyArray = [\n",
+        "    /* leading */];\n",
+        "call(\n",
+        "    /* leading */);\n",
+        "new Constructed(\n",
+        "    /* leading */);\n",
+        "const trailing = (value /* trailing */);\n",
+        "const ownLine = (\n",
+        "    value\n",
+        "    /* own line */\n",
+        ");\n",
+        "/* eof */\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "const parenthesized = (value\n",
+            "// line\n",
+            "/* leading */ );\n",
+            "const emptyArray = [\n",
+            "/* leading */ ];\n",
+            "call(\n",
+            "/* leading */ );\n",
+            "new Constructed(\n",
+            "/* leading */ );\n",
+            "const trailing = (value /* trailing */);\n",
+            "const ownLine = (value\n",
+            "/* own line */\n",
+            ");\n",
+            "/* eof */\n",
+        )
+    );
+}
+
+#[test]
 fn comment_index_scales_by_consumed_comment_count_and_is_repeatable() {
     const COMMENT_COUNT: usize = 1_024;
     let mut source = String::new();

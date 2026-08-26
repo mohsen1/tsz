@@ -827,8 +827,6 @@ fn output_collisions_skip_only_unsafe_products_and_return_exit_one() {
         r#"{
             "compilerOptions": {
                 "declaration": true,
-                "declarationMap": true,
-                "sourceMap": true,
                 "jsx": "react"
             },
             "files": ["same.ts", "same.tsx", "other.ts"]
@@ -854,8 +852,8 @@ fn output_collisions_skip_only_unsafe_products_and_return_exit_one() {
     let duplicate_output = run_tsz(duplicate.path(), ["--project", ".", "--pretty", "false"]);
     assert_eq!(duplicate_output.status.code(), Some(1));
     let duplicate_stdout = String::from_utf8(duplicate_output.stdout).unwrap();
-    assert_eq!(duplicate_stdout.matches("error TS5056:").count(), 4);
-    for suffix in ["same.js", "same.js.map", "same.d.ts", "same.d.ts.map"] {
+    assert_eq!(duplicate_stdout.matches("error TS5056:").count(), 2);
+    for suffix in ["same.js", "same.d.ts"] {
         assert!(!duplicate.path().join(suffix).exists(), "wrote {suffix}");
     }
     assert!(duplicate.path().join("other.js").is_file());

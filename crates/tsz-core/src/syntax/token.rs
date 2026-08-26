@@ -5,6 +5,7 @@ macro_rules! define_token_kinds {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum TokenKind {
             EndOfFile,
+            InvalidCharacter,
             Identifier,
             PrivateIdentifier,
             NumericLiteral,
@@ -94,14 +95,14 @@ macro_rules! define_token_kinds {
             /// source faithfully after a diagnostic.
             pub(crate) const fn is_identifier(self) -> bool {
                 match self {
-                    Self::Identifier => true,
+                    Self::Identifier | Self::InvalidCharacter => true,
                     $(Self::$keyword => $is_identifier,)+
                     _ => false,
                 }
             }
 
             pub(crate) const fn is_identifier_name(self) -> bool {
-                matches!(self, Self::Identifier $(| Self::$keyword)+)
+                matches!(self, Self::Identifier | Self::InvalidCharacter $(| Self::$keyword)+)
             }
         }
     };

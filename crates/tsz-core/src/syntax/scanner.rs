@@ -468,25 +468,17 @@ impl<'a> Scanner<'a> {
             b'#' => TokenKind::Hash,
             b'\'' | b'"' => self.scan_string(start, byte),
             b'`' => self.scan_template_start(start),
-            b'\\' => {
-                // TypeScript reports an invalid identifier escape at the
-                // authored backslash with a zero-width scanner diagnostic.
-                self.output.diagnostics.push(Diagnostic::at(
-                    self.source,
-                    Span::new(self.source.id, start, start),
-                    "Invalid character.".to_string(),
-                    1127,
-                ));
-                TokenKind::Identifier
-            }
             _ => {
+                // Invalid identifier escapes are reported at the authored
+                // backslash with TypeScript's zero-width scanner span.
+                let end = if byte == b'\\' { start } else { self.offset };
                 self.output.diagnostics.push(Diagnostic::at(
                     self.source,
-                    Span::new(self.source.id, start, self.offset),
+                    Span::new(self.source.id, start, end),
                     "Invalid character.".to_string(),
                     1127,
                 ));
-                TokenKind::Identifier
+                TokenKind::InvalidCharacter
             }
         }
     }

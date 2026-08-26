@@ -73,6 +73,52 @@ fn parser_codes(source: &str) -> Vec<u32> {
 }
 
 #[test]
+fn invalid_character_statements_do_not_become_missing_names() {
+    for (path, source) in [
+        ("invalid-character.ts", "\\"),
+        ("commented-invalid-character.ts", "\\ /* kept */ ;"),
+        ("invalid-after-regexp.ts", "/regexp/ \\ ;"),
+    ] {
+        assert_eq!(parser_codes(source), vec![1127], "{path}");
+
+        let mut service = LanguageService::new(options());
+        service.open(path, Arc::<str>::from(source));
+        let result = service.semantic_diagnostics(path);
+        assert_eq!(result.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            Vec::<u32>::new(),
+            "{path}: {:#?}",
+            result.diagnostics,
+        );
+    }
+}
+
+#[test]
+fn nested_invalid_character_forms_remain_parser_owned_controls() {
+    for source in [
+        r"\ /regexp/;",
+        r"foo(a, \",
+        r"foo(a \",
+        r"var v: X<T \",
+        r"var arg\u003",
+        r"var arg\uxxxx",
+        r"a\u",
+        r"var \u0031a",
+    ] {
+        assert!(parser_codes(source).contains(&1127), "{source}");
+    }
+
+    for source in [r"var a\u0031 = 1;", r"var \u0061 = 1;"] {
+        assert!(parser_codes(source).is_empty(), "{source}");
+    }
+}
+
+#[test]
 fn missing_arrow_types_preserve_structural_delimiters() {
     for (source, marker) in [
         ("const first = (renamed: ) => renamed;", ")"),

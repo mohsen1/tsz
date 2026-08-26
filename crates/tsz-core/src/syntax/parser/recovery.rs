@@ -52,7 +52,10 @@ impl Parser<'_> {
         }
     }
 
-    pub(super) fn recover_stray_statement_close(&mut self) -> bool {
+    pub(super) fn recover_stray_statement(&mut self) -> bool {
+        if self.eat(TokenKind::InvalidCharacter) {
+            return true;
+        }
         if self.pending_stray_statement_closes == 0 || !self.at(TokenKind::RightBrace) {
             return false;
         }
