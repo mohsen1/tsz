@@ -360,12 +360,10 @@ fn if_statement_token_gaps_match_ts7_keyword_and_delimiter_owners() {
             "    work(); // line boundary\n",
             "else\n",
             "    fallback();\n",
-            "function wrapper() {\n",
-            "    if (renamed)\n",
-            "        work();\n",
-            "    else\n",
-            "        fallback();\n",
-            "}\n",
+            "function wrapper() { if (renamed)\n",
+            "    work();\n",
+            "else\n",
+            "    fallback(); }\n",
         )
     );
 }
@@ -680,6 +678,92 @@ fn authored_body_spans_own_empty_and_nested_closing_comments() {
             "};\n",
             "{\n",
             "    // block close\n",
+            "}\n",
+        )
+    );
+}
+
+#[test]
+fn authored_single_line_function_bodies_share_one_layout_owner() {
+    let source = concat!(
+        "function renamed<Value>(value: Value): Value { const kept = value; return kept; }\n",
+        "class Container {\n",
+        "    method(value: number): number { return value; }\n",
+        "    get \"quoted\"(): number { return 1; }\n",
+        "    controlled(value: boolean) { if (value) return; }\n",
+        "    constructor(value: boolean) { if (value) return; }\n",
+        "}\n",
+        "const callback = () => { renamed(1); };\n",
+        "function commented() { 0; /* keep occupied trailing */ }\n",
+        "function controlled(value: boolean) { if (value) return; }\n",
+        "function erasedLeading() { interface Gone {} return 1; }\n",
+        "function erasedMiddle() { 0; interface Gone {} return 1; }\n",
+        "function erasedTrailing() { return 1; interface Gone {} }\n",
+        "function erasedOnly() { interface Gone {} }\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "function renamed(value) { const kept = value; return kept; }\n",
+            "class Container {\n",
+            "    method(value) { return value; }\n",
+            "    get \"quoted\"() { return 1; }\n",
+            "    controlled(value) { if (value)\n",
+            "        return; }\n",
+            "    constructor(value) { if (value)\n",
+            "        return; }\n",
+            "}\n",
+            "const callback = () => { renamed(1); };\n",
+            "function commented() { 0; /* keep occupied trailing */ }\n",
+            "function controlled(value) { if (value)\n",
+            "    return; }\n",
+            "function erasedLeading() {  return 1; }\n",
+            "function erasedMiddle() { 0;  return 1; }\n",
+            "function erasedTrailing() { return 1;  }\n",
+            "function erasedOnly() {  }\n",
+        )
+    );
+}
+
+#[test]
+fn function_body_layout_preserves_every_multiline_fallback() {
+    let source = concat!(
+        "function multiline(value: number) {\n",
+        "    return value;\n",
+        "}\n",
+        "function directive() { \"use strict\"; return 1; }\n",
+        "function extended() { \"not\\u{20}strict\"; return 2; }\n",
+        "function empty() { }\n",
+        "class Container {\n",
+        "    constructor() { consume(); }\n",
+        "}\n",
+        "class Property { constructor(public value: number) { consume(); } }\n",
+    );
+    assert_eq!(
+        javascript(source, "", false),
+        concat!(
+            "\"use strict\";\n",
+            "function multiline(value) {\n",
+            "    return value;\n",
+            "}\n",
+            "function directive() {\n",
+            "    \"use strict\";\n",
+            "    return 1;\n",
+            "}\n",
+            "function extended() {\n",
+            "    \"not\\u{20}strict\";\n",
+            "    return 2;\n",
+            "}\n",
+            "function empty() { }\n",
+            "class Container {\n",
+            "    constructor() { consume(); }\n",
+            "}\n",
+            "class Property {\n",
+            "    constructor(value) {\n",
+            "        this.value = value;\n",
+            "        consume();\n",
+            "    }\n",
             "}\n",
         )
     );

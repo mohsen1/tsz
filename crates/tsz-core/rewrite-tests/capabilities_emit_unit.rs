@@ -178,7 +178,7 @@ fn inferred_return_nonclaim_withholds_only_its_file_declaration_product() {
     );
     assert_eq!(
         output.emitted_files[0].text,
-        "export function cedar() {\n    return 1;\n}\nexport const same = 'ok';\n"
+        "export function cedar() { return 1; }\nexport const same = 'ok';\n"
     );
     assert_eq!(
         output.emitted_files[1].text,

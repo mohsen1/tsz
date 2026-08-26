@@ -1186,7 +1186,7 @@ fn declaration_emit_blocks_unmodeled_overload_implementation_filtering() {
             .expect("runtime overload implementation");
         assert_eq!(
             javascript.text,
-            "export function select(value) {\n    return value;\n}\nexport class Vessel {\n    constructor(value) { }\n    method(value) {\n        return value;\n    }\n}\n"
+            "export function select(value) { return value; }\nexport class Vessel {\n    constructor(value) { }\n    method(value) { return value; }\n}\n"
         );
     }
 

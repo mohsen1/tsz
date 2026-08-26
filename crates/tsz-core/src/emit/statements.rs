@@ -304,7 +304,11 @@ impl Printer<'_> {
                 self.output.push_str("constructor");
                 self.write_runtime_parameters(parameters, true);
                 self.output.push(' ');
-                self.write_constructor_body(*body_span, body, parameters, derived);
+                if parameters.iter().any(|parameter| parameter.is_property()) {
+                    self.write_constructor_body(*body_span, body, parameters, derived);
+                } else {
+                    self.write_function_body(*body_span, body);
+                }
                 self.output.push('\n');
             }
             ClassMemberKind::Property { initializer, .. } => {
@@ -334,7 +338,7 @@ impl Printer<'_> {
                 self.write_property_name(&member.name, member.name_span, member.name_kind);
                 self.write_runtime_parameters(parameters, true);
                 self.output.push(' ');
-                self.write_braced_statements(*body_span, body);
+                self.write_function_body(*body_span, body);
                 self.output.push('\n');
             }
         }

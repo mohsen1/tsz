@@ -346,3 +346,123 @@ fn navigation_keys_follow_bound_declaration_groups_across_root_orders() {
         );
     }
 }
+
+#[test]
+fn rename_qualifies_non_local_external_module_declarations_from_every_occurrence() {
+    let mut service = LanguageService::new(CompilerOptions::default());
+    let class = concat!(
+        "export default class RenamedClass {}\n",
+        "let typed: RenamedClass;\n",
+        "new RenamedClass();",
+    );
+    service.open("/workspace/class.ts", Arc::<str>::from(class));
+    for (offset, _) in class.match_indices("RenamedClass") {
+        let rename = service.rename("/workspace/class.ts", offset as u32);
+        assert!(rename.info.can_rename);
+        assert_eq!(rename.info.display_name.as_deref(), Some("RenamedClass"));
+        assert_eq!(
+            rename.info.full_display_name.as_deref(),
+            Some("\"/workspace/class\".RenamedClass")
+        );
+        assert_eq!(rename.locations.len(), 3);
+    }
+
+    let function = concat!(
+        "export default function chooseValue() {\n",
+        "  return chooseValue;\n",
+        "}",
+    );
+    service.open("/workspace/function.ts", Arc::<str>::from(function));
+    for (offset, _) in function.match_indices("chooseValue") {
+        let rename = service.rename("/workspace/function.ts", offset as u32);
+        assert_eq!(
+            rename.info.full_display_name.as_deref(),
+            Some("\"/workspace/function\".chooseValue")
+        );
+        assert_eq!(rename.locations.len(), 2);
+    }
+
+    let named = "export function identity<T>(value: T): T { return value; } identity(1);";
+    service.open("/workspace/named.ts", Arc::<str>::from(named));
+    for (offset, _) in named.match_indices("identity") {
+        assert_eq!(
+            service
+                .rename("/workspace/named.ts", offset as u32)
+                .info
+                .full_display_name
+                .as_deref(),
+            Some("\"/workspace/named\".identity")
+        );
+    }
+
+    let windows = "export const windowsName = 1; windowsName;";
+    service.open(r"C:\workspace\windows.ts", Arc::<str>::from(windows));
+    assert_eq!(
+        service
+            .rename(
+                r"C:\workspace\windows.ts",
+                windows.find("windowsName").unwrap() as u32
+            )
+            .info
+            .full_display_name
+            .as_deref(),
+        Some("\"C:/workspace/windows\".windowsName")
+    );
+}
+
+#[test]
+fn rename_keeps_local_alias_global_and_default_expression_names_unqualified() {
+    let cases = [
+        (
+            "/workspace/global.ts",
+            "function globalName() {} globalName;",
+            "globalName",
+        ),
+        (
+            "/workspace/private.ts",
+            "const hidden = 1; hidden; export {};",
+            "hidden",
+        ),
+        (
+            "/workspace/alias.ts",
+            "let localName = 1; export { localName as outward }; localName;",
+            "localName",
+        ),
+        (
+            "/workspace/default.ts",
+            "function keptLocal() { return keptLocal; } export default keptLocal; keptLocal;",
+            "keptLocal",
+        ),
+    ];
+    let mut service = LanguageService::new(CompilerOptions::default());
+    for (path, source, name) in cases {
+        service.open(path, Arc::<str>::from(source));
+        for (offset, _) in source.match_indices(name) {
+            let rename = service.rename(path, offset as u32);
+            assert!(rename.info.can_rename, "{path}@{offset}");
+            assert_eq!(rename.info.display_name.as_deref(), Some(name));
+            assert_eq!(rename.info.full_display_name.as_deref(), Some(name));
+        }
+    }
+}
+
+#[test]
+fn rename_module_qualification_removes_the_pinned_source_extension_family() {
+    for (path, expected) in [
+        ("/types/index.d.ts", "/types/index"),
+        ("/types/index.d.mts", "/types/index"),
+        ("/types/index.d.cts", "/types/index"),
+        ("/src/file.mjs", "/src/file"),
+        ("/src/file.mts", "/src/file"),
+        ("/src/file.cjs", "/src/file"),
+        ("/src/file.cts", "/src/file"),
+        ("/src/file.ts", "/src/file"),
+        ("/src/file.js", "/src/file"),
+        ("/src/file.tsx", "/src/file"),
+        ("/src/file.jsx", "/src/file"),
+        ("/src/file.json", "/src/file"),
+        ("/src/file.txt", "/src/file.txt"),
+    ] {
+        assert_eq!(remove_source_extension(path), expected);
+    }
+}

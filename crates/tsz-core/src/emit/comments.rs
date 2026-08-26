@@ -14,15 +14,6 @@ pub(super) struct CommentIndex {
 }
 
 impl CommentIndex {
-    pub(super) fn has_comment_within(&self, start: u32, end: u32) -> bool {
-        let first = self
-            .comments
-            .partition_point(|comment| comment.span.start < start);
-        self.comments
-            .get(first.max(self.next))
-            .is_some_and(|comment| comment.span.end <= end)
-    }
-
     pub(super) fn reset(&mut self, comments: &[CommentTrivia], preserve_comments: bool) {
         self.comments = comments
             .iter()

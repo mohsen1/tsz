@@ -1,6 +1,6 @@
 use crate::syntax::{
     ArrowBody, Expression, ExpressionKind, FunctionDeclaration, FunctionLikeExpression,
-    FunctionLikeFunctionKind, FunctionLikeSyntax, ObjectProperty, SourceUnit, Statement,
+    FunctionLikeFunctionKind, FunctionLikeSyntax, Literal, ObjectProperty, SourceUnit, Statement,
     StatementKind, erased_assertion_expression,
 };
 
@@ -61,7 +61,7 @@ impl Printer<'_> {
         }
         self.write_runtime_parameters(&declaration.parameters, true);
         self.output.push(' ');
-        self.write_braced_statements(declaration.body_span, &declaration.body);
+        self.write_function_body(declaration.body_span, &declaration.body);
         self.output.push('\n');
     }
 
@@ -109,29 +109,22 @@ impl Printer<'_> {
                     *kind == FunctionLikeFunctionKind::Expression,
                 );
                 self.output.push(' ');
-                self.write_inline_function_body(function.body_span, body);
+                self.write_function_body(function.body_span, body);
             }
         }
     }
 
-    pub(super) fn write_inline_function_body(
+    pub(super) fn write_function_body(
         &mut self,
         body_span: Option<crate::source::Span>,
         body: &[Statement],
     ) {
-        let inline = body_span.is_some_and(|span| {
-            self.body_span_is_single_line(span)
-                && !self.comment_index.has_comment_within(span.start, span.end)
-        }) && body.iter().all(|statement| {
-            matches!(
-                statement.kind,
-                StatementKind::Variable(_)
-                    | StatementKind::Return(_)
-                    | StatementKind::Expression(_)
-                    | StatementKind::Empty
-            )
-        });
-        if !inline || body.is_empty() {
+        let inline = !body.is_empty()
+            && body
+                .first()
+                .is_none_or(|statement| !is_prologue_directive(statement))
+            && body_span.is_some_and(|span| self.body_span_is_single_line(span));
+        if !inline {
             self.write_braced_statements(body_span, body);
             return;
         }
@@ -140,25 +133,13 @@ impl Printer<'_> {
             if index != 0 {
                 self.output.push(' ');
             }
-            match &statement.kind {
-                StatementKind::Variable(declaration) => {
-                    self.write_runtime_variable(declaration);
-                }
-                StatementKind::Return(value) => {
-                    self.output.push_str("return");
-                    if let Some(value) = value {
-                        self.output.push(' ');
-                        self.write_expression(value, PREC_LOWEST);
-                    }
-                    self.output.push(';');
-                }
-                StatementKind::Expression(value) => {
-                    self.write_expression_statement_expression(value);
-                    self.output.push(';');
-                }
-                StatementKind::Empty => self.output.push(';'),
-                _ => unreachable!(),
+            self.write_javascript_statement(statement, false);
+            if self.output.ends_with('\n') {
+                self.output.pop();
             }
+        }
+        if let Some(span) = body_span {
+            self.write_comments_before_close(span.end);
         }
         self.output.push_str(" }");
     }
@@ -175,7 +156,7 @@ impl Printer<'_> {
         if let ExpressionKind::Call {
             callee, arguments, ..
         } = &erased.kind
-            && is_erased_function_expression(callee)
+            && is_function_expression(erased_assertion_expression(callee).unwrap_or(callee))
         {
             self.output.push('(');
             self.write_expression(callee, PREC_LOWEST);
@@ -231,12 +212,14 @@ impl Printer<'_> {
                 self.write_indent();
                 self.output.push('}');
             }
-            ArrowBody::Block(statements) => self.write_braced_statements(body_span, statements),
+            ArrowBody::Block(statements) => self.write_function_body(body_span, statements),
         }
     }
 
     fn write_arrow_expression(&mut self, expression: &Expression, precedence: u8) {
-        let parenthesize = starts_with_assertion_erased_object_literal(expression);
+        let parenthesize = starts_with_erased_expression(expression, |expression| {
+            matches!(expression.kind, ExpressionKind::Object(_))
+        });
         if parenthesize {
             self.output.push('(');
         }
@@ -247,10 +230,14 @@ impl Printer<'_> {
     }
 }
 
-fn starts_with_assertion_erased_object_literal(expression: &Expression) -> bool {
-    starts_with_erased_expression(expression, |expression| {
-        matches!(expression.kind, ExpressionKind::Object(_))
-    })
+const fn is_prologue_directive(statement: &Statement) -> bool {
+    matches!(
+        &statement.kind,
+        StatementKind::Expression(Expression {
+            kind: ExpressionKind::Literal(Literal::String(_)),
+            ..
+        })
+    )
 }
 
 fn starts_with_erased_function_expression(expression: &Expression) -> bool {
@@ -272,11 +259,6 @@ fn starts_with_erased_expression(
             ExpressionKind::Binary { left, .. } => starts_with_erased_expression(left, matches),
             _ => false,
         }
-}
-
-fn is_erased_function_expression(expression: &Expression) -> bool {
-    let expression = erased_assertion_expression(expression).unwrap_or(expression);
-    is_function_expression(expression)
 }
 
 fn is_function_expression(expression: &Expression) -> bool {

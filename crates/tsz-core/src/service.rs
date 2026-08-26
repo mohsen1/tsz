@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::Diagnostic;
 use crate::program::{
-    CapabilityScope, CapabilityTarget, CompileOutput, Compiler, CompilerOptions, ProgramFile,
-    SemanticCompletion, SourceInput,
+    CapabilityScope, CapabilityTarget as Target, CompileOutput, Compiler, CompilerOptions,
+    ProgramFile, SemanticCompletion, SourceInput,
 };
+use crate::text::quote_string;
 
 mod navigation;
 
@@ -206,10 +207,7 @@ impl LanguageService {
             let file = compiled_file(output, &normalized)?;
             if !output
                 .capabilities
-                .claim(
-                    CapabilityTarget::QuickInfo,
-                    file.capability_scope_at(offset)?,
-                )
+                .claim(Target::QuickInfo, file.capability_scope_at(offset)?)
                 .is_claimed()
             {
                 return None;
@@ -227,11 +225,19 @@ impl LanguageService {
         offset: u32,
     ) -> Option<DefinitionAndBoundSpan> {
         self.with_compiled_snapshot(|output| {
-            if !service_operation_claimed(output, path, offset, CapabilityTarget::Definition) {
+            if !location_is_claimed(output, Target::Definition, path, offset) {
                 return None;
             }
             let result = navigation::NavigationIndex::build(output).definition(path, offset)?;
-            definition_result_is_claimed(output, &result).then_some(result)
+            locations_are_claimed(
+                output,
+                Target::Definition,
+                result
+                    .definitions
+                    .iter()
+                    .map(|item| (item.file_name.as_str(), item.text_span.start)),
+            )
+            .then_some(result)
         })
     }
 
@@ -239,15 +245,20 @@ impl LanguageService {
     /// definition lookup.
     pub fn references(&self, path: &str, offset: u32) -> Vec<ReferencedSymbol> {
         self.with_compiled_snapshot(|output| {
-            if !service_operation_claimed(output, path, offset, CapabilityTarget::References) {
+            if !location_is_claimed(output, Target::References, path, offset) {
                 return Vec::new();
             }
             let result = navigation::NavigationIndex::build(output).references(path, offset);
-            if references_result_is_claimed(output, &result) {
-                result
-            } else {
-                Vec::new()
+            let locations = result.iter().flat_map(|symbol| {
+                symbol
+                    .references
+                    .iter()
+                    .map(|item| (item.file_name.as_str(), item.text_span.start))
+            });
+            if !locations_are_claimed(output, Target::References, locations) {
+                return Vec::new();
             }
+            result
         })
     }
 
@@ -259,7 +270,7 @@ impl LanguageService {
         files_to_search: &[String],
     ) -> Vec<DocumentHighlights> {
         self.with_compiled_snapshot(|output| {
-            if !service_operation_claimed(output, path, offset, CapabilityTarget::Highlights) {
+            if !location_is_claimed(output, Target::Highlights, path, offset) {
                 return Vec::new();
             }
             let result = navigation::NavigationIndex::build(output).document_highlights(
@@ -267,89 +278,66 @@ impl LanguageService {
                 offset,
                 files_to_search,
             );
-            if highlights_result_is_claimed(output, &result) {
-                result
-            } else {
-                Vec::new()
+            let locations = result.iter().flat_map(|document| {
+                document
+                    .highlight_spans
+                    .iter()
+                    .map(|item| (document.file_name.as_str(), item.text_span.start))
+            });
+            if !locations_are_claimed(output, Target::Highlights, locations) {
+                return Vec::new();
             }
+            result
         })
     }
 
     /// Return the rename trigger and all locations for the resolved symbol.
     pub fn rename(&self, path: &str, offset: u32) -> RenameResult {
         self.with_compiled_snapshot(|output| {
-            if !service_operation_claimed(output, path, offset, CapabilityTarget::Rename) {
+            if !location_is_claimed(output, Target::Rename, path, offset) {
                 return RenameResult::failure();
             }
-            let result = navigation::NavigationIndex::build(output).rename(path, offset);
-            if rename_result_is_claimed(output, &result) {
-                result
-            } else {
-                RenameResult::failure()
+            let index = navigation::NavigationIndex::build(output);
+            let mut result = index.rename(path, offset);
+            let locations = result
+                .locations
+                .iter()
+                .map(|item| (item.file_name.as_str(), item.text_span.start));
+            if !locations_are_claimed(output, Target::Rename, locations) {
+                return RenameResult::failure();
             }
+            if let Some(full_display_name) = index
+                .definition(path, offset)
+                .and_then(|definition| module_qualified_name(output, &definition))
+            {
+                result.info.full_display_name = Some(full_display_name);
+            }
+            result
         })
     }
 }
 
-fn definition_result_is_claimed(output: &CompileOutput, result: &DefinitionAndBoundSpan) -> bool {
-    result.definitions.iter().all(|definition| {
-        service_operation_claimed(
-            output,
-            &definition.file_name,
-            definition.text_span.start,
-            CapabilityTarget::Definition,
-        )
-    })
-}
-
-fn references_result_is_claimed(output: &CompileOutput, result: &[ReferencedSymbol]) -> bool {
-    result.iter().all(|symbol| {
-        service_operation_claimed(
-            output,
-            &symbol.definition.file_name,
-            symbol.definition.text_span.start,
-            CapabilityTarget::References,
-        ) && symbol.references.iter().all(|reference| {
-            service_operation_claimed(
-                output,
-                &reference.file_name,
-                reference.text_span.start,
-                CapabilityTarget::References,
-            )
-        })
-    })
-}
-
-fn highlights_result_is_claimed(output: &CompileOutput, result: &[DocumentHighlights]) -> bool {
-    result.iter().all(|document| {
-        document.highlight_spans.iter().all(|highlight| {
-            service_operation_claimed(
-                output,
-                &document.file_name,
-                highlight.text_span.start,
-                CapabilityTarget::Highlights,
-            )
-        })
-    })
-}
-
-fn rename_result_is_claimed(output: &CompileOutput, result: &RenameResult) -> bool {
-    result.locations.iter().all(|location| {
-        service_operation_claimed(
-            output,
-            &location.file_name,
-            location.text_span.start,
-            CapabilityTarget::Rename,
-        )
-    })
-}
-
-fn service_operation_claimed(
+fn module_qualified_name(
     output: &CompileOutput,
-    path: &str,
-    offset: u32,
-    target: CapabilityTarget,
-) -> bool {
+    result: &DefinitionAndBoundSpan,
+) -> Option<String> {
+    let definition = result.definitions.iter().find(|item| !item.is_local)?;
+    compiled_file(output, &definition.file_name).filter(|file| file.is_external_module())?;
+    let module = quote_string(remove_source_extension(&definition.file_name));
+    Some(format!("{module}.{}", definition.name))
+}
+
+fn remove_source_extension(path: &str) -> &str {
+    [
+        ".d.ts", ".d.mts", ".d.cts", ".mjs", ".mts", ".cjs", ".cts", ".ts", ".js", ".tsx", ".jsx",
+        ".json",
+    ]
+    .into_iter()
+    .find_map(|extension| path.strip_suffix(extension))
+    .unwrap_or(path)
+}
+
+fn location_is_claimed(output: &CompileOutput, target: Target, path: &str, offset: u32) -> bool {
     let normalized = normalize_path(path);
     let Some(file) = compiled_file(output, &normalized) else {
         return false;
@@ -362,6 +350,16 @@ fn service_operation_claimed(
                 .unwrap_or(CapabilityScope::File(file.source.id)),
         )
         .is_claimed()
+}
+
+fn locations_are_claimed<'a>(
+    output: &CompileOutput,
+    target: Target,
+    locations: impl IntoIterator<Item = (&'a str, u32)>,
+) -> bool {
+    locations
+        .into_iter()
+        .all(|(path, offset)| location_is_claimed(output, target, path, offset))
 }
 
 fn normalize_path(path: &str) -> String {

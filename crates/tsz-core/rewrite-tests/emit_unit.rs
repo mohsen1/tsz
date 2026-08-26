@@ -475,9 +475,7 @@ fn commonjs_generated_function_and_class_names_are_cooked() {
             "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
             "exports.Cd = void 0;\n",
             "exports.fc = fc;\n",
-            "function fc() {\n",
-            "    return 1;\n",
-            "}\n",
+            "function fc() { return 1; }\n",
             "class Cd {\n",
             "}\n",
             "exports.Cd = Cd;\n",
@@ -644,9 +642,7 @@ fn erases_type_only_syntax_and_annotations() {
         concat!(
             "\"use strict\";\n",
             "const point = { x: 1 };\n",
-            "function add(a, b) {\n",
-            "    return a + b;\n",
-            "}\n",
+            "function add(a, b) { return a + b; }\n",
         )
     );
 }
@@ -678,9 +674,7 @@ fn emits_written_declaration_shapes_without_checking() {
         output[0].text,
         concat!(
             "export const greeting = \"hello\";\n",
-            "export function id(value) {\n",
-            "    return value;\n",
-            "}\n",
+            "export function id(value) { return value; }\n",
         )
     );
     assert_eq!(
@@ -791,12 +785,8 @@ fn emits_modern_module_classes_from_structured_nodes() {
             "import { token } from \"./token\";\n",
             "export class Service extends Base {\n",
             "    value = token;\n",
-            "    constructor(value) {\n",
-            "        this.value = value;\n",
-            "    }\n",
-            "    static create(value) {\n",
-            "        return new Service(value);\n",
-            "    }\n",
+            "    constructor(value) { this.value = value; }\n",
+            "    static create(value) { return new Service(value); }\n",
             "}\n",
         )
     );
@@ -925,9 +915,7 @@ fn default_export_declarations_use_the_default_commonjs_key_and_exact_dts_spelli
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
                 "exports.default = named;\n",
                 "0;\n",
-                "function named() {\n",
-                "    return 1;\n",
-                "}\n",
+                "function named() { return 1; }\n",
             ),
             "export default function named(): number;\n",
         ),
@@ -939,9 +927,7 @@ fn default_export_declarations_use_the_default_commonjs_key_and_exact_dts_spelli
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
                 "exports.default = fun;\n",
                 "0;\n",
-                "function fun() {\n",
-                "    return 1;\n",
-                "}\n",
+                "function fun() { return 1; }\n",
             ),
             "export default function f\\u0075n(): number;\n",
         ),
@@ -984,7 +970,7 @@ fn default_export_spelling_stays_authored_at_the_esm_boundary() {
         (
             "escaped-function.ts",
             "export default function f\\u0075n(): number { return 1; }\n",
-            "export default function f\\u0075n() {\n    return 1;\n}\n",
+            "export default function f\\u0075n() { return 1; }\n",
             "export default function f\\u0075n(): number;\n",
         ),
     ];
