@@ -139,7 +139,9 @@ fn diagnostic_products_follow_their_phase_instead_of_numeric_code_ranges() {
     );
 
     let output = service.compile();
-    assert_eq!(output.diagnostics, syntax.diagnostics);
+    let mut expected = syntax.diagnostics;
+    expected.extend(semantic.diagnostics);
+    assert_eq!(output.diagnostics, expected);
 
     let combined_source = "const broken = ;\nconst sibling: number;";
     service.open("m-combined.ts", Arc::<str>::from(combined_source));
@@ -213,7 +215,7 @@ fn diagnostic_products_follow_their_phase_instead_of_numeric_code_ranges() {
             .iter()
             .map(|diagnostic| diagnostic.code)
             .collect::<Vec<_>>(),
-        [1109],
+        [vec![2318; 10], vec![1109]].concat(),
     );
     assert_eq!(
         missing_output.semantic_completion,

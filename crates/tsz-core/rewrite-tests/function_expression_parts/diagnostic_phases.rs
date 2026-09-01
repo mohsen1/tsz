@@ -16,17 +16,13 @@ fn diagnostic_identities(
         .collect()
 }
 
-fn selected_product_identities(
+fn aggregate_product_identities(
     source: &str,
     semantic: &[tsz::diagnostics::Diagnostic],
 ) -> Vec<(u32, u32, u32, String)> {
-    let syntax = parse(source);
-    let selected = if syntax.diagnostics.is_empty() {
-        semantic
-    } else {
-        &syntax.diagnostics
-    };
-    selected
+    let mut aggregate = parse(source).diagnostics;
+    aggregate.extend_from_slice(semantic);
+    let mut identities = aggregate
         .iter()
         .map(|diagnostic| {
             (
@@ -36,7 +32,12 @@ fn selected_product_identities(
                 diagnostic.message_text.clone(),
             )
         })
-        .collect()
+        .collect::<Vec<_>>();
+    identities.sort_by(|left, right| {
+        (left.1, left.2, left.0, &left.3).cmp(&(right.1, right.2, right.0, &right.3))
+    });
+    identities.dedup();
+    identities
 }
 
 #[test]
@@ -62,7 +63,7 @@ fn recovered_function_header_blocks_emit_but_body_recovery_keeps_siblings_visibl
     let output = service.compile();
     assert_eq!(
         diagnostic_identities(&output.diagnostics),
-        selected_product_identities(source, &semantic.diagnostics),
+        aggregate_product_identities(source, &semantic.diagnostics),
     );
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
@@ -86,7 +87,7 @@ fn authored_return_mismatch_survives_a_deferred_flow_host() {
     let output = service.compile();
     assert_eq!(
         diagnostic_identities(&output.diagnostics),
-        selected_product_identities(source, &semantic.diagnostics),
+        aggregate_product_identities(source, &semantic.diagnostics),
     );
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
@@ -272,7 +273,7 @@ fn parenthesized_arrow_certainty_owns_missing_arrow_tokens_without_false_heads()
         let output = service.compile();
         assert_eq!(
             diagnostic_identities(&output.diagnostics),
-            selected_product_identities(source, &semantic.diagnostics),
+            aggregate_product_identities(source, &semantic.diagnostics),
         );
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
     }
@@ -325,7 +326,7 @@ fn unowned_function_expression_modifiers_withhold_products_and_name_fallout() {
     let checked = service.compile();
     assert_eq!(
         diagnostic_identities(&checked.diagnostics),
-        selected_product_identities(checked_source, &semantic.diagnostics),
+        aggregate_product_identities(checked_source, &semantic.diagnostics),
     );
     assert_eq!(checked.semantic_completion, SemanticCompletion::Deferred);
 

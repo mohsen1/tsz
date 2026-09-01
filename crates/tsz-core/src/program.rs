@@ -654,16 +654,12 @@ impl Compiler {
             config_diagnostics
         };
         if !terminal {
-            diagnostics.extend(
-                diagnostic_products::DiagnosticPhaseProducts([
-                    &syntax_diagnostics,
-                    &program_diagnostics,
-                    &semantic_diagnostics,
-                ])
-                .compiler_product()
-                .iter()
-                .cloned(),
-            );
+            diagnostic_products::DiagnosticPhaseProducts([
+                &syntax_diagnostics,
+                &program_diagnostics,
+                &semantic_diagnostics,
+            ])
+            .append_to(&mut diagnostics);
         }
         sort_and_deduplicate_for_cli(&mut diagnostics);
         let mut semantic_completion = if terminal {

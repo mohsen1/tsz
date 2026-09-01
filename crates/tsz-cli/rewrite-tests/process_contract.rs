@@ -966,7 +966,7 @@ fn flat_cli_renders_array_relation_continuations_under_one_primary_diagnostic() 
 }
 
 #[test]
-fn cli_source_syntax_selects_the_product_in_both_root_orders() {
+fn cli_source_syntax_and_semantics_aggregate_in_both_root_orders() {
     let project = tempfile::tempdir().unwrap();
     let syntax = project.path().join("a-syntax.ts");
     let semantic = project.path().join("z-semantic.ts");
@@ -986,7 +986,11 @@ fn cli_source_syntax_selects_the_product_in_both_root_orders() {
             "{}(1,16): error TS1109: Expression expected.\n",
             syntax.display()
         );
-        assert_eq!(stdout, syntax_diagnostic);
+        let semantic_diagnostic = format!(
+            "{}(1,7): error TS1155: 'const' declarations must be initialized.\n",
+            semantic.display()
+        );
+        assert_eq!(stdout, format!("{syntax_diagnostic}{semantic_diagnostic}"));
     }
 
     let unchecked = Command::new(env!("CARGO_BIN_EXE_tsz"))
@@ -1050,7 +1054,7 @@ fn cli_config_diagnostics_remain_additive_with_selected_semantics() {
 }
 
 #[test]
-fn cli_syntax_then_program_diagnostics_select_before_semantics() {
+fn cli_syntax_program_and_semantic_diagnostics_aggregate() {
     let project = tempfile::tempdir().unwrap();
     std::fs::write(
         project.path().join("tsconfig.json"),
@@ -1081,13 +1085,13 @@ fn cli_syntax_then_program_diagnostics_select_before_semantics() {
     let (semantic, semantic_codes) = run();
     assert_eq!(semantic.status.code(), Some(1));
     assert!(semantic.stderr.is_empty());
-    assert_eq!(semantic_codes, [6053]);
+    assert_eq!(semantic_codes, [6053, 1155]);
 
     std::fs::write(&source, "const broken = ;").unwrap();
     let (syntactic, syntactic_codes) = run();
     assert_eq!(syntactic.status.code(), Some(3));
     assert!(syntactic.stderr.is_empty());
-    assert_eq!(syntactic_codes, [1109]);
+    assert_eq!(syntactic_codes, [6053, 1109]);
 
     let javascript = project.path().join("case.js");
     std::fs::write(
@@ -1141,7 +1145,7 @@ fn cli_missing_project_references_are_program_diagnostics() {
             .iter()
             .map(|diagnostic| diagnostic["code"].as_u64().unwrap())
             .collect::<Vec<_>>(),
-        [6053],
+        [1155, 6053],
     );
 }
 
@@ -1523,7 +1527,7 @@ fn command_line_parse_diagnostics_precede_help_and_preserve_authored_order() {
 }
 
 #[test]
-fn cli_source_phase_precedes_program_global_and_emit_path_diagnostics() {
+fn cli_source_program_global_and_emit_path_diagnostics_aggregate() {
     let project = tempfile::tempdir().unwrap();
     let source = project.path().join("outside.ts");
     let source_root = project.path().join("src");
@@ -1563,18 +1567,19 @@ fn cli_source_phase_precedes_program_global_and_emit_path_diagnostics() {
     let (syntactic, syntactic_codes) = run(false);
     assert_eq!(syntactic.status.code(), Some(3));
     assert!(syntactic.stderr.is_empty());
-    assert_eq!(syntactic_codes, [1109]);
+    assert_eq!(syntactic_codes, [5052, 6059, 1109]);
 
     let (syntactic_global, syntactic_global_codes) = run(true);
     assert_eq!(syntactic_global.status.code(), Some(3));
     assert!(syntactic_global.stderr.is_empty());
-    assert_eq!(syntactic_global_codes, [1109]);
+    assert_eq!(syntactic_global_codes[..10], [2318; 10]);
+    assert_eq!(syntactic_global_codes[10..], [5052, 6059, 1109]);
 
     std::fs::write(&source, "const missing: number;").unwrap();
     let (program, program_codes) = run(false);
     assert_eq!(program.status.code(), Some(1));
     assert!(program.stderr.is_empty());
-    assert_eq!(program_codes, [5052, 6059]);
+    assert_eq!(program_codes, [5052, 6059, 1155]);
 
     let (global, global_codes) = run(true);
     assert_eq!(global.status.code(), Some(1));
@@ -1584,7 +1589,7 @@ fn cli_source_phase_precedes_program_global_and_emit_path_diagnostics() {
 }
 
 #[test]
-fn program_option_dependencies_select_before_checker_diagnostics() {
+fn program_option_dependencies_aggregate_with_checker_diagnostics() {
     let project = tempfile::tempdir().unwrap();
     let source = project.path().join("case.ts");
     let diagnostics_path = project.path().join("diagnostics.json");
@@ -1615,13 +1620,13 @@ fn program_option_dependencies_select_before_checker_diagnostics() {
     let (semantic, semantic_codes) = run();
     assert_eq!(semantic.status.code(), Some(1));
     assert!(semantic.stderr.is_empty());
-    assert_eq!(semantic_codes, [5052]);
+    assert_eq!(semantic_codes, [1155, 5052]);
 
     std::fs::write(&source, "const broken = ;").unwrap();
     let (syntactic, syntactic_codes) = run();
     assert_eq!(syntactic.status.code(), Some(3));
     assert!(syntactic.stderr.is_empty());
-    assert_eq!(syntactic_codes, [1109]);
+    assert_eq!(syntactic_codes, [1109, 5052]);
 }
 
 #[test]

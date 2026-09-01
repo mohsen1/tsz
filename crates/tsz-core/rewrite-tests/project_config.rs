@@ -1306,7 +1306,7 @@ fn emit_preflight_blocks_only_the_product_that_would_overwrite_an_input() {
 }
 
 #[test]
-fn syntax_selects_before_overwrite_preflight_when_emit_is_demanded() {
+fn syntax_aggregates_with_overwrite_preflight_when_emit_is_demanded() {
     let fixture = TempDir::new().expect("tempdir");
     let root = fixture.path();
     write(
@@ -1329,22 +1329,26 @@ fn syntax_selects_before_overwrite_preflight_when_emit_is_demanded() {
     };
 
     for (no_emit, no_emit_on_error, expected) in [
-        (false, false, &[1109][..]),
-        (false, true, &[1109][..]),
+        (false, false, &[5055, 1109][..]),
+        (false, true, &[5055, 1109][..]),
         (true, false, &[1109][..]),
     ] {
         let output = compile(no_emit, no_emit_on_error);
-        assert_eq!(output_codes(&output), expected);
+        assert_eq!(
+            output_codes(&output),
+            expected,
+            "no_emit={no_emit}, no_emit_on_error={no_emit_on_error}",
+        );
         if no_emit || no_emit_on_error {
             assert!(output.emitted_files.is_empty());
         }
     }
     write(root, "syntax.ts", "const missing: number;");
-    assert_eq!(output_codes(&compile(false, false)), [5055]);
+    assert_eq!(output_codes(&compile(false, false)), [5055, 1155]);
 }
 
 #[test]
-fn syntax_selects_before_collision_and_root_dir_program_diagnostics() {
+fn syntax_aggregates_with_collision_and_root_dir_program_diagnostics() {
     let fixture = TempDir::new().expect("tempdir");
     let root = fixture.path();
     write(root, "syntax.ts", "const broken = ;");
@@ -1366,7 +1370,7 @@ fn syntax_selects_before_collision_and_root_dir_program_diagnostics() {
         r#"{"compilerOptions":{"rootDir":".","outDir":"dist"},"files":["syntax.ts","same.ts","same.tsx"]}"#,
     );
     let collision = compile();
-    assert_eq!(output_codes(&collision), [1109]);
+    assert_eq!(output_codes(&collision), [5056, 1109]);
     assert!(
         collision
             .emitted_files
@@ -1380,7 +1384,7 @@ fn syntax_selects_before_collision_and_root_dir_program_diagnostics() {
         r#"{"compilerOptions":{"rootDir":"src","outDir":"dist"},"files":["syntax.ts"]}"#,
     );
     let root_dir = compile();
-    assert_eq!(output_codes(&root_dir), [1109]);
+    assert_eq!(output_codes(&root_dir), [6059, 1109]);
 }
 
 #[test]

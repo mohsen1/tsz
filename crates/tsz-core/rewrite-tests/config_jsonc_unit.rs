@@ -3,9 +3,48 @@ use std::sync::Arc;
 
 use tempfile::TempDir;
 
-use super::{CompilerOptionPatch, ProjectRequest, ProjectSelection, parse_jsonc, resolve_project};
+use super::{
+    CompilerOptionPatch, ProjectProvenance, ProjectRequest, ProjectResolution, ProjectSelection,
+    ResolvedProject, parse_jsonc, resolve_project,
+};
+use crate::diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticPhase};
 use crate::host::SystemHost;
-use crate::program::{CompileExitStatus, Compiler, SemanticCompletion};
+use crate::program::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion};
+
+#[test]
+fn compile_resolved_deduplicates_one_diagnostic_owned_by_both_input_phases() {
+    let mut diagnostic = Diagnostic::global("Shared diagnostic.".to_string(), 9001);
+    diagnostic.phase = DiagnosticPhase::Both;
+    let options = CompilerOptions {
+        no_emit: true,
+        ..CompilerOptions::default()
+    };
+    let resolved = ResolvedProject {
+        options: options.clone(),
+        inputs: Vec::new(),
+        root_files: Vec::new(),
+        diagnostics: vec![diagnostic],
+        entry_config: None,
+        project_config_count: 0,
+        project_reference_count: 0,
+        resolution: ProjectResolution::Complete,
+        provenance: ProjectProvenance::default(),
+    };
+
+    let output = Compiler::new().compile_resolved(resolved, &options);
+    let [published] = output.diagnostics.as_slice() else {
+        panic!(
+            "expected one deduplicated diagnostic: {:#?}",
+            output.diagnostics
+        );
+    };
+    assert_eq!(published.file, "");
+    assert_eq!((published.start, published.length), (0, 0));
+    assert_eq!(published.code, 9001);
+    assert_eq!(published.category, DiagnosticCategory::Error);
+    assert_eq!(published.message_text, "Shared diagnostic.");
+    assert!(published.related_information.is_empty());
+}
 
 #[test]
 fn one_jsonc_scan_preserves_original_option_and_reference_byte_spans() {

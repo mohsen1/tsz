@@ -339,7 +339,7 @@ fn recovered_named_tuple_arrow_keeps_same_call_siblings_independent() {
         );
 
         let output = compile(source);
-        let expected = if let Some((token, offset, length)) = syntax {
+        let mut expected = if let Some((token, offset, length)) = syntax {
             vec![(
                 "case.ts".to_string(),
                 1110,
@@ -350,8 +350,9 @@ fn recovered_named_tuple_arrow_keeps_same_call_siblings_independent() {
                 0,
             )]
         } else {
-            vec![missing]
+            Vec::new()
         };
+        expected.push(missing);
         assert_eq!(diagnostic_identities(&output.diagnostics), expected);
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
         assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
@@ -385,15 +386,18 @@ fn malformed_generic_arrow_keeps_same_call_siblings_independent() {
         let output = compile_files(&[(path, source)]);
         assert_eq!(
             diagnostic_identities(&output.diagnostics),
-            vec![(
-                path.to_string(),
-                1110,
-                source.find("extends,>").unwrap() as u32 + "extends".len() as u32,
-                1,
-                DiagnosticCategory::Error,
-                "Type expected.".to_string(),
-                0,
-            ),],
+            vec![
+                (
+                    path.to_string(),
+                    1110,
+                    source.find("extends,>").unwrap() as u32 + "extends".len() as u32,
+                    1,
+                    DiagnosticCategory::Error,
+                    "Type expected.".to_string(),
+                    0,
+                ),
+                missing,
+            ],
         );
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
         assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
@@ -475,6 +479,7 @@ fn rejected_generic_arrow_prefix_keeps_same_call_names_independent() {
                     "Argument expression expected.".to_string(),
                     0,
                 ),
+                missing,
             ],
         );
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);

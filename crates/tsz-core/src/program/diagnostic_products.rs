@@ -1,11 +1,8 @@
 use crate::diagnostics::Diagnostic;
-/// Raw phases stay independently queryable; the compiler publishes the first.
+/// Raw phases stay independently queryable; the compiler publishes all of them.
 pub(super) struct DiagnosticPhaseProducts<'a>(pub(super) [&'a [Diagnostic]; 3]);
 impl<'a> DiagnosticPhaseProducts<'a> {
-    pub(super) fn compiler_product(self) -> &'a [Diagnostic] {
-        self.0
-            .into_iter()
-            .find(|diagnostics| !diagnostics.is_empty())
-            .unwrap_or_default()
+    pub(super) fn append_to(self, diagnostics: &mut Vec<Diagnostic>) {
+        diagnostics.extend(self.0.into_iter().flatten().cloned());
     }
 }

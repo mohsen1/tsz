@@ -594,15 +594,35 @@ fn private_and_malformed_method_shapes_remain_parser_recovery() {
                 )
             })
             .collect::<Vec<_>>(),
-        vec![(
-            "object-literal-method.ts",
-            1005,
-            47,
-            1,
-            "'{' expected.",
-            DiagnosticCategory::Error,
-            &[][..],
-        ),]
+        vec![
+            (
+                "object-literal-method.ts",
+                1005,
+                47,
+                1,
+                "'{' expected.",
+                DiagnosticCategory::Error,
+                &[][..],
+            ),
+            (
+                "object-literal-method.ts",
+                2304,
+                61,
+                14,
+                "Cannot find name 'MissingSibling'.",
+                DiagnosticCategory::Error,
+                &[][..],
+            ),
+            (
+                "object-literal-method.ts",
+                2304,
+                99,
+                18,
+                "Cannot find name 'MissingIndependent'.",
+                DiagnosticCategory::Error,
+                &[][..],
+            ),
+        ]
     );
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
     assert!(output.emitted_files.is_empty());

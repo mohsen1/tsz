@@ -811,8 +811,17 @@ fn declaration_host_recovery_keeps_siblings_and_phase_products_independent() {
     assert_completion(&output, SemanticCompletion::Deferred);
     assert_eq!(
         diagnostic_rows(&output.diagnostics),
-        [(1005, 19, 1, DiagnosticCategory::Error, "'{' expected.")],
-        "the compiler product publishes the first nonempty source diagnostic phase",
+        [
+            (1005, 19, 1, DiagnosticCategory::Error, "'{' expected."),
+            (
+                2304,
+                33,
+                14,
+                DiagnosticCategory::Error,
+                "Cannot find name 'MissingSibling'.",
+            ),
+        ],
+        "the compiler product publishes every independently owned diagnostic phase",
     );
 }
 

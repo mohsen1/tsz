@@ -562,7 +562,7 @@ fn binary_recovery_propagates_an_existing_complete_error_sentinel() {
         ("const mismatch:number='x'+Missing;", &[2322, 2304][..]),
         (
             "declare const values:number[];const mismatch:number='x'+values[];",
-            &[1011][..],
+            &[2322, 1011][..],
         ),
     ] {
         let output = compile(source, true, None);

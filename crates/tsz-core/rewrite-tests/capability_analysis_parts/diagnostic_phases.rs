@@ -119,6 +119,11 @@ fn syntax_phase_selection_keeps_cross_file_semantic_products_independent() {
             Vec::new(),
         ),
     ];
+    let expected_compiler = expected_semantic
+        .iter()
+        .chain(&expected_syntactic)
+        .cloned()
+        .collect::<Vec<_>>();
     let mut service = LanguageService::new(semantic_options());
     service.open("producer.ts", Arc::<str>::from(producer));
     service.open("consumer.ts", Arc::<str>::from(consumer));
@@ -167,14 +172,14 @@ fn syntax_phase_selection_keeps_cross_file_semantic_products_independent() {
     for output in [&forward, &repeated, &reverse] {
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
         assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-        assert_eq!(diagnostic_fingerprint(output), expected_syntactic);
+        assert_eq!(diagnostic_fingerprint(output), expected_compiler);
     }
     assert_eq!(forward.stats.types, repeated.stats.types);
     assert_eq!(forward.stats.types, reverse.stats.types);
 }
 
 #[test]
-fn compiler_selects_syntax_before_program_and_semantic_phase_products() {
+fn compiler_aggregates_syntax_program_and_semantic_phase_products() {
     let source = concat!(
         "let subject: string | number = 0;\n",
         "switch (subject.) { default: break; }\n",
@@ -195,7 +200,7 @@ fn compiler_selects_syntax_before_program_and_semantic_phase_products() {
     let compiler = Compiler::new();
     let first = compiler.compile(roots.clone(), &options);
     let repeated = compiler.compile(roots, &options);
-    let expected = vec![
+    let expected_syntactic = vec![
         (
             "mixed-phases.ts".to_string(),
             1003,
@@ -215,6 +220,33 @@ fn compiler_selects_syntax_before_program_and_semantic_phase_products() {
             Vec::new(),
         ),
     ];
+    let expected_program = (
+        String::new(),
+        5052,
+        0,
+        0,
+        DiagnosticCategory::Error,
+        "Option 'strictPropertyInitialization' cannot be specified without specifying option 'strictNullChecks'."
+            .to_string(),
+        Vec::new(),
+    );
+    let expected_semantic = (
+        "mixed-phases.ts".to_string(),
+        2304,
+        source
+            .find("MissingSameFileSibling")
+            .expect("independent required type") as u32,
+        "MissingSameFileSibling".len() as u32,
+        DiagnosticCategory::Error,
+        "Cannot find name 'MissingSameFileSibling'.".to_string(),
+        Vec::new(),
+    );
+    let expected = [
+        vec![expected_program.clone()],
+        expected_syntactic.clone(),
+        vec![expected_semantic],
+    ]
+    .concat();
 
     for output in [&first, &repeated] {
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
@@ -235,8 +267,8 @@ fn compiler_selects_syntax_before_program_and_semantic_phase_products() {
     assert_eq!(unchecked.stats.types, 0);
     assert_eq!(
         diagnostic_fingerprint(&unchecked),
-        expected,
-        "noCheck preserves the same first nonempty compiler phase without semantic work"
+        [vec![expected_program], expected_syntactic].concat(),
+        "noCheck preserves config/program and syntax diagnostics without semantic work"
     );
 }
 
