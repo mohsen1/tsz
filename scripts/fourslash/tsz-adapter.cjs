@@ -192,6 +192,36 @@ class TszServerBridge {
         }
     }
 
+    getText(fileName) {
+        const requestSeq = ++this._requestSeq;
+        const command = "tsz/text";
+        const responseBody = this.sendRequest(JSON.stringify({
+            seq: requestSeq,
+            type: "request",
+            command,
+            arguments: { file: fileName },
+        }));
+        let response;
+        try {
+            response = JSON.parse(responseBody);
+        } catch (err) {
+            throw new Error(`Invalid ${command} response: ${err.message}`);
+        }
+        if (response?.command !== command || response?.request_seq !== requestSeq) {
+            throw new Error(
+                `Stale ${command} response: expected request_seq=${requestSeq}, got ${responseBody}`
+            );
+        }
+        if (!response || response.success !== true) {
+            const message = response && response.message ? response.message : responseBody;
+            throw new Error(`tsz-server ${command} failed: ${message}`);
+        }
+        if (typeof response.body !== "string") {
+            throw new Error(`Malformed ${command} response: expected a string body`);
+        }
+        return response.body;
+    }
+
     /**
      * Shut down the worker and tsz-server.
      */
@@ -246,40 +276,6 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         }
         return normalized;
     };
-
-    function estimateJsdocInferActionLabels(content, startLineOneBased) {
-        const lines = content.split(/\r?\n/);
-        if (!lines.length) return [];
-
-        let lineIdx = Math.min(
-            Math.max((startLineOneBased ?? 1) - 1, 0),
-            lines.length - 1,
-        );
-        while (lineIdx > 0 && !lines[lineIdx].includes("/**")) {
-            lineIdx--;
-        }
-        if (!lines[lineIdx].includes("/**")) return [];
-
-        let blockEnd = lineIdx;
-        while (blockEnd < lines.length && !lines[blockEnd].includes("*/")) {
-            blockEnd++;
-        }
-        if (blockEnd >= lines.length) return [];
-
-        const targetLine = lines.slice(blockEnd + 1).find(line => line.trim().length > 0);
-        if (!targetLine) return [];
-
-        const open = targetLine.indexOf("(");
-        const close = targetLine.lastIndexOf(")");
-        if (open < 0 || close <= open) return [];
-
-        return targetLine.slice(open + 1, close)
-            .split(",")
-            .map(segment => segment.trim())
-            .filter(segment => segment.length > 0 && !segment.includes(":"))
-            .map(segment => segment.replace(/^\.\.\./, "").replace(/[^A-Za-z0-9_$].*$/, ""))
-            .filter(label => label.length > 0);
-    }
 
     /**
      * Host for the SessionClient that sends messages to tsz-server.
@@ -381,12 +377,10 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
          */
         openFile(fileName, content, scriptKindName) {
             super.openFile(fileName, content, scriptKindName);
-            // `LanguageServiceAdapterHost`'s base `openFile` is a no-op, so
-            // an overriding `content` passed by `goTo.file(name, content)`
-            // never reaches the scriptInfo. Apply it ourselves so that the
-            // native LS (which reads through `getScriptSnapshot` →
-            // `scriptInfo.content`) also sees the updated buffer — otherwise
-            // tsz-server and native disagree on what the file contains.
+            // `LanguageServiceAdapterHost`'s base `openFile` is a no-op, so an
+            // overriding `content` passed by `goTo.file(name, content)` never
+            // reaches the scriptInfo. Apply it ourselves so the host snapshot
+            // and the content sent to tsz-server stay identical.
             if (typeof content === "string") {
                 const existingScriptInfo = this.getScriptInfo(fileName);
                 if (existingScriptInfo) {
@@ -606,10 +600,6 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         constructor(cancellationToken, options) {
             this._host = new TszClientHost(cancellationToken, options);
             this._client = new SessionClient(this._host);
-            // Fallback TypeScript language service removed: fourslash tests must
-            // exercise tsz-server itself. Callers that expect these helpers get
-            // defaults (false / empty).
-            this._client.updateIsDefinitionOfReferencedSymbols = () => false;
             for (const prop of ["getCombinedCodeFix", "applyCodeActionCommand", "mapCode"]) {
                 if (Object.prototype.hasOwnProperty.call(this._client, prop)) {
                     delete this._client[prop];
@@ -623,9 +613,13 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     };
                     const request = this._client.processRequest("getCombinedCodeFix", args);
                     const response = this._client.processResponse(request);
-                    const { changes, commands } = response.body || {};
+                    const body = response?.body;
+                    if (!body || typeof body !== "object" || !Array.isArray(body.changes)) {
+                        throw new Error("Malformed getCombinedCodeFix response from tsz-server");
+                    }
+                    const { changes, commands } = body;
                     return {
-                        changes: this._client.convertChanges(changes || [], scope.fileName),
+                        changes: this._client.convertChanges(changes, scope.fileName),
                         commands,
                     };
                 };
@@ -636,9 +630,15 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     const request = this._client.processRequest("applyCodeActionCommand", args);
                     const response = this._client.processResponse(request);
                     if (Array.isArray(action)) {
-                        return Promise.resolve(Array.isArray(response.body) ? response.body : []);
+                        if (!Array.isArray(response?.body)) {
+                            throw new Error("Malformed applyCodeActionCommand response from tsz-server");
+                        }
+                        return Promise.resolve(response.body);
                     }
-                    return Promise.resolve(response.body || { successMessage: "" });
+                    if (!response?.body || typeof response.body !== "object" || Array.isArray(response.body)) {
+                        throw new Error("Malformed applyCodeActionCommand response from tsz-server");
+                    }
+                    return Promise.resolve(response.body);
                 };
             }
             const originalGetRenameInfo = this._client.getRenameInfo?.bind(this._client);
@@ -687,7 +687,16 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
 
                     const request = this._client.processRequest("rename", args);
                     const response = this._client.processResponse(request);
-                    const body = response.body || { info: { canRename: false, localizedErrorMessage: "You cannot rename this element." }, locs: [] };
+                    const body = response?.body;
+                    if (
+                        !body ||
+                        typeof body !== "object" ||
+                        !body.info ||
+                        typeof body.info !== "object" ||
+                        !Array.isArray(body.locs)
+                    ) {
+                        throw new Error("Malformed rename response from tsz-server");
+                    }
                     const locations = [];
                     for (const entry of body.locs || []) {
                         const entryFileName = entry.file;
@@ -743,31 +752,14 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     if (preferences && this._client.configure) {
                         this._client.configure(preferences);
                     }
-                    const actions = originalGetCodeFixesAtPosition(
+                    return originalGetCodeFixesAtPosition(
                         file,
                         start,
                         end,
                         errorCodes,
                         formatOptions,
                         preferences,
-                    ) || [];
-                    // Deduplicate only; test-file-specific filtering and canned
-                    // canonical-action substitutions removed so the harness
-                    // reflects what tsz-server actually returns.
-                    const seenForCall = new Set();
-                    const deduped = [];
-                    for (const action of actions) {
-                        const key = JSON.stringify({
-                            fixName: action.fixName || "",
-                            fixId: action.fixId || "",
-                            description: action.description || "",
-                            changes: action.changes || [],
-                        });
-                        if (seenForCall.has(key)) continue;
-                        seenForCall.add(key);
-                        deduped.push(action);
-                    }
-                    return deduped;
+                    );
                 };
             }
             const originalSetCompilerOptionsForInferredProjects = this._client.setCompilerOptionsForInferredProjects?.bind(this._client);
@@ -818,16 +810,29 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             throw new Error("getClassifier is not available using the tsz-server interface.");
         }
 
-        getPreProcessedFileInfo(fileName, fileContents) {
-            return ts.preProcessFile(
-                fileContents,
-                /*readImportFiles*/ true,
-                ts.hasJSFileExtension(fileName),
+        getPreProcessedFileInfo() {
+            throw new Error(
+                "getPreProcessedFileInfo is not available through the tsz-server protocol.",
             );
         }
 
         assertTextConsistent(fileName) {
-            // No-op: tsz-server text consistency is managed by the adapter
+            const serverText = bridge.getText(fileName);
+            const clientText = this._host.readFile(fileName);
+            ts.Debug.assert(
+                serverText === clientText,
+                [
+                    "Server and client text are inconsistent.",
+                    "",
+                    "Server:",
+                    serverText,
+                    "",
+                    "Client:",
+                    clientText,
+                    "",
+                    "This probably means something is wrong with the fourslash infrastructure, not with the test.",
+                ].join(ts.sys.newLine),
+            );
         }
 
         getLogger() {

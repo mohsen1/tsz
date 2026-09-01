@@ -1,8 +1,7 @@
 //! Test file directive parser
 //!
-//! Thin adapter over the canonical directive parser in
-//! `tsz_common::test_directives` (the single grammar shared by the
-//! conformance, emit, fourslash, and checker test-harness paths).
+//! Thin adapter over the canonical directive parser retained by the
+//! conformance harness.
 //! Supports: strict, target, module, filename, jsx, lib, noLib,
 //! moduleResolution, noCheck, skip, typeScriptVersion, etc.
 //!
@@ -14,7 +13,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-pub use tsz_common::test_directives::TestDirectives;
+use crate::tsc_results::UnsupportedReason;
+
+pub use crate::test_directives::TestDirectives;
 
 /// Result of parsing a test file
 #[derive(Debug, Clone)]
@@ -39,37 +40,87 @@ pub struct ParsedTest {
 /// ```
 pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
     Ok(ParsedTest {
-        directives: tsz_common::test_directives::parse_test_file(content),
+        directives: crate::test_directives::parse_test_file(content),
     })
 }
 
 /// Check if test should be skipped based on directives
-pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestDisposition {
+    Runnable,
+    Unsupported(UnsupportedReason),
+    Skipped(&'static str),
+}
+
+fn embedded_trace_resolution_enabled(directives: &TestDirectives) -> bool {
+    // Treat every authored project config as observable. The pinned harness can
+    // select a nested package config even when the local fixture mapper cannot
+    // yet represent that project root. Narrowing this to the locally elected
+    // config would silently erase the trace product for such rows.
+    directives.filenames.iter().any(|(name, content)| {
+        if !name.replace('\\', "/").ends_with("tsconfig.json") {
+            return false;
+        }
+        crate::jsonc::parse_jsonc(content).ok().and_then(|config| {
+            config
+                .get("compilerOptions")
+                .and_then(|options| options.get("traceResolution"))
+                .and_then(serde_json::Value::as_bool)
+        }) == Some(true)
+    })
+}
+
+fn directive_trace_resolution_enabled(directives: &TestDirectives) -> bool {
+    let Some(raw) = directives.options.get("traceresolution") else {
+        return false;
+    };
+    let tokens = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let excludes_true = tokens.iter().any(|token| {
+        token
+            .strip_prefix('-')
+            .or_else(|| token.strip_prefix('!'))
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+    });
+    !excludes_true
+        && tokens
+            .iter()
+            .any(|token| token.eq_ignore_ascii_case("true") || *token == "*")
+}
+
+pub fn test_disposition(directives: &TestDirectives) -> TestDisposition {
     // Check @skip (keys are already lowercase)
     if directives.options.contains_key("skip") {
-        return Some("@skip");
+        return TestDisposition::Skipped("@skip");
     }
 
     if select_ts7_oracle_configurations(directives).is_err() {
-        return Some("unsupported by TypeScript 7");
+        return TestDisposition::Unsupported(UnsupportedReason::TypeScript7Configuration);
     }
 
-    None
+    if directive_trace_resolution_enabled(directives)
+        || embedded_trace_resolution_enabled(directives)
+    {
+        return TestDisposition::Unsupported(UnsupportedReason::TraceResolutionOutputNotCompared);
+    }
+
+    TestDisposition::Runnable
 }
 
-/// Apply the native TypeScript 7 runner's path-based skip registry before the
-/// structural directive/configuration policy.
-pub fn should_skip_test_at_path(path: &Path, directives: &TestDirectives) -> Option<&'static str> {
+pub fn test_disposition_at_path(path: &Path, directives: &TestDirectives) -> TestDisposition {
     // Checked first so the baseline stays host-agnostic — see `HOST_DIVERGENT_TESTS`.
     // A registered row wins even if it would also be TS7-unsupported.
     if let Some(reason) = host_divergent_skip_reason(path) {
-        return Some(reason);
+        return TestDisposition::Skipped(reason);
     }
     let basename = path.file_name().and_then(|name| name.to_str());
     if basename.is_some_and(|name| TYPESCRIPT_7_SKIPPED_TESTS.contains(&name)) {
-        return Some("skipped by TypeScript 7 harness");
+        return TestDisposition::Skipped("skipped by TypeScript 7 harness");
     }
-    should_skip_test(directives)
+    test_disposition(directives)
 }
 
 /// Stable reason emitted for a row excluded by the host-divergent registry.
@@ -476,8 +527,8 @@ mod tests {
             Err(UnsupportedTypeScript7Configuration)
         );
         assert_eq!(
-            should_skip_test(&directives),
-            Some("unsupported by TypeScript 7")
+            test_disposition(&directives),
+            TestDisposition::Unsupported(UnsupportedReason::TypeScript7Configuration)
         );
     }
 
@@ -551,29 +602,94 @@ function foo() {}
     }
 
     #[test]
-    fn test_should_skip_test_honors_explicit_and_ts7_unsupported_skips() {
+    fn test_disposition_honors_explicit_and_ts7_unsupported_skips() {
         let mut directives = TestDirectives::default();
         directives
             .options
             .insert("nocheck".to_string(), "true".to_string());
-        assert_eq!(should_skip_test(&directives), None);
+        assert_eq!(test_disposition(&directives), TestDisposition::Runnable);
 
         directives
             .options
             .insert("skip".to_string(), "true".to_string());
-        assert_eq!(should_skip_test(&directives), Some("@skip"));
+        assert_eq!(
+            test_disposition(&directives),
+            TestDisposition::Skipped("@skip")
+        );
+    }
+
+    #[test]
+    fn trace_resolution_products_are_visible_but_not_diagnostic_claims() {
+        let direct =
+            parse_test_file("// @traceResolution: true\n// @filename: input.ts\nimport 'pkg';\n")
+                .expect("direct trace fixture");
+        assert_eq!(
+            test_disposition(&direct.directives),
+            TestDisposition::Unsupported(UnsupportedReason::TraceResolutionOutputNotCompared)
+        );
+
+        let embedded = parse_test_file(
+            "// @filename: tsconfig.json\n{\"compilerOptions\":{\"traceResolution\":true}}\n// @filename: input.ts\nimport 'pkg';\n",
+        )
+        .expect("embedded trace fixture");
+        assert_eq!(
+            test_disposition(&embedded.directives),
+            TestDisposition::Unsupported(UnsupportedReason::TraceResolutionOutputNotCompared)
+        );
+
+        let embedded_jsonc = parse_test_file(
+            "// @filename: tsconfig.json\n{\n // comment\n \"compilerOptions\": { \"traceResolution\": true, },\n}\n// @filename: input.ts\nimport 'pkg';\n",
+        )
+        .unwrap();
+        assert_eq!(
+            test_disposition(&embedded_jsonc.directives),
+            TestDisposition::Unsupported(UnsupportedReason::TraceResolutionOutputNotCompared)
+        );
+
+        for source in [
+            "// @traceResolution: false\nconst value = 1;\n",
+            "// @traceResolution: *, -true\nconst value = 1;\n",
+            "// @traceResolution: *, -TRUE\nconst value = 1;\n",
+            "// @filename: tsconfig.json\n{\"compilerOptions\":{\"traceResolution\":false}}\n// @filename: input.ts\nconst value = 1;\n",
+            "// @filename: tsconfig.json\n{\"compilerOptions\":{\"traceResolution\":\"true\"}}\n// @filename: input.ts\nconst value = 1;\n",
+        ] {
+            let parsed = parse_test_file(source).expect("non-tracing fixture");
+            assert_eq!(
+                test_disposition(&parsed.directives),
+                TestDisposition::Runnable
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_skip_and_ts7_configuration_precede_trace_nonclaim() {
+        let skipped =
+            parse_test_file("// @skip: tracked\n// @traceResolution: true\nconst value = 1;\n")
+                .expect("skipped trace fixture");
+        assert_eq!(
+            test_disposition(&skipped.directives),
+            TestDisposition::Skipped("@skip")
+        );
+
+        let removed =
+            parse_test_file("// @target: es5\n// @traceResolution: true\nconst value = 1;\n")
+                .expect("removed target fixture");
+        assert_eq!(
+            test_disposition(&removed.directives),
+            TestDisposition::Unsupported(UnsupportedReason::TypeScript7Configuration)
+        );
     }
 
     #[test]
     fn path_skip_matches_the_native_ts7_runner_registry() {
         let directives = TestDirectives::default();
         assert_eq!(
-            should_skip_test_at_path(Path::new("compiler/preserveValueImports.ts"), &directives),
-            Some("skipped by TypeScript 7 harness")
+            test_disposition_at_path(Path::new("compiler/preserveValueImports.ts"), &directives),
+            TestDisposition::Skipped("skipped by TypeScript 7 harness")
         );
         assert_eq!(
-            should_skip_test_at_path(Path::new("compiler/ordinary.ts"), &directives),
-            None
+            test_disposition_at_path(Path::new("compiler/ordinary.ts"), &directives),
+            TestDisposition::Runnable
         );
     }
 
@@ -587,28 +703,28 @@ function foo() {}
         let cases = [
             (
                 "TypeScript/tests/cases/conformance/typings/typingsLookup3.ts",
-                Some(HOST_DIVERGENT_SKIP_REASON),
+                TestDisposition::Skipped(HOST_DIVERGENT_SKIP_REASON),
             ),
             (
                 "/home/runner/tsz/TypeScript/tests/cases/conformance/typings/typingsLookup3.ts",
-                Some(HOST_DIVERGENT_SKIP_REASON),
+                TestDisposition::Skipped(HOST_DIVERGENT_SKIP_REASON),
             ),
             (
                 r"C:\src\TypeScript\tests\cases\conformance\typings\typingsLookup3.ts",
-                Some(HOST_DIVERGENT_SKIP_REASON),
+                TestDisposition::Skipped(HOST_DIVERGENT_SKIP_REASON),
             ),
             (
                 "TypeScript/tests/cases/conformance/typings/typingsLookup30.ts",
-                None,
+                TestDisposition::Runnable,
             ),
             (
                 "TypeScript/tests/cases/conformance/typings/typingsLookup.ts",
-                None,
+                TestDisposition::Runnable,
             ),
         ];
         for (spelling, expected) in cases {
             assert_eq!(
-                should_skip_test_at_path(Path::new(spelling), &directives),
+                test_disposition_at_path(Path::new(spelling), &directives),
                 expected,
                 "unexpected disposition for {spelling}"
             );

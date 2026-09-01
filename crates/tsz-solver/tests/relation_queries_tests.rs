@@ -503,8 +503,6 @@ fn relation_policy_fields_are_exhaustively_partitioned_in_cache_keys() {
     let policy = RelationPolicy::default();
     let RelationPolicy {
         flags,
-        strict_subtype_checking,
-        strict_any_propagation,
         any_propagation_mode,
         assume_related_on_cycle,
         assume_related_on_depth,
@@ -521,16 +519,6 @@ fn relation_policy_fields_are_exhaustively_partitioned_in_cache_keys() {
         RelationPolicy::from_relation_flags(
             flags.symmetric_difference(RelationFlags::STRICT_NULL_CHECKS),
         ),
-    );
-    assert_assignability_partitions(
-        "strict_subtype_checking",
-        policy.with_strict_subtype_checking(!strict_subtype_checking),
-        policy,
-    );
-    assert_assignability_partitions(
-        "strict_any_propagation",
-        policy.with_strict_any_propagation(!strict_any_propagation),
-        policy,
     );
     // Exhaustive over `AnyPropagationMode` as well: a new variant must pick a
     // distinct `CachedAnyMode` projection in `RelationPolicy::cache_config`.

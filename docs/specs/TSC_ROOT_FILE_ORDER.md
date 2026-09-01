@@ -124,27 +124,18 @@ prefer the direct binary for anything order-sensitive.
 Use a real (non-symlinked) directory: on macOS the `/tmp` symlink can cause files
 to resolve twice.
 
-## tsz status
+## Rewrite status
 
-`discover_ts_files` (`crates/tsz-cli/src/project/fs.rs`) implements both layers,
-and matches the oracle on every row in this document:
+This remains an R1 oracle specification. The R0 compiler accepts explicit root
+files and proves deterministic results when those roots are reversed, but it
+does not yet claim TypeScript-compatible `tsconfig` discovery, include-pattern
+bucketing, or wildcard walk order.
 
-- **bucketing by user include-spec index** — #17540. A file is assigned to the
-  first spec that matches it, evaluated **relative to the tsconfig directory**;
-  matching the absolute path first let a later spec's recursive glob
-  (`**/*.ts`, which crosses `/`) claim a file that a directory-scoped earlier
-  spec (`sub/*`) should own, collapsing the buckets.
-- **walk order within a bucket** — `compare_discovery_order`, which orders a
-  directory's own files ahead of its subdirectories rather than sorting whole
-  paths.
-
-**Trap:** `default_discovery_include_patterns`
-(`crates/tsz-common/src/file_extensions.rs`) synthesizes a *multi-pattern
-per-extension* list (`*.ts`, `*.tsx`, `*.mts`, `*.cts`, then the JS family),
-while tsc's real default is the single `**/*`. Bucketing naively by
-expanded-pattern index would therefore put TS ahead of JS in the **default**
-case and reintroduce exactly the regression #17428 reverted. The synthesized
-defaults must collapse into one bucket.
+When that surface is ported, preserve both layers described above: assign a
+file to the first matching user include pattern relative to the config
+directory, then preserve TypeScript's directory walk order inside that bucket.
+The default include remains the single `**/*`; expanding it into one pattern
+per extension would incorrectly put TypeScript files ahead of JavaScript files.
 
 ## Related: same-basename shadowing
 
@@ -152,7 +143,7 @@ Distinct from ordering, and genuinely extension-driven: when wildcard discovery
 finds two files with the same stem, tsc keeps only the highest-priority
 extension and drops the rest (`foo.ts` shadows `foo.js`). Verified with a
 positive control — different stems admit both and conflict, same stems produce
-silence. Implemented in `exclude_shadowed_js_files` (#17478).
+silence. This is also an R1 target, not a capability claimed by the R0 rewrite.
 
 So a same-stem `.ts`/`.js` pair raises no ordering question at all; the `.js` is
 not in the program.

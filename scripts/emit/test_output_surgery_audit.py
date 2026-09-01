@@ -30,7 +30,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         line = "let escaped = s.replace('\\\\', \"\\\\\\\\\").replace('\"', \"\\\\\\\"\");"
         self.assertTrue(
             self.audit.is_auto_allowed_data_cleanup(
-                "crates/tsz-emitter/src/enums/transform.rs", line
+                "crates/tsz-core/src/emit.rs", line
             )
         )
 
@@ -38,9 +38,205 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         line = "output = output.replacen(&from, &to, 1);"
         self.assertFalse(
             self.audit.is_auto_allowed_data_cleanup(
-                "crates/tsz-emitter/src/emitter/transform_dispatch.rs", line
+                "crates/tsz-core/src/emit.rs", line
             )
         )
+
+    def test_default_scan_targets_the_replacement_emitter(self):
+        self.assertEqual(
+            list(self.audit.iter_rust_files()),
+            [ROOT / "crates" / "tsz-core" / "src" / "emit.rs"],
+        )
+
+    def test_missing_emitter_source_fails_closed(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            missing = pathlib.Path(temp_dir) / "missing.rs"
+            with self.assertRaisesRegex(
+                FileNotFoundError, "emitter source path does not exist"
+            ):
+                list(self.audit.iter_rust_files(missing))
+
+    def test_canonical_emit_harness_has_no_truth_bypasses(self):
+        self.assertEqual(self.audit.scan_harness_truth(), [])
+
+    def test_emit_harness_truth_bypasses_are_forbidden(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            base = pathlib.Path(temp_dir)
+            cli = base / "cli-transpiler.ts"
+            runner = base / "runner.ts"
+            parser = base / "baseline-parser.ts"
+            source_test = base / "source-test.ts"
+            products = base / "canonical-products.ts"
+            authored = base / "authored-options.ts"
+            cli.write_text(
+                "const retryArgs = ['--declaration', '--noCheck'];\n"
+                "const expectedJsContent = expected;\n"
+                "const jsCandidates = [wrong, right];\n"
+                "const expectedJsFileName = elected;\n"
+                "const expectedNoProducts = noEmitOnError && outputs.length === 0;\n"
+                "if (!declarationRequested) { args.push('--noCheck', '--noLib'); }\n"
+                "args.push(...inputFiles);\n"
+                "const effectiveAllowJs = allowJs ?? (hasJsInput ? true : undefined);\n"
+                "dedupeUseStrictPreamble(actual);\n",
+                encoding="utf-8",
+            )
+            runner.write_text(
+                "stripSourceMapUrl(actual);\n"
+                "loadCache(); const expectedJs = transpileResult.js;\n"
+                "const readAhead = maxTests * 2; return results.filter(Boolean);\n"
+                "const expectedJsProducts = baseline.js; const old = product.noCheckContent;\n"
+                "const OVERLAY_DIR = 'baselines-ts7';\n"
+                "if (normalizeComments(expected) === normalizeComments(actual)) pass();\n"
+                "const options = { declaration: row.dtsProductDomain.length > 0 };\n",
+                encoding="utf-8",
+            )
+            parser.write_text(
+                "export function normalizeEmit(code: string): string {\n"
+                "  return code.replace(/\\r\\n/g, '\\n').trim();\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            source_test.write_text(
+                "const source = sourceBytes.join('\\n').trim();\n"
+                "git show HEAD:tests/cases/stale.ts;\n",
+                encoding="utf-8",
+            )
+            products.write_text(
+                "compareEmit(oracleContent, actualContent);\n"
+                "if (oracle.exitCode !== product.exitCode) fail();\n",
+                encoding="utf-8",
+            )
+            authored.write_text(
+                "const normalized = value.trim().toLowerCase();\n",
+                encoding="utf-8",
+            )
+
+            findings = self.audit.scan_harness_truth(
+                (cli, runner, parser, source_test, products, authored)
+            )
+
+        self.assertEqual(
+            {finding.call for finding in findings},
+            {
+                "actual-output-compensation",
+                "arbitrary-rejection-absence-pass",
+                "altered-invocation-retry",
+                "candidate-output-search",
+                "canonical-result-cache",
+                "expected-content-control",
+                "non-line-ending-normalization",
+                "silent-candidate-drop",
+                "single-product-comparison",
+                "single-product-election",
+                "synthesized-unchecked-invocation",
+                "tolerant-comparison-pass",
+                "legacy-baseline-byte-oracle",
+                "source-byte-trim",
+                "historical-source-fallback",
+                "baseline-derived-declaration-flag",
+                "staged-files-used-as-root-arguments",
+                "synthesized-allow-js",
+                "product-line-ending-normalization",
+                "nonzero-outcome-match",
+                "provenance-erasing-boolean-coercion",
+            },
+        )
+        failures = self.audit.audit(findings, {})
+        self.assertEqual(len(failures), 6)
+        self.assertTrue(all("forbidden canonical-emit truth bypass" in failure for failure in failures))
+
+    def test_required_canonical_contracts_fail_closed(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            base = pathlib.Path(temp_dir)
+            paths = tuple(
+                base / name
+                for name in (
+                    "cli-transpiler.ts",
+                    "runner.ts",
+                    "baseline-parser.ts",
+                    "canonical-products.ts",
+                    "canonical-support.ts",
+                    "authored-options.ts",
+                    "source-test.ts",
+                    "artifact-state.ts",
+                    "query-emit.py",
+                )
+            )
+            for path in paths:
+                path.write_text("// deliberately incomplete canonical harness\n", encoding="utf-8")
+
+            findings = self.audit.scan_harness_truth(paths, enforce_required=True)
+
+        self.assertEqual(
+            {finding.call for finding in findings},
+            {
+                "missing-complete-product-collection",
+                "missing-emit-declaration-only-forwarding",
+                "missing-authored-no-check-forwarding",
+                "missing-authored-no-lib-forwarding",
+                "missing-explicit-false-forwarding",
+                "missing-authored-allow-js-forwarding",
+                "missing-staged-root-separation",
+                "missing-explicit-root-vector",
+                "missing-lossless-product-byte-read",
+                "missing-complete-product-comparison",
+                "missing-compiler-outcome-comparison",
+                "missing-pinned-oracle-resolution",
+                "missing-independent-dual-invocation",
+                "missing-oracle-result-provenance",
+                "missing-js-domain-only-projection",
+                "missing-dts-domain-only-projection",
+                "missing-terminal-unsupported-row",
+                "missing-non-vacuity-guard",
+                "missing-authored-option-resolution",
+                "missing-authored-option-failure-boundary",
+                "missing-invalid-authored-option-failure",
+                "missing-unhandled-authored-option-failure",
+                "missing-embedded-config-failure",
+                "missing-unrepresented-declaration-domain-failure",
+                "missing-mutually-exclusive-mode-guard",
+                "missing-all-null-result-guard",
+                "missing-explicit-artifact-status",
+                "missing-js-product-inventory",
+                "missing-dts-product-inventory",
+                "missing-byte-exact-compare",
+                "missing-path-to-bytes-comparison",
+                "missing-byte-exact-product-compare",
+                "missing-oracle-nonzero-rejection",
+                "missing-product-nonzero-rejection",
+                "missing-source-map-quarantine",
+                "missing-inventory-retention",
+                "missing-option-disposition",
+                "missing-filename-variant-accounting",
+                "missing-option-precedence",
+                "missing-invalid-option-accounting",
+                "missing-jsonc-error-accounting",
+                "missing-config-conflict-accounting",
+                "missing-config-field-accounting",
+                "missing-provenance-strict-boolean",
+                "missing-embedded-lib-array-check",
+                "missing-exact-source-byte-assembly",
+                "missing-live-corpus-read",
+                "missing-harness-root-selection",
+                "missing-last-unit-root-model",
+                "missing-config-root-quarantine",
+                "missing-artifact-state-domain",
+                "missing-compiler-artifact-classification",
+                "missing-vacuous-artifact-failure",
+                "missing-terminal-artifact-statuses",
+                "missing-artifact-state-fingerprint",
+            },
+        )
+
+    def test_emit_harness_truth_bypass_cannot_be_allowlisted(self):
+        path = "scripts/emit/src/runner.ts"
+        finding = self.audit.Finding(path, 1, "tolerant-comparison-pass", "normalizeWhitespace")
+        failures = self.audit.audit(
+            [finding],
+            {path: self.audit.AllowEntry("historical-harness-debt", 1, "must not apply")},
+        )
+        self.assertIn(f"{path}: 1 forbidden canonical-emit truth bypass(es)", failures)
+        self.assertIn(f"{path}: canonical-emit truth bypasses may not be allowlisted", failures)
 
     def test_manual_debt_marker_is_tracked(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:

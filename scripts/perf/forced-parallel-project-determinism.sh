@@ -16,12 +16,11 @@ Options:
   --tsconfig PATH   Existing tsconfig to check instead of materializing a row.
                     Uses custom-tsconfig as the output label unless --row is
                     also provided as a descriptive label.
-  --runs N         Number of sequential and forced runs per worker width (default: 5).
+  --runs N         Number of baseline and candidate runs per worker width (default: 5).
   --workers LIST   Comma-separated Rayon worker widths (default: 4,8,16).
-  --mode MODE      Candidate mode: forced, default, or both (default: forced).
-                    forced sets TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1.
-                    default only varies RAYON_NUM_THREADS, preserving normal
-                    dispatch gates. Use this for #13255 default-path witnesses.
+  --mode MODE      Candidate mode (default: default). Only `default` is
+                    available in the replacement compiler; it varies
+                    RAYON_NUM_THREADS without changing semantic dispatch.
   --baseline-workers N
                     Set RAYON_NUM_THREADS for baseline runs. For default-path
                     schedule checks, use 1 to compare parallel runs against a
@@ -36,11 +35,10 @@ Environment:
                    Per-run timeout in seconds (default: 150).
 
 The harness keeps normal dispatch for baseline runs unless --baseline-workers
-is set. Candidate runs either set TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1
-(--mode forced), preserve normal dispatch while varying RAYON_NUM_THREADS
-(--mode default), or do both (--mode both). Each run captures raw stdout+stderr
-and exit code. A row passes when every captured byte stream and exit code
-matches the first baseline run.
+is set. Candidate runs preserve normal dispatch while varying
+RAYON_NUM_THREADS. Each run captures raw stdout+stderr and exit code. A row
+passes when every captured byte stream and exit code matches the first
+baseline run.
 EOF
 }
 
@@ -49,7 +47,7 @@ ROW_WAS_SET=0
 TSCONFIG_INPUT=""
 RUNS=5
 WORKERS="4,8,16"
-MODE="forced"
+MODE="default"
 BASELINE_WORKERS=""
 OUT_ROOT="$ROOT_DIR/.target/forced-parallel-determinism"
 
@@ -102,10 +100,14 @@ if ! [[ "$RUNS" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 case "$MODE" in
-  forced|default|both)
+  default)
+    ;;
+  forced|both)
+    echo "error: --mode $MODE belonged to the retired compiler and is unavailable" >&2
+    exit 2
     ;;
   *)
-    echo "error: --mode must be forced, default, or both: $MODE" >&2
+    echo "error: --mode must be default: $MODE" >&2
     exit 2
     ;;
 esac
@@ -296,28 +298,15 @@ for worker_count in "${WORKER_LIST[@]}"; do
     echo "error: worker count must be a positive integer: $worker_count" >&2
     exit 2
   fi
-  if [[ "$MODE" == "forced" || "$MODE" == "both" ]]; then
-    for run in $(seq 1 "$RUNS"); do
-      out="$OUT_DIR/forced-workers-${worker_count}-run-${run}.out"
-      run_capture \
-        "forced workers=$worker_count run $run" \
-        "$out" \
-        env TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK=1 RAYON_NUM_THREADS="$worker_count" \
-        "$TSZ_BIN" --noEmit -p "$TSCONFIG"
-      compare_capture "$BASELINE" "$out" "forced workers=$worker_count run $run"
-    done
-  fi
-  if [[ "$MODE" == "default" || "$MODE" == "both" ]]; then
-    for run in $(seq 1 "$RUNS"); do
-      out="$OUT_DIR/default-workers-${worker_count}-run-${run}.out"
-      run_capture \
-        "default workers=$worker_count run $run" \
-        "$out" \
-        env RAYON_NUM_THREADS="$worker_count" \
-        "$TSZ_BIN" --noEmit -p "$TSCONFIG"
-      compare_capture "$BASELINE" "$out" "default workers=$worker_count run $run"
-    done
-  fi
+  for run in $(seq 1 "$RUNS"); do
+    out="$OUT_DIR/default-workers-${worker_count}-run-${run}.out"
+    run_capture \
+      "default workers=$worker_count run $run" \
+      "$out" \
+      env RAYON_NUM_THREADS="$worker_count" \
+      "$TSZ_BIN" --noEmit -p "$TSCONFIG"
+    compare_capture "$BASELINE" "$out" "default workers=$worker_count run $run"
+  done
 done
 
 echo "project determinism passed: $OUT_DIR"

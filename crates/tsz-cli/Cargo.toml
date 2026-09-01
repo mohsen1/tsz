@@ -1,277 +1,58 @@
 [package]
 name = "tsz-cli"
-description = "CLI binaries for the tsz TypeScript compiler"
 version.workspace = true
 edition.workspace = true
-autobins = false
-autotests = false
+description = "Process adapters for the clean-slate tsz compiler"
 repository.workspace = true
+homepage.workspace = true
 license.workspace = true
 authors.workspace = true
-homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
+publish = false
+autobins = false
+autotests = false
 
 [[bin]]
 name = "tsz"
 path = "src/bin/tsz.rs"
 
 [[bin]]
-name = "tsz-lsp"
-path = "src/bin/tsz_lsp.rs"
+name = "tsz-server"
+path = "src/bin/tsz_server.rs"
 
 [[bin]]
-name = "tsz-server"
-path = "src/bin/tsz_server/main.rs"
+name = "tsz-lsp"
+path = "src/bin/tsz_lsp.rs"
 
 [[bin]]
 name = "try-tsz"
 path = "src/bin/try_tsz.rs"
 
-[[bin]]
-name = "audit-unsoundness"
-path = "src/bin/audit_unsoundness.rs"
-
 [features]
 default = []
-# Perf-tools build: enables internal-only flags used by the bench harness.
-# - `--diagnostics-json <path>` (`PERFORMANCE_PLAN.md` §4.T0.2)
-# - `--perf-counters-json <path>` (`PERFORMANCE_PLAN.md` §4.T0.3)
-# Pulls in `tsz-common/perf-counters-timing` so the interner lock-wait
-# histogram is wired in attribution-mode bench runs. Default release
-# builds MUST NOT enable this; the flags are invisible in `--help` and
-# the timing hooks compile out entirely.
-perf-tools = ["tsz-common/perf-counters-timing"]
+perf-tools = []
 
 [dependencies]
-tsz = { workspace = true }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-mimalloc = { version = "0.1", default-features = false }
-tsz-common = { workspace = true }
-tsz-scanner = { workspace = true }
-tsz-parser = { workspace = true }
-tsz-binder = { workspace = true }
-tsz-solver = { workspace = true }
-tsz-checker = { workspace = true }
-tsz-emitter = { workspace = true }
-tsz-lsp = { workspace = true }
-anyhow = { workspace = true }
-clap = { workspace = true }
-colored = { workspace = true }
-dashmap = { workspace = true }
-globset = { workspace = true }
-notify = { workspace = true }
-rustc-hash = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-json5 = { workspace = true }
-walkdir = { workspace = true }
-rayon = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-tree = { workspace = true }
-
-[build-dependencies]
-serde_json = { workspace = true }
-
-[[test]]
-name = "instanceof_class_value_rhs_tests"
-path = "tests/instanceof_class_value_rhs_tests.rs"
-[[test]]
-name = "lib_alias_ref_def_identity_tests"
-path = "tests/lib_alias_ref_def_identity_tests.rs"
-[[test]]
-name = "lib_primitive_alias_on_demand_cli_tests"
-path = "tests/lib_primitive_alias_on_demand_cli_tests.rs"
-[[test]]
-name = "zod_cross_file_partial_omit_tests"
-path = "tests/zod_cross_file_partial_omit_tests.rs"
-[[test]]
-name = "kysely_cross_file_callback_context_cli_tests"
-path = "tests/kysely_cross_file_callback_context_cli_tests.rs"
-[[test]]
-name = "array_literal_iterable_contextual_tests"
-path = "tests/array_literal_iterable_contextual_tests.rs"
-[[test]]
-name = "narrow_union_lazy_alias_member_cli_tests"
-path = "tests/narrow_union_lazy_alias_member_cli_tests.rs"
-[[test]]
-name = "intersection_globalthis_member_assignability_cli_tests"
-path = "tests/intersection_globalthis_member_assignability_cli_tests.rs"
-[[test]]
-name = "overload_any_check_conditional_return_tests"
-path = "tests/overload_any_check_conditional_return_tests.rs"
-[[test]]
-name = "tsc_compat_tests"
-path = "tests/tsc_compat_tests.rs"
-
-[[test]]
-name = "triple_slash_reference_not_found_relative_path_tests"
-path = "tests/triple_slash_reference_not_found_relative_path_tests.rs"
-
-[[test]]
-name = "recursive_defaulted_template_accumulator_tests"
-path = "tests/recursive_defaulted_template_accumulator_tests.rs"
-
-[[test]]
-name = "recursive_conditional_infer_termination_tests"
-path = "tests/recursive_conditional_infer_termination_tests.rs"
-
-[[test]]
-name = "parallel_sequential_agreement_tests"
-path = "tests/parallel_sequential_agreement_tests.rs"
-
-[[test]]
-name = "evaluator_cache_agreement_tests"
-path = "tests/evaluator_cache_agreement_tests.rs"
-
-[[test]]
-name = "delete_inherited_optional_heritage_tests"
-path = "tests/delete_inherited_optional_heritage_tests.rs"
-
-[[test]]
-name = "sound_declaration_projection_tests"
-path = "tests/sound_declaration_projection_tests.rs"
-
-[[test]]
-name = "recursive_const_arrow_dts_emit_tests"
-path = "tests/recursive_const_arrow_dts_emit_tests.rs"
-
-[[test]]
-name = "parenthesized_type_dts_emit_tests"
-path = "tests/parenthesized_type_dts_emit_tests.rs"
-
-[[test]]
-name = "import_equals_alias_dts_emit_tests"
-path = "tests/import_equals_alias_dts_emit_tests.rs"
-
-[[test]]
-name = "inferred_object_index_signature_dts_emit_tests"
-path = "tests/inferred_object_index_signature_dts_emit_tests.rs"
-
-[[test]]
-name = "const_assertion_dts_emit_tests"
-path = "tests/const_assertion_dts_emit_tests.rs"
-
-[[test]]
-name = "const_assertion_wide_index_signature_dts_emit_tests"
-path = "tests/const_assertion_wide_index_signature_dts_emit_tests.rs"
-
-[[test]]
-name = "computed_object_index_signature_source_order_dts_emit_tests"
-path = "tests/computed_object_index_signature_source_order_dts_emit_tests.rs"
-
-[[test]]
-name = "object_rest_binding_dts_emit_tests"
-path = "tests/object_rest_binding_dts_emit_tests.rs"
-
-[[test]]
-name = "unique_symbol_destructuring_dts_emit_tests"
-path = "tests/unique_symbol_destructuring_dts_emit_tests.rs"
-
-[[test]]
-name = "inferred_const_literal_union_dts_emit_tests"
-path = "tests/inferred_const_literal_union_dts_emit_tests.rs"
-
-[[test]]
-name = "inferred_function_value_apparent_member_return_dts_emit_tests"
-path = "tests/inferred_function_value_apparent_member_return_dts_emit_tests.rs"
-
-[[test]]
-name = "inferred_enum_member_return_dts_emit_tests"
-path = "tests/inferred_enum_member_return_dts_emit_tests.rs"
-
-[[test]]
-name = "overload_call_node_type_cache_dts_emit_tests"
-path = "tests/overload_call_node_type_cache_dts_emit_tests.rs"
-
-[[test]]
-name = "generic_call_bare_type_param_dts_emit_tests"
-path = "tests/generic_call_bare_type_param_dts_emit_tests.rs"
-
-[[test]]
-name = "generator_yield_star_dts_emit_tests"
-path = "tests/generator_yield_star_dts_emit_tests.rs"
-
-[[test]]
-name = "generator_yield_inference_dts_emit_tests"
-path = "tests/generator_yield_inference_dts_emit_tests.rs"
-
-[[test]]
-name = "generator_yield_literal_widening_dts_emit_tests"
-path = "tests/generator_yield_literal_widening_dts_emit_tests.rs"
-
-[[test]]
-name = "generator_expression_initializer_dts_emit_tests"
-path = "tests/generator_expression_initializer_dts_emit_tests.rs"
-
-[[test]]
-name = "declaration_type_walk_boundary_dts_emit_tests"
-path = "tests/declaration_type_walk_boundary_dts_emit_tests.rs"
-
-[[test]]
-name = "non_exported_dependency_transitive_dts_emit_tests"
-path = "tests/non_exported_dependency_transitive_dts_emit_tests.rs"
-
-[[test]]
-name = "lib_target_suggestion_ts2550_tests"
-path = "tests/lib_target_suggestion_ts2550_tests.rs"
-
-[[test]]
-name = "cannot_find_name_value_suggestion_cli_tests"
-path = "tests/cannot_find_name_value_suggestion_cli_tests.rs"
-
-[[test]]
-name = "cross_binder_reexport_meaning_tests"
-path = "tests/cross_binder_reexport_meaning_tests.rs"
-
-[[test]]
-name = "qualified_type_namespace_shadow_tests"
-path = "tests/qualified_type_namespace_shadow_tests.rs"
-
-[[test]]
-name = "jsdoc_nameless_typedef_namespace_root_tests"
-path = "tests/jsdoc_nameless_typedef_namespace_root_tests.rs"
-
-[[test]]
-name = "imported_infer_readonly_alias_cli_tests"
-path = "tests/imported_infer_readonly_alias_cli_tests.rs"
-
-[[test]]
-name = "export_string_local_name_cross_file_suppression_cli_tests"
-path = "tests/export_string_local_name_cross_file_suppression_cli_tests.rs"
-[[test]]
-name = "cross_module_ambient_class_method_constraint_cli_tests"
-path = "tests/cross_module_ambient_class_method_constraint_cli_tests.rs"
-[[test]]
-name = "js_container_merge_class_variable_conflict_expando_cli_tests"
-path = "tests/js_container_merge_class_variable_conflict_expando_cli_tests.rs"
-[[test]]
-name = "cross_module_conditional_constraint_union_param_cli_tests"
-path = "tests/cross_module_conditional_constraint_union_param_cli_tests.rs"
-
-[[test]]
-name = "cross_module_contextual_rest_tuple_spread_ts2556_cli_tests"
-path = "tests/cross_module_contextual_rest_tuple_spread_ts2556_cli_tests.rs"
-
-[[test]]
-name = "merged_unique_symbol_factory_cli_tests"
-path = "tests/merged_unique_symbol_factory_cli_tests.rs"
-
-[[test]]
-name = "js_export_surface_commonjs_cli_tests"
-path = "tests/js_export_surface_commonjs_cli_tests.rs"
-
-[[test]]
-name = "skip_lib_check_declaration_diagnostics_tests"
-path = "tests/skip_lib_check_declaration_diagnostics_tests.rs"
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tsz.workspace = true
 
 [dev-dependencies]
-tempfile = { workspace = true }
+tempfile.workspace = true
+
+[[test]]
+name = "rewrite_process_contract"
+path = "rewrite-tests/process_contract.rs"
+
+[[test]]
+name = "rewrite_standard_library_options"
+path = "rewrite-tests/standard_library_options.rs"
+
+[[test]]
+name = "rewrite_project_config"
+path = "rewrite-tests/project_config.rs"
 
 [lints]
 workspace = true
-
-[lib]
-doctest = false

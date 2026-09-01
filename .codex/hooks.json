@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'TSZ startup: run tsz-worktree-intake; read docs/plan/ROADMAP.md for the four goals (green, fast, grow, hold).'"
+            "command": "echo 'TSZ reset: run worktree intake, read docs/plan/ROADMAP.md, and do not restore the retired implementation or Sound Mode.'"
           }
         ]
       }

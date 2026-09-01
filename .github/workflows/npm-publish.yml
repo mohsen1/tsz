@@ -1,5 +1,8 @@
-name: Publish npm packages
+name: npm publication unavailable during rewrite
 
+# npm packages must not expose the incomplete R0 compiler as a product. Keep
+# tag/manual invocations visible and explicitly blocked rather than failing on
+# deleted WASM paths or silently publishing stale artifacts.
 on:
   push:
     tags:
@@ -7,229 +10,20 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish (must already exist as a git tag)"
+        description: "Tag requested for npm publication (publishing is currently blocked)"
         required: true
         type: string
 
 permissions:
   contents: read
-  id-token: write
-
-concurrency:
-  group: npm-publish-${{ github.ref }}
-  cancel-in-progress: false
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: "0"
-  RUST_BACKTRACE: short
-  RUSTFLAGS: "-D warnings"
-  CARGO_TARGET_DIR: target
 
 jobs:
-  resolve-tag:
-    name: Resolve tag
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.tag.outputs.tag }}
-    steps:
-      - id: tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
-            tag="${GITHUB_REF#refs/tags/}"
-          else
-            tag="${{ inputs.tag }}"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Publishing npm packages for $tag"
-
-  build-native:
-    name: Build ${{ matrix.suffix }}
-    needs: resolve-tag
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suffix: darwin-arm64
-            target: aarch64-apple-darwin
-            os: macos-14
-            cross: false
-            ext: ""
-          - suffix: darwin-x64
-            target: x86_64-apple-darwin
-            os: macos-14
-            cross: false
-            ext: ""
-          - suffix: linux-x64
-            target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: false
-            ext: ""
-          - suffix: linux-arm64
-            target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: true
-            ext: ""
-          - suffix: win32-x64
-            target: x86_64-pc-windows-msvc
-            os: windows-latest
-            cross: false
-            ext: ".exe"
-          - suffix: win32-arm64
-            target: aarch64-pc-windows-msvc
-            os: windows-latest
-            cross: false
-            ext: ".exe"
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.resolve-tag.outputs.tag }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Cache cargo registry + target
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          prefix-key: "npm-${{ matrix.target }}"
-          shared-key: "npm-${{ matrix.target }}"
-          cache-on-failure: true
-          cache-targets: true
-
-      - name: Install cross
-        if: matrix.cross == true
-        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
-        with:
-          tool: cross
-
-      - name: Build native binaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          build=(cargo build)
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            build=(cross build)
-          fi
-          "${build[@]}" \
-            --profile dist-fast \
-            --target "${{ matrix.target }}" \
-            -p tsz-cli \
-            --bin tsz \
-            --bin tsz-server \
-            --bin try-tsz
-
-      - name: Stage npm native artifact
-        shell: bash
-        env:
-          SUFFIX: ${{ matrix.suffix }}
-          TARGET: ${{ matrix.target }}
-          EXT: ${{ matrix.ext }}
-        run: |
-          set -euo pipefail
-          out="npm/@mohsen-azimi/tsz-${SUFFIX}/bin"
-          mkdir -p "$out"
-          cp "target/${TARGET}/dist-fast/tsz${EXT}" "$out/"
-          cp "target/${TARGET}/dist-fast/tsz-server${EXT}" "$out/"
-          cp "target/${TARGET}/dist-fast/try-tsz${EXT}" "$out/"
-          ls -la "$out"
-
-      - name: Upload npm native artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: npm-native-${{ matrix.suffix }}
-          path: npm/@mohsen-azimi/tsz-${{ matrix.suffix }}/bin/
-          retention-days: 7
-
-  publish:
-    name: Publish to npm
-    needs: [resolve-tag, build-native]
+  unavailable:
+    name: npm publication is intentionally unavailable
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.resolve-tag.outputs.tag }}
-
-      - name: Use Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Use latest npm
-        run: npm install -g npm@latest
-
-      - name: Download npm native artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: npm
-          pattern: npm-native-*
-
-      - name: Move native artifacts into package tree
+      - name: Explain the rewrite publication gate
         shell: bash
         run: |
-          set -euo pipefail
-          shopt -s nullglob
-          for dir in npm/npm-native-*; do
-            suffix="${dir#npm/npm-native-}"
-            mkdir -p "npm/@mohsen-azimi/tsz-${suffix}/bin"
-            cp "$dir"/* "npm/@mohsen-azimi/tsz-${suffix}/bin/"
-            mkdir -p "npm/@mohsen-azimi/try-tsz-${suffix}/bin"
-            cp "$dir"/try-tsz* "npm/@mohsen-azimi/try-tsz-${suffix}/bin/"
-          done
-          find npm/@mohsen-azimi -maxdepth 3 -type f | sort
-
-      - name: Assemble package manifests
-        run: scripts/build/build-npm-packages.sh --all --native-only --skip-build
-
-      # A dry run never performs the PUT that actually fails, so this step can
-      # confirm the tarballs are well-formed but cannot confirm we may publish
-      # them. The preflight below covers the half it structurally cannot.
-      - name: Pack-check packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          for pkg in npm/@mohsen-azimi/try-tsz-* npm/try-tsz; do
-            (cd "$pkg" && npm publish --dry-run --access public)
-          done
-
-      - name: Preflight npm auth
-        shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          source scripts/build/npm-publish-lib.sh
-          npm_clear_placeholder_auth
-          npm_auth_preflight
-
-      - name: Publish packages
-        shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          source scripts/build/npm-publish-lib.sh
-          npm_clear_placeholder_auth
-
-          for pkg in npm/@mohsen-azimi/try-tsz-*; do
-            npm_publish_if_needed "$pkg"
-          done
-          npm_publish_if_needed npm/try-tsz
-
-      # The guard that would have caught #16126 on its first occurrence rather
-      # than 43 versions later: assert every package is readable at its own
-      # version before this job is allowed to report success.
-      - name: Verify published versions
-        shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          source scripts/build/npm-publish-lib.sh
-          npm_verify_published npm/@mohsen-azimi/try-tsz-* npm/try-tsz
+          echo "::error title=TSZ npm publication unavailable::R0 has private native package assembly for process-contract validation only. npm publication remains disabled, and WASM does not return until R4."
+          exit 1

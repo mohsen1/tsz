@@ -45,11 +45,11 @@ scripts/
 | `scripts/fourslash/query-fourslash.py` | Offline fourslash results analysis and querying |
 | `scripts/fourslash/fourslash-snapshot.json` | Compact checked-in fourslash snapshot (offline analysis) |
 
-### README Progress Refresh
+### README Status Contract
 | Script | Purpose |
 |--------|---------|
-| `scripts/refresh-readme.py` | Update README generated blocks from artifact JSON files and published benchmark data |
-| `scripts/refresh-readme.py --write` | Apply README changes and regenerate the light/dark performance PNGs (default is dry-run) |
+| `scripts/refresh-readme.py --check` | Reject retired live-dashboard markers and validate the clean-slate R0 status |
+| `scripts/refresh-readme.py --write` | Repair only the managed R0 status block; never imports suite or benchmark artifacts |
 
 ### Benchmarking
 | Script | Purpose |
@@ -63,18 +63,17 @@ scripts/
 ### Build & Publishing
 | Script | Purpose |
 |--------|---------|
-| `scripts/build/build-wasm.sh` | Build WASM module |
-| `scripts/build/build-npm-packages.sh` | Assemble npm packages |
-| `scripts/build/publish-crates.sh` | Publish to crates.io |
-| `scripts/build/publish-npm.sh` | Publish to npm |
+| `scripts/build/build-wasm.sh` | Fail-closed R4 WASM availability gate |
+| `scripts/build/build-npm-packages.sh` | Assemble private native R0 packages for inspection |
+| `scripts/build/publish-crates.sh` | Fail-closed crates.io publication gate |
+| `scripts/build/publish-npm.sh` | Fail-closed npm publication gate |
 
 ### Architecture & Linting
 | Script | Purpose |
 |--------|---------|
-| `scripts/arch/arch_guard.py` | Architecture boundary violation detection (regex policy) |
-| `scripts/arch/run-ast-grep.sh` | AST-native architecture invariants via ast-grep (#13451) |
-| `scripts/arch/check-checker-boundaries.sh` | Checker boundary enforcement |
-| `scripts/arch/render_architecture_report.py` | Render architecture guard markdown report |
+| `scripts/arch/arch_guard.py` | Enforce clean-slate workspace, dependency, size, anti-hardcoding, and rewrite-debt ratchets |
+| `scripts/arch/rewrite_architecture_metrics.py --check` | Report and verify no growth in mirrored capability, suppression, forcing, recursion, collection, and near-cap-module debt |
+| `python3 -m unittest discover -s scripts/arch -p 'test_*.py'` | Exercise the reset architecture guard contract |
 
 ### Setup & Maintenance
 | Script | Purpose |

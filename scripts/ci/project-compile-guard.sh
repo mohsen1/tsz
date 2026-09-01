@@ -22,6 +22,8 @@ PROJECT_COMPATIBILITY_JSONL="${TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL:-$FIXTURE
 PROJECT_COMPATIBILITY_SUMMARY="${TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY:-$FIXTURE_ROOT/project-compatibility-summary.json}"
 RESULT_CACHE_DIR="${TSZ_PROJECT_COMPILE_RESULT_CACHE_DIR:-$FIXTURE_ROOT/.result-cache}"
 PROJECT_PERF_COUNTERS="${TSZ_PROJECT_COMPILE_PERF_COUNTERS:-0}"
+PROJECT_STATS_READER="$ROOT_DIR/scripts/ci/project-compile-stats.mjs"
+COMPILE_RESULT_CACHE_SCHEMA=7
 FAILURES=0
 LAST_PEAK_RSS_BYTES=0
 LAST_TIMEOUT_CPU_SECONDS=""
@@ -96,36 +98,66 @@ fi
 # hash_source_tree). Sourced so the no-op fast-path key has one tested home.
 # shellcheck source=scripts/ci/lib/project-compile-fingerprint.sh
 source "$ROOT_DIR/scripts/ci/lib/project-compile-fingerprint.sh"
+# shellcheck source=scripts/ci/lib/project-compat-evidence.sh
+source "$ROOT_DIR/scripts/ci/lib/project-compat-evidence.sh"
 
 # Per-row tsc oracle helpers (tsz_only_delta_lines, tsz_count_diagnostic_lines,
 # tsz_project_oracle_tsc_command, tsz_tsc_oracle_fingerprint). The gate counts a
 # tsz diagnostic as a false positive only when tsc does not flag the same
-# (basename, line, column, code). Sourced so the delta logic has one tested home.
+# normalized project-relative path/span/code/message occurrence. Sourced so the
+# symmetric multiset logic has one tested home.
 # shellcheck source=scripts/ci/lib/project-tsc-oracle.sh
 source "$ROOT_DIR/scripts/ci/lib/project-tsc-oracle.sh"
 
-# Whether to run the per-row tsc oracle to subtract genuine tsc errors from
-# tsz's diagnostics before deciding a row's pass/fail. On by default; disable
-# with TSZ_PROJECT_COMPILE_TSC_ORACLE=0 (e.g. when no tsc is available and every
-# fixture is known tsc-clean). The oracle only runs for rows where tsz exits
-# with diagnostics (a "nonzero exit"); crashes, timeouts, and OOMs are failures
-# regardless of what tsc does.
+# Whether to run the per-row tsc oracle before deciding a row's pass/fail. On by
+# default; disable with TSZ_PROJECT_COMPILE_TSC_ORACLE=0. For a normal nonzero
+# tsz exit it subtracts genuine tsc errors; for tsz success it catches false
+# negatives where pinned TypeScript 7 still reports a diagnostic. Crashes,
+# timeouts, and OOMs remain failures regardless of what tsc reports.
 TSC_ORACLE_ENABLED="${TSZ_PROJECT_COMPILE_TSC_ORACLE:-1}"
 TSC_ORACLE_RESULT_CACHE_DIR="${TSZ_PROJECT_COMPILE_TSC_ORACLE_CACHE_DIR:-$FIXTURE_ROOT/.tsc-oracle-cache}"
 # Resolved once: the tsc oracle command words and a content hash of the command
-# for the oracle-cache key. Empty TSC_ORACLE_CMD means no oracle is available,
-# in which case the gate falls back to counting every tsz diagnostic (the
-# pre-oracle behavior) so a missing tsc never silently passes a real FP.
+# for the oracle-cache key. Empty TSC_ORACLE_CMD means no oracle is available;
+# ordinary results are then gray/non-evidence and never cached.
 TSC_ORACLE_CMD=()
 TSC_ORACLE_CMD_HASH=""
+TSC_ORACLE_BUILTIN_LIB_DIR="${TSZ_PROJECT_TSC_ORACLE_BUILTIN_LIB_DIR:-}"
+TSC_ORACLE_NATIVE_EXE=""
 if [[ "$TSC_ORACLE_ENABLED" == "1" ]]; then
   while IFS= read -r _oracle_word; do
     [[ -n "$_oracle_word" ]] && TSC_ORACLE_CMD+=("$_oracle_word")
   done < <(tsz_project_oracle_tsc_command)
   if [[ "${#TSC_ORACLE_CMD[@]}" -gt 0 ]]; then
-    TSC_ORACLE_CMD_HASH="$(printf '%s\n' "${TSC_ORACLE_CMD[@]}" | sha256_of_stdin)"
+    if [[ "${#TSC_ORACLE_CMD[@]}" -eq 1 && -f "${TSC_ORACLE_CMD[0]}" ]]; then
+      TSC_ORACLE_NATIVE_EXE="${TSC_ORACLE_CMD[0]}"
+    fi
+    if [[ -z "$TSC_ORACLE_BUILTIN_LIB_DIR" ]]; then
+      for _oracle_word in "${TSC_ORACLE_CMD[@]}"; do
+        case "$_oracle_word" in
+          */lib/tsc.js)
+            _oracle_get_exe="$(dirname "$_oracle_word")/getExePath.js"
+            if [[ -f "$_oracle_get_exe" ]]; then
+              TSC_ORACLE_NATIVE_EXE="$(node --input-type=module -e \
+                'import { pathToFileURL } from "node:url"; const m = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(m.default());' \
+                "$_oracle_get_exe" 2>/dev/null || true)"
+              [[ -n "$TSC_ORACLE_NATIVE_EXE" ]] \
+                && TSC_ORACLE_BUILTIN_LIB_DIR="$(dirname "$TSC_ORACLE_NATIVE_EXE")"
+            fi
+            break
+            ;;
+        esac
+      done
+    fi
+    TSC_ORACLE_CMD_HASH="$(tsz_oracle_identity_fingerprint \
+      single-threaded-stable-v3 \
+      "$TSC_ORACLE_BUILTIN_LIB_DIR" \
+      "$TSC_ORACLE_NATIVE_EXE" \
+      "$ROOT_DIR/scripts/conformance/typescript-versions.json" \
+      "$ROOT_DIR/scripts/node_modules/typescript/package.json" \
+      "${TSC_ORACLE_CMD[@]}" 2>/dev/null || true)"
   fi
 fi
+export _TSZ_TSC_ORACLE_HASH="${TSC_ORACLE_CMD_HASH:-unavailable}"
 
 mkdir -p "$FIXTURE_ROOT"
 
@@ -149,6 +181,12 @@ fi
 mkdir -p "$RESULT_CACHE_DIR"
 [[ -n "$TSC_ORACLE_CMD_HASH" ]] && mkdir -p "$TSC_ORACLE_RESULT_CACHE_DIR"
 validate_project_compatibility_artifact_paths
+tsz_pin_checkout_evidence "$ROOT_DIR" || true
+TSZ_COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT="$(tsz_evidence_protocol_fingerprint "$ROOT_DIR" 2>/dev/null || true)"
+export _TSZ_SOURCE_OVERLAY_HASH="${TSZ_COMPAT_INITIAL_SOURCE_TREE_FINGERPRINT:-unavailable}"
+export _TSZ_EVIDENCE_PROTOCOL_HASH="${TSZ_COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT:-unavailable}"
+PROJECT_BUILD_MANIFEST="${TSZ_PROJECT_COMPILE_BUILD_MANIFEST:-$(dirname "$TSZ_BIN")/conformance-build-manifest.json}"
+tsz_verify_build_manifest "$ROOT_DIR" "$PROJECT_BUILD_MANIFEST" "$_TSZ_BINARY_HASH" || true
 rm -f "$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
 rm -rf "$FIXTURE_ROOT/type-challenges-assertions"
 : > "$PROJECT_COMPATIBILITY_JSONL"
@@ -280,10 +318,51 @@ process_tree_rss_kb() {
   '
 }
 
-count_ts_files() {
-  local src_dir="$1"
-  { find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print 2>/dev/null || true; } \
-    | wc -l | tr -d ' '
+LAST_ROOT_FILES=""
+LAST_SOURCE_FILES=""
+LAST_ROOT_FILE_FINGERPRINT=""
+LAST_SOURCE_FILE_FINGERPRINT=""
+LAST_SEMANTIC_COMPLETION=""
+LAST_COMPILER_STATS_REASON=""
+
+# Read the fresh `--perf-counters-json` machine contract. Schema-v2 canonical
+# counts and ordered path arrays are mandatory; directory counts and extended text are deliberately
+# not fallbacks because they do not prove what entered the compiler program.
+read_project_compiler_stats() {
+  local stats_file="$1" base_dir="$2" project_root="$3"
+  LAST_ROOT_FILES=""
+  LAST_SOURCE_FILES=""
+  LAST_ROOT_FILE_FINGERPRINT=""
+  LAST_SOURCE_FILE_FINGERPRINT=""
+  LAST_SEMANTIC_COMPLETION=""
+  LAST_COMPILER_STATS_REASON=""
+
+  if [[ ! -f "$stats_file" ]]; then
+    LAST_COMPILER_STATS_REASON="compiler stats missing"
+    return 1
+  fi
+
+  local parsed=""
+  if ! parsed="$(node "$PROJECT_STATS_READER" compiler-stats "$stats_file" "$base_dir" "$project_root" 2>/dev/null)"; then
+    LAST_COMPILER_STATS_REASON="compiler stats malformed"
+    return 1
+  fi
+  IFS=$'\t' read -r LAST_ROOT_FILES LAST_SOURCE_FILES \
+    LAST_ROOT_FILE_FINGERPRINT LAST_SOURCE_FILE_FINGERPRINT \
+    LAST_SEMANTIC_COMPLETION <<< "$parsed"
+  if [[ ! "$LAST_ROOT_FILES" =~ ^(0|[1-9][0-9]*)$ ]] \
+    || [[ ! "$LAST_SOURCE_FILES" =~ ^(0|[1-9][0-9]*)$ ]] \
+    || [[ ! "$LAST_ROOT_FILE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] \
+    || [[ ! "$LAST_SOURCE_FILE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+    LAST_ROOT_FILES=""
+    LAST_SOURCE_FILES=""
+    LAST_ROOT_FILE_FINGERPRINT=""
+    LAST_SOURCE_FILE_FINGERPRINT=""
+    LAST_SEMANTIC_COMPLETION=""
+    LAST_COMPILER_STATS_REASON="compiler stats malformed"
+    return 1
+  fi
+  return 0
 }
 
 diagnostic_lines_from_file() {
@@ -343,49 +422,6 @@ project_failure_status() {
     crash) echo "compiler crashed" ;;
     *) echo "diagnostic mismatch or compiler error" ;;
   esac
-}
-
-record_project_compatibility() {
-  local name="$1"
-  local exit_class="$2"
-  local phase="$3"
-  local diagnostic_status="$4"
-  local diagnostic_delta="${5:-}"
-  local files_reached="${6:-0}"
-  local peak_memory_bytes="${7:-}"
-  local tsz_exit_codes="${8:-}"
-  local tsconfig_path="${9:-}"
-  local source_root="${10:-}"
-  local tsc_exit_codes="${11:-}"
-  local fixture_sources
-  fixture_sources="$(tsz_project_fixture_sources "$name")"
-
-  local peak_memory_bytes_reason=""
-  if [ -z "$peak_memory_bytes" ]; then
-    peak_memory_bytes_reason="$(peak_rss_unavailable_reason)"
-    if [ -z "$peak_memory_bytes_reason" ]; then
-      peak_memory_bytes_reason="process exited before sampling"
-    fi
-  fi
-
-  COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
-  COMPAT_OUTPUT_ROOT="$FIXTURE_ROOT" \
-  COMPAT_NAME="$name" \
-  COMPAT_EXIT_CLASS="$exit_class" \
-  COMPAT_PHASE="$phase" \
-  COMPAT_DIAGNOSTIC_STATUS="$diagnostic_status" \
-  COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
-  COMPAT_FILES_REACHED="$files_reached" \
-  COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
-  COMPAT_PEAK_MEMORY_BYTES_REASON="$peak_memory_bytes_reason" \
-  COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
-  COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
-  COMPAT_TSCONFIG_PATH="$tsconfig_path" \
-  COMPAT_SOURCE_ROOT="$source_root" \
-  COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
-  COMPAT_FIXTURE_SOURCES="$fixture_sources" \
-  COMPAT_TSZ_COMMAND_ENV_PREFIX="TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=${TSZ_RUST_MIN_STACK:-536870912}" \
-  node scripts/ci/project-compatibility.mjs record
 }
 
 write_project_compatibility_summary() {
@@ -659,8 +695,6 @@ check_type_challenges_solutions_tsc_oracle() {
   local tsconfig="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json"
   local src_dir="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
   local log="$FIXTURE_ROOT/type-challenges-solutions-project.tsc.log"
-  local file_count
-  file_count="$(count_ts_files "$src_dir")"
 
   ensure_type_challenges_assertion_tsc
 
@@ -677,18 +711,21 @@ check_type_challenges_solutions_tsc_oracle() {
       "fixture setup" \
       "tsc oracle unavailable" \
       "tsc: Type Challenges solutions oracle is unavailable" \
-      "$file_count" \
+      "" \
       "" \
       "" \
       "$tsconfig" \
       "$src_dir" \
-      "127"
+      "127" \
+      "not in scope"
     echo "error: Type Challenges solutions project requires a tsc oracle, but no tsc binary is available" >&2
     return 1
   fi
 
   local rc=0
-  run_with_timeout "$PROJECT_TIMEOUT" "${tsc_command[@]}" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
+  run_with_timeout "$PROJECT_TIMEOUT" "${tsc_command[@]}" \
+    --singleThreaded --stableTypeOrdering true --noEmit -p "$tsconfig" \
+    >"$log" 2>&1 || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     FAILURES=$((FAILURES + 1))
     local diagnostic_delta
@@ -703,12 +740,13 @@ check_type_challenges_solutions_tsc_oracle() {
       "fixture setup" \
       "tsc fixture failed" \
       "$diagnostic_delta" \
-      "$file_count" \
+      "" \
       "$LAST_PEAK_RSS_BYTES" \
       "" \
       "$tsconfig" \
       "$src_dir" \
-      "$rc"
+      "$rc" \
+      "not in scope"
     echo "error: type-challenges-solutions-project failed the tsc oracle check" >&2
     sed -n '1,160p' "$log" >&2 || true
     return 1
@@ -720,14 +758,169 @@ check_type_challenges_solutions_tsc_oracle() {
 # Atomically writes a compile result to the result cache (tmp-then-rename).
 # The fingerprint is stored inside the file so stale entries self-prune on the
 # next read rather than accumulating one file per fingerprint per project.
-# write_compile_cache <fp> <rc> <file_count> <exit_class> <diagnostic_delta> <cache_file>
+# write_compile_cache <fp> <result_rc> <tsz_rc> <root_files> <source_files>
+#   <root_fp> <source_fp> <files_reason> <tsc_root_files> <tsc_source_files>
+#   <tsc_root_fp> <tsc_source_fp> <tsc_rc>
+#   <exit_class> <diagnostic_status> <diagnostic_delta> <cache_file>
 write_compile_cache() {
-  local _fp="$1" _rc="$2" _files="$3" _class="$4" _delta="$5" _cf="$6"
-  { printf 'FINGERPRINT=%s\nRC=%s\nFILES=%s\nCLASS=%s\nDELTA_START\n' \
-      "$_fp" "$_rc" "$_files" "$_class"
-    printf '%s' "$_delta"; } \
+  local _fp="$1" _result_rc="$2" _tsz_rc="$3" _roots="$4" _sources="$5"
+  local _root_fp="$6" _source_fp="$7" _files_reason="$8"
+  local _tsc_roots="$9" _tsc_sources="${10}" _tsc_root_fp="${11}" _tsc_source_fp="${12}"
+  local _tsc_rc="${13}" _class="${14}" _status="${15}" _delta="${16}" _cf="${17}"
+  { printf 'SCHEMA=%s\nFINGERPRINT=%s\nRC=%s\nTSZ_RC=%s\nSEMANTIC_COMPLETION=complete\nROOT_FILES=%s\nSOURCE_FILES=%s\nROOT_FINGERPRINT=%s\nSOURCE_FINGERPRINT=%s\nFILES_REASON=%s\nTSC_ROOT_FILES=%s\nTSC_SOURCE_FILES=%s\nTSC_ROOT_FINGERPRINT=%s\nTSC_SOURCE_FINGERPRINT=%s\nTSC_RC=%s\nDIAGNOSTIC_RECORDS=%s\nDIAGNOSTIC_FINGERPRINT=%s\nORACLE_DIAGNOSTIC_RECORDS=%s\nORACLE_DIAGNOSTIC_FINGERPRINT=%s\nCLASS=%s\nSTATUS=%s\nDELTA_START\n' \
+      "$COMPILE_RESULT_CACHE_SCHEMA" "$_fp" "$_result_rc" "$_tsz_rc" \
+      "$_roots" "$_sources" "$_root_fp" "$_source_fp" "$_files_reason" \
+      "$_tsc_roots" "$_tsc_sources" "$_tsc_root_fp" "$_tsc_source_fp" \
+      "$_tsc_rc" "${LAST_DIAGNOSTIC_RECORDS:-}" "${LAST_DIAGNOSTIC_FINGERPRINT:-}" \
+      "${LAST_ORACLE_DIAGNOSTIC_RECORDS:-}" "${LAST_ORACLE_DIAGNOSTIC_FINGERPRINT:-}" \
+      "$_class" "$_status"
+    # Terminate the delta body so the cache reader's `read` loop retains its
+    # final diagnostic line (command substitution strips trailing newlines).
+    printf '%s\n' "$_delta"; } \
     > "${_cf}.tmp" 2>/dev/null \
     && mv "${_cf}.tmp" "$_cf" 2>/dev/null || true
+}
+
+# Ask pinned TypeScript 7 for exact ordered root/source graph paths. `--showConfig`
+# exposes config roots without library files; `--listFilesOnly` exposes
+# the resolved source graph; the parser removes only canonical built-in
+# `lib*.d.ts` paths and retains project/@types declaration files. Both exact
+# counts and normalized fingerprints are required for evidence.
+# Extended-diagnostics `Files:` is never a fallback because it includes libs.
+LAST_TSC_ROOT_FILES=""
+LAST_TSC_ROOT_FINGERPRINT=""
+LAST_TSC_ROOT_FILES_REASON=""
+LAST_TSC_SOURCE_FILES=""
+LAST_TSC_SOURCE_FINGERPRINT=""
+LAST_TSC_SOURCE_FILES_REASON=""
+LAST_DIAGNOSTIC_RECORDS=""
+LAST_DIAGNOSTIC_FINGERPRINT=""
+LAST_ORACLE_DIAGNOSTIC_RECORDS=""
+LAST_ORACLE_DIAGNOSTIC_FINGERPRINT=""
+run_project_tsc_graph_counts() {
+  local name="$1" tsconfig="$2" src_dir="$3"
+  LAST_TSC_ROOT_FILES=""
+  LAST_TSC_ROOT_FINGERPRINT=""
+  LAST_TSC_ROOT_FILES_REASON=""
+  LAST_TSC_SOURCE_FILES=""
+  LAST_TSC_SOURCE_FINGERPRINT=""
+  LAST_TSC_SOURCE_FILES_REASON=""
+  if [[ "${#TSC_ORACLE_CMD[@]}" -eq 0 ]]; then
+    LAST_TSC_ROOT_FILES_REASON="tsc root oracle unavailable"
+    LAST_TSC_SOURCE_FILES_REASON="tsc source oracle unavailable"
+    return 1
+  fi
+  if [[ -z "$TSC_ORACLE_BUILTIN_LIB_DIR" || ! -d "$TSC_ORACLE_BUILTIN_LIB_DIR" ]]; then
+    LAST_TSC_ROOT_FILES_REASON="tsc built-in library identity unavailable"
+    LAST_TSC_SOURCE_FILES_REASON="tsc built-in library identity unavailable"
+    return 1
+  fi
+
+  local fp="" cache_file=""
+  fp="$(tsz_tsc_oracle_fingerprint "$name" "$tsconfig" "$src_dir" "$TSC_ORACLE_CMD_HASH" 2>/dev/null || true)"
+  if [[ "${TSZ_PROJECT_COMPILE_TSC_ORACLE_CACHE:-0}" == "1" && -n "$fp" ]]; then
+    cache_file="$TSC_ORACLE_RESULT_CACHE_DIR/${name}.graph-counts"
+  fi
+
+  if [[ -n "$cache_file" && -f "$cache_file" ]]; then
+    local cached_schema="" cached_fp="" cached_roots="" cached_sources=""
+    local cached_root_fp="" cached_source_fp=""
+    local cached_root_reason="" cached_source_reason="" line
+    while IFS= read -r line; do
+      case "$line" in
+        SCHEMA=*) cached_schema="${line#SCHEMA=}" ;;
+        FINGERPRINT=*) cached_fp="${line#FINGERPRINT=}" ;;
+        ROOT_FILES=*) cached_roots="${line#ROOT_FILES=}" ;;
+        SOURCE_FILES=*) cached_sources="${line#SOURCE_FILES=}" ;;
+        ROOT_FINGERPRINT=*) cached_root_fp="${line#ROOT_FINGERPRINT=}" ;;
+        SOURCE_FINGERPRINT=*) cached_source_fp="${line#SOURCE_FINGERPRINT=}" ;;
+        ROOT_REASON=*) cached_root_reason="${line#ROOT_REASON=}" ;;
+        SOURCE_REASON=*) cached_source_reason="${line#SOURCE_REASON=}" ;;
+      esac
+    done < "$cache_file"
+    if [[ "$cached_schema" == "3" && "$cached_fp" == "$fp" ]]; then
+      LAST_TSC_ROOT_FILES="$cached_roots"
+      LAST_TSC_SOURCE_FILES="$cached_sources"
+      LAST_TSC_ROOT_FINGERPRINT="$cached_root_fp"
+      LAST_TSC_SOURCE_FINGERPRINT="$cached_source_fp"
+      LAST_TSC_ROOT_FILES_REASON="$cached_root_reason"
+      LAST_TSC_SOURCE_FILES_REASON="$cached_source_reason"
+      if [[ "$LAST_TSC_ROOT_FILES" =~ ^(0|[1-9][0-9]*)$ \
+        && "$LAST_TSC_SOURCE_FILES" =~ ^(0|[1-9][0-9]*)$ \
+        && "$LAST_TSC_ROOT_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
+        && "$LAST_TSC_SOURCE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+        return
+      fi
+    fi
+  fi
+
+  local project_root config_dir
+  project_root="$(tsz_fingerprint_project_root "$(dirname "$tsconfig")")"
+  config_dir="$(dirname "$tsconfig")"
+  local show_config_file show_config_err rc=0 roots="" root_fp="" root_graph="" root_reason=""
+  show_config_file="$(mktemp "$FIXTURE_ROOT/${name}.show-config.XXXXXX")"
+  show_config_err="${show_config_file}.err"
+  run_with_timeout "$PROJECT_TIMEOUT" \
+    "${TSC_ORACLE_CMD[@]}" --singleThreaded --stableTypeOrdering true \
+    --showConfig -p "$tsconfig" \
+    >"$show_config_file" 2>"$show_config_err" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    root_reason="tsc showConfig unavailable (exit ${rc})"
+  elif ! root_graph="$(node "$PROJECT_STATS_READER" show-config-roots "$show_config_file" "$config_dir" "$project_root" 2>/dev/null)"; then
+    root_reason="tsc showConfig malformed"
+  else
+    IFS=$'\t' read -r roots root_fp <<< "$root_graph"
+  fi
+  rm -f "$show_config_file" "$show_config_err"
+
+  if [[ "$roots" =~ ^(0|[1-9][0-9]*)$ && "$root_fp" =~ ^[0-9a-f]{64}$ ]]; then
+    LAST_TSC_ROOT_FILES="$roots"
+    LAST_TSC_ROOT_FINGERPRINT="$root_fp"
+  else
+    LAST_TSC_ROOT_FILES_REASON="${root_reason:-tsc root oracle unavailable}"
+  fi
+
+  local list_file list_err list_rc=0 sources="" source_fp="" source_graph="" source_reason=""
+  list_file="$(mktemp "$FIXTURE_ROOT/${name}.list-files.XXXXXX")"
+  list_err="${list_file}.err"
+  run_with_timeout "$PROJECT_TIMEOUT" \
+    "${TSC_ORACLE_CMD[@]}" --singleThreaded --stableTypeOrdering true \
+    --listFilesOnly -p "$tsconfig" \
+    >"$list_file" 2>"$list_err" || list_rc=$?
+  if [[ "$list_rc" -ne 0 ]]; then
+    source_reason="tsc listFilesOnly unavailable (exit ${list_rc})"
+  elif ! source_graph="$(node "$PROJECT_STATS_READER" list-files-graph "$list_file" "$TSC_ORACLE_BUILTIN_LIB_DIR" "$project_root" 2>/dev/null)"; then
+    source_reason="tsc listFilesOnly malformed"
+  else
+    IFS=$'\t' read -r sources source_fp <<< "$source_graph"
+  fi
+  rm -f "$list_file" "$list_err"
+
+  if [[ "$sources" =~ ^(0|[1-9][0-9]*)$ && "$source_fp" =~ ^[0-9a-f]{64}$ ]]; then
+    LAST_TSC_SOURCE_FILES="$sources"
+    LAST_TSC_SOURCE_FINGERPRINT="$source_fp"
+  else
+    LAST_TSC_SOURCE_FILES_REASON="${source_reason:-tsc source oracle unavailable}"
+  fi
+  local publish_fp=""
+  if [[ -n "$cache_file" && -n "$LAST_TSC_ROOT_FILES" \
+    && -n "$LAST_TSC_SOURCE_FILES" && -n "$LAST_TSC_ROOT_FINGERPRINT" \
+    && -n "$LAST_TSC_SOURCE_FINGERPRINT" ]]; then
+    publish_fp="$(tsz_tsc_oracle_fingerprint \
+      "$name" "$tsconfig" "$src_dir" "$TSC_ORACLE_CMD_HASH" 2>/dev/null || true)"
+  fi
+  if [[ -n "$cache_file" && -n "$fp" && "$publish_fp" == "$fp" \
+    && -n "$LAST_TSC_ROOT_FILES" && -n "$LAST_TSC_SOURCE_FILES" \
+    && -n "$LAST_TSC_ROOT_FINGERPRINT" && -n "$LAST_TSC_SOURCE_FINGERPRINT" ]]; then
+    { printf 'SCHEMA=3\nFINGERPRINT=%s\nROOT_FILES=%s\nSOURCE_FILES=%s\nROOT_FINGERPRINT=%s\nSOURCE_FINGERPRINT=%s\nROOT_REASON=%s\nSOURCE_REASON=%s\n' \
+        "$fp" "$LAST_TSC_ROOT_FILES" "$LAST_TSC_SOURCE_FILES" \
+        "$LAST_TSC_ROOT_FINGERPRINT" "$LAST_TSC_SOURCE_FINGERPRINT" \
+        "$LAST_TSC_ROOT_FILES_REASON" "$LAST_TSC_SOURCE_FILES_REASON"; } \
+      > "${cache_file}.tmp" 2>/dev/null \
+      && mv "${cache_file}.tmp" "$cache_file" 2>/dev/null || true
+  fi
+  [[ -n "$LAST_TSC_ROOT_FILES" && -n "$LAST_TSC_SOURCE_FILES" \
+    && -n "$LAST_TSC_ROOT_FINGERPRINT" && -n "$LAST_TSC_SOURCE_FINGERPRINT" ]]
 }
 
 # Run (or cache-hit) the per-row tsc oracle. tsc's stdout/stderr is captured to
@@ -735,8 +928,8 @@ write_compile_cache() {
 # The oracle is cached on (tsc command, tsconfig content, compiled-source
 # identity) — independent of the tsz binary — so the per-row tsc run is skipped
 # whenever the fixture and tsc are unchanged, keeping CI cost flat across tsz
-# rebuilds. Returns 0 when an oracle log was produced (fresh or cached), 1 when
-# no oracle is available so callers can fall back to counting all tsz lines.
+# rebuilds. Returns 0 only for an ordinary completed tsc exit (0-4); unavailable,
+# timeout, crash, or malformed cached status returns 1 and is non-evidence.
 LAST_TSC_ORACLE_RC=""
 run_project_tsc_oracle() {
   local name="$1" tsconfig="$2" src_dir="$3" oracle_log="$4"
@@ -744,37 +937,81 @@ run_project_tsc_oracle() {
   [[ "${#TSC_ORACLE_CMD[@]}" -gt 0 ]] || return 1
 
   local _ofp="" _ocache=""
-  if [[ "${TSZ_PROJECT_COMPILE_TSC_ORACLE_CACHE:-1}" == "1" && -n "$TSC_ORACLE_CMD_HASH" ]]; then
+  if [[ "${TSZ_PROJECT_COMPILE_TSC_ORACLE_CACHE:-0}" == "1" && -n "$TSC_ORACLE_CMD_HASH" ]]; then
     _ofp="$(tsz_tsc_oracle_fingerprint "$name" "$tsconfig" "$src_dir" "$TSC_ORACLE_CMD_HASH" 2>/dev/null || true)"
     [[ -n "$_ofp" ]] && _ocache="$TSC_ORACLE_RESULT_CACHE_DIR/${name}"
   fi
 
   if [[ -n "$_ocache" && -f "$_ocache" && -f "${_ocache}.log" ]]; then
-    local _cached_ofp=""
-    IFS= read -r _cached_ofp < "$_ocache" 2>/dev/null || true
-    _cached_ofp="${_cached_ofp#FINGERPRINT=}"
-    if [[ "$_cached_ofp" == "$_ofp" ]]; then
-      local _cached_orc=""
-      _cached_orc="$(awk -F= '/^RC=/{print $2; exit}' "$_ocache" 2>/dev/null || true)"
-      cp "${_ocache}.log" "$oracle_log" 2>/dev/null || true
-      LAST_TSC_ORACLE_RC="${_cached_orc:-0}"
-      echo "(tsc oracle cache hit: ${_ofp:0:12})"
-      return 0
+    local _cached_schema="" _cached_ofp="" _cached_orc="" _cached_log_sha="" _actual_log_sha=""
+    local _cached_log_copy=""
+    local _cache_line
+    while IFS= read -r _cache_line; do
+      case "$_cache_line" in
+        SCHEMA=*) _cached_schema="${_cache_line#SCHEMA=}" ;;
+        FINGERPRINT=*) _cached_ofp="${_cache_line#FINGERPRINT=}" ;;
+        RC=*) _cached_orc="${_cache_line#RC=}" ;;
+        LOG_SHA256=*) _cached_log_sha="${_cache_line#LOG_SHA256=}" ;;
+      esac
+    done < "$_ocache"
+    if [[ "$_cached_schema" == "2" && "$_cached_ofp" == "$_ofp" \
+      && "$_cached_log_sha" =~ ^[0-9a-f]{64}$ ]]; then
+      case "$_cached_orc" in
+        0|1|2|3|4)
+          _cached_log_copy="$(mktemp "${oracle_log}.cache.XXXXXX" 2>/dev/null || true)"
+          if [[ -n "$_cached_log_copy" ]] \
+            && cp "${_ocache}.log" "$_cached_log_copy" 2>/dev/null; then
+            _actual_log_sha="$(sha256_of_file "$_cached_log_copy")"
+          fi
+          if [[ "$_actual_log_sha" == "$_cached_log_sha" ]] \
+            && mv "$_cached_log_copy" "$oracle_log" 2>/dev/null; then
+            LAST_TSC_ORACLE_RC="$_cached_orc"
+            echo "(tsc oracle cache hit: ${_ofp:0:12})"
+            return 0
+          fi
+          if [[ -n "$_cached_log_copy" ]]; then rm -f "$_cached_log_copy"; fi
+          ;;
+      esac
     fi
   fi
 
   local orc=0
   echo "Running tsc oracle: ${TSC_ORACLE_CMD[*]} --noEmit -p $tsconfig"
   run_with_timeout "$PROJECT_TIMEOUT" \
-    "${TSC_ORACLE_CMD[@]}" --noEmit -p "$tsconfig" >"$oracle_log" 2>&1 || orc=$?
+    "${TSC_ORACLE_CMD[@]}" --singleThreaded --stableTypeOrdering true \
+    --noEmit -p "$tsconfig" >"$oracle_log" 2>&1 || orc=$?
   LAST_TSC_ORACLE_RC="$orc"
 
-  if [[ -n "$_ocache" ]]; then
-    { printf 'FINGERPRINT=%s\nRC=%s\n' "$_ofp" "$orc"; } > "${_ocache}.tmp" 2>/dev/null \
-      && mv "${_ocache}.tmp" "$_ocache" 2>/dev/null || true
-    cp "$oracle_log" "${_ocache}.log" 2>/dev/null || true
+  local oracle_completed=0
+  case "$orc" in
+    0|1|2|3|4) oracle_completed=1 ;;
+  esac
+
+  local _publish_ofp=""
+  if [[ "$oracle_completed" == "1" && -n "$_ocache" ]]; then
+    _publish_ofp="$(tsz_tsc_oracle_fingerprint \
+      "$name" "$tsconfig" "$src_dir" "$TSC_ORACLE_CMD_HASH" 2>/dev/null || true)"
   fi
-  return 0
+  if [[ "$oracle_completed" == "1" && -n "$_ocache" \
+    && -n "$_ofp" && "$_publish_ofp" == "$_ofp" ]]; then
+    local _stage_log="" _stage_meta="" _log_sha=""
+    _stage_log="$(mktemp "${_ocache}.log.tmp.XXXXXX" 2>/dev/null || true)"
+    _stage_meta="$(mktemp "${_ocache}.meta.tmp.XXXXXX" 2>/dev/null || true)"
+    if [[ -n "$_stage_log" && -n "$_stage_meta" ]] \
+      && cp "$oracle_log" "$_stage_log" 2>/dev/null; then
+      _log_sha="$(sha256_of_file "$_stage_log")"
+      if [[ "$_log_sha" =~ ^[0-9a-f]{64}$ ]] \
+        && printf 'SCHEMA=2\nFINGERPRINT=%s\nRC=%s\nLOG_SHA256=%s\n' \
+          "$_ofp" "$orc" "$_log_sha" > "$_stage_meta" 2>/dev/null \
+        && mv "$_stage_log" "${_ocache}.log" 2>/dev/null; then
+        # Metadata is the commit marker and is always published after the log.
+        mv "$_stage_meta" "$_ocache" 2>/dev/null || true
+      fi
+    fi
+    if [[ -n "$_stage_log" ]]; then rm -f "$_stage_log"; fi
+    if [[ -n "$_stage_meta" ]]; then rm -f "$_stage_meta"; fi
+  fi
+  [[ "$oracle_completed" == "1" ]]
 }
 
 check_project() {
@@ -783,56 +1020,153 @@ check_project() {
   local src_dir="${3:-$(dirname "$tsconfig")}"
   local tsc_exit_codes="${4:-}"
   local log="$FIXTURE_ROOT/${name}.log"
+  LAST_ROOT_FILES=""; LAST_SOURCE_FILES=""; LAST_ROOT_FILE_FINGERPRINT=""; LAST_SOURCE_FILE_FINGERPRINT=""; LAST_SEMANTIC_COMPLETION=""; LAST_TSC_ROOT_FILES=""; LAST_TSC_SOURCE_FILES=""; LAST_TSC_ROOT_FINGERPRINT=""; LAST_TSC_SOURCE_FINGERPRINT=""; LAST_DIAGNOSTIC_RECORDS=""; LAST_DIAGNOSTIC_FINGERPRINT=""; LAST_ORACLE_DIAGNOSTIC_RECORDS=""; LAST_ORACLE_DIAGNOSTIC_FINGERPRINT=""; LAST_COMPILE_INPUT_STABLE=false
 
-  # Result cache: skip recompilation when the tsz binary, tsconfig content, and
-  # compiled-source identity are all unchanged from a prior run (see
+  # Result cache: skip recompilation when the tsz binary, pinned-oracle protocol,
+  # and conservative full fixture-row compile-input identity are all unchanged
+  # from a prior run (see
   # scripts/ci/lib/project-compile-fingerprint.sh). The cache file is named
   # per-project; the stored fingerprint is validated on read so stale entries are
-  # overwritten rather than accumulated. Disable with TSZ_PROJECT_COMPILE_RESULT_CACHE=0.
+  # overwritten rather than accumulated. Reuse is correctness-sensitive and
+  # therefore opt-in with TSZ_PROJECT_COMPILE_RESULT_CACHE=1.
   local _fp="" _cache_file=""
-  if [[ "${TSZ_PROJECT_COMPILE_RESULT_CACHE:-1}" == "1" && "$PROJECT_PERF_COUNTERS" != "1" ]]; then
-    _fp="$(compute_compile_fingerprint "$name" "$tsconfig" "$src_dir" 2>/dev/null || true)"
+  _fp="$(compute_compile_fingerprint "$name" "$tsconfig" "$src_dir" 2>/dev/null || true)"
+  LAST_COMPILE_INPUT_FINGERPRINT="$(printf '%s' "$_fp" | sha256_of_stdin)"
+  [[ -n "$_fp" && "$LAST_COMPILE_INPUT_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] \
+    || LAST_COMPILE_INPUT_FINGERPRINT=""
+  if [[ "${TSZ_PROJECT_COMPILE_RESULT_CACHE:-0}" == "1" && "$PROJECT_PERF_COUNTERS" != "1" ]]; then
     [[ -n "$_fp" ]] && _cache_file="$RESULT_CACHE_DIR/${name}"
   fi
 
   if [[ -n "$_cache_file" && -f "$_cache_file" ]]; then
-    local _cached_fp="" _cached_rc="" _cached_files="" _cached_class="" _cached_delta="" _in_delta=0
+    local _cached_schema="" _cached_fp="" _cached_rc="" _cached_tsz_rc=""
+    local _cached_semantic_completion=""
+    local _cached_roots="" _cached_sources="" _cached_files_reason=""
+    local _cached_root_fp="" _cached_source_fp=""
+    local _cached_tsc_roots="" _cached_tsc_sources="" _cached_tsc_rc="" _cached_class=""
+    local _cached_tsc_root_fp="" _cached_tsc_source_fp=""
+    local _cached_diag_records="" _cached_diag_fp="" _cached_oracle_diag_records="" _cached_oracle_diag_fp=""
+    local _cached_status="" _cached_delta="" _in_delta=0
     local _line
     while IFS= read -r _line; do
       if [[ "$_in_delta" == "1" ]]; then
         _cached_delta="${_cached_delta}${_line}"$'\n'
       else
         case "$_line" in
+          SCHEMA=*)      _cached_schema="${_line#SCHEMA=}" ;;
           FINGERPRINT=*)
             _cached_fp="${_line#FINGERPRINT=}"
             # Bail early on mismatch — avoids reading the full delta body.
             [[ "$_cached_fp" != "$_fp" ]] && break
             ;;
           RC=*)          _cached_rc="${_line#RC=}" ;;
-          FILES=*)       _cached_files="${_line#FILES=}" ;;
+          TSZ_RC=*)      _cached_tsz_rc="${_line#TSZ_RC=}" ;;
+          SEMANTIC_COMPLETION=*) _cached_semantic_completion="${_line#SEMANTIC_COMPLETION=}" ;;
+          ROOT_FILES=*)  _cached_roots="${_line#ROOT_FILES=}" ;;
+          SOURCE_FILES=*) _cached_sources="${_line#SOURCE_FILES=}" ;;
+          ROOT_FINGERPRINT=*) _cached_root_fp="${_line#ROOT_FINGERPRINT=}" ;;
+          SOURCE_FINGERPRINT=*) _cached_source_fp="${_line#SOURCE_FINGERPRINT=}" ;;
+          FILES_REASON=*) _cached_files_reason="${_line#FILES_REASON=}" ;;
+          TSC_ROOT_FILES=*) _cached_tsc_roots="${_line#TSC_ROOT_FILES=}" ;;
+          TSC_SOURCE_FILES=*) _cached_tsc_sources="${_line#TSC_SOURCE_FILES=}" ;;
+          TSC_ROOT_FINGERPRINT=*) _cached_tsc_root_fp="${_line#TSC_ROOT_FINGERPRINT=}" ;;
+          TSC_SOURCE_FINGERPRINT=*) _cached_tsc_source_fp="${_line#TSC_SOURCE_FINGERPRINT=}" ;;
+          TSC_RC=*)      _cached_tsc_rc="${_line#TSC_RC=}" ;;
+          DIAGNOSTIC_RECORDS=*) _cached_diag_records="${_line#DIAGNOSTIC_RECORDS=}" ;;
+          DIAGNOSTIC_FINGERPRINT=*) _cached_diag_fp="${_line#DIAGNOSTIC_FINGERPRINT=}" ;;
+          ORACLE_DIAGNOSTIC_RECORDS=*) _cached_oracle_diag_records="${_line#ORACLE_DIAGNOSTIC_RECORDS=}" ;;
+          ORACLE_DIAGNOSTIC_FINGERPRINT=*) _cached_oracle_diag_fp="${_line#ORACLE_DIAGNOSTIC_FINGERPRINT=}" ;;
           CLASS=*)       _cached_class="${_line#CLASS=}" ;;
+          STATUS=*)      _cached_status="${_line#STATUS=}" ;;
           DELTA_START)   _in_delta=1 ;;
         esac
       fi
     done < "$_cache_file"
-    if [[ "$_cached_fp" == "$_fp" ]]; then
+    local _cache_observed_fp="" _cache_overlay_stable=0
+    _cache_observed_fp="$(compute_compile_fingerprint "$name" "$tsconfig" "$src_dir" 2>/dev/null || true)"
+    if tsz_refresh_checkout_evidence "$ROOT_DIR"; then
+      _cache_overlay_stable=1
+    fi
+    local _cached_stats_valid=0
+    if [[ "$_cached_roots" =~ ^(0|[1-9][0-9]*)$ \
+      && "$_cached_sources" =~ ^(0|[1-9][0-9]*)$ \
+      && "$_cached_root_fp" =~ ^[0-9a-f]{64}$ \
+      && "$_cached_source_fp" =~ ^[0-9a-f]{64}$ \
+      && "$_cached_semantic_completion" == "complete" ]]; then
+      _cached_stats_valid=1
+    fi
+    local _cached_tsc_stats_valid=0
+    if [[ -z "$_cached_tsc_roots$_cached_tsc_sources$_cached_tsc_root_fp$_cached_tsc_source_fp" ]]; then
+      _cached_tsc_stats_valid=1
+    elif [[ "$_cached_tsc_roots" =~ ^(0|[1-9][0-9]*)$ \
+      && "$_cached_tsc_sources" =~ ^(0|[1-9][0-9]*)$ \
+      && "$_cached_tsc_root_fp" =~ ^[0-9a-f]{64}$ \
+      && "$_cached_tsc_source_fp" =~ ^[0-9a-f]{64}$ ]]; then
+      _cached_tsc_stats_valid=1
+    fi
+    if [[ ( "$_cached_class" == "exit success" || "$_cached_class" == "nonzero exit" ) \
+      && "$_cached_sources" != "0" ]]; then
+      if [[ ! "$_cached_tsc_roots" =~ ^(0|[1-9][0-9]*)$ \
+        || ! "$_cached_tsc_sources" =~ ^(0|[1-9][0-9]*)$ \
+        || ! "$_cached_tsc_root_fp" =~ ^[0-9a-f]{64}$ \
+        || ! "$_cached_tsc_source_fp" =~ ^[0-9a-f]{64}$ ]]; then
+        _cached_tsc_stats_valid=0
+      fi
+      case "$_cached_tsc_rc" in
+        0|1|2|3|4) ;;
+        *) _cached_tsc_stats_valid=0 ;;
+      esac
+    fi
+    # A cached green verdict must still carry internally exact graph and exit
+    # evidence. Corrupt/partial cache text is a miss, never compiler parity.
+    if [[ "$_cached_rc" == "0" && ( "$_cached_roots" != "$_cached_tsc_roots" \
+      || "$_cached_sources" != "$_cached_tsc_sources" \
+      || "$_cached_root_fp" != "$_cached_tsc_root_fp" \
+      || "$_cached_source_fp" != "$_cached_tsc_source_fp" \
+      || "$_cached_tsz_rc" != "$_cached_tsc_rc" \
+      || "$_cached_diag_records" != "$_cached_oracle_diag_records" \
+      || "$_cached_diag_fp" != "$_cached_oracle_diag_fp" \
+      || ! "$_cached_diag_records" =~ ^(0|[1-9][0-9]*)$ \
+      || ! "$_cached_diag_fp" =~ ^[0-9a-f]{64}$ ) ]]; then
+      _cached_tsc_stats_valid=0
+    fi
+    if [[ "$_cached_schema" == "$COMPILE_RESULT_CACHE_SCHEMA" \
+      && "$_cached_fp" == "$_fp" && "$_cache_observed_fp" == "$_fp" \
+      && "$_cache_overlay_stable" == "1" && "$_cached_stats_valid" == "1" \
+      && "$_cached_tsc_stats_valid" == "1" ]]; then
+      LAST_ROOT_FILES="$_cached_roots"; LAST_SOURCE_FILES="$_cached_sources"; LAST_ROOT_FILE_FINGERPRINT="$_cached_root_fp"; LAST_SOURCE_FILE_FINGERPRINT="$_cached_source_fp"
+      LAST_TSC_ROOT_FILES="$_cached_tsc_roots"; LAST_TSC_SOURCE_FILES="$_cached_tsc_sources"; LAST_TSC_ROOT_FINGERPRINT="$_cached_tsc_root_fp"; LAST_TSC_SOURCE_FINGERPRINT="$_cached_tsc_source_fp"
+      LAST_SEMANTIC_COMPLETION="$_cached_semantic_completion"
+      LAST_DIAGNOSTIC_RECORDS="$_cached_diag_records"; LAST_DIAGNOSTIC_FINGERPRINT="$_cached_diag_fp"
+      LAST_ORACLE_DIAGNOSTIC_RECORDS="$_cached_oracle_diag_records"; LAST_ORACLE_DIAGNOSTIC_FINGERPRINT="$_cached_oracle_diag_fp"
       echo "::group::${name}"
       echo "(result cache hit: ${_fp:0:12})"
+      local _cached_files_reached="$_cached_sources"
+      [[ -n "$_cached_files_reason" ]] && _cached_files_reached=""
+      if [[ -n "$_cached_files_reason" ]]; then
+        echo "(cached compiler stats: ${_cached_files_reason})"
+      else
+        echo "(cached compiler stats: root_files=${_cached_roots} source_files=${_cached_sources} root_graph=${_cached_root_fp:0:12} source_graph=${_cached_source_fp:0:12} tsc_root_files=${_cached_tsc_roots:-unavailable} tsc_source_files=${_cached_tsc_sources:-unavailable})"
+      fi
       if [[ "${_cached_rc:-1}" -ne 0 ]]; then
         FAILURES=$((FAILURES + 1))
         record_project_compatibility \
           "$name" "${_cached_class:-nonzero exit}" "check" \
-          "$(project_failure_status "${_cached_class:-nonzero exit}")" \
-          "${_cached_delta:-}" "${_cached_files:-0}" "" \
-          "${_cached_rc:-1}" "$tsconfig" "$src_dir" "$tsc_exit_codes"
+          "${_cached_status:-$(project_failure_status "${_cached_class:-nonzero exit}")}" \
+          "${_cached_delta:-}" "$_cached_files_reached" "" \
+          "${_cached_tsz_rc:-1}" "$tsconfig" "$src_dir" \
+          "${_cached_tsc_rc:-$tsc_exit_codes}" "$_cached_files_reason"
         echo "error: ${name} failed (cached result)" >&2
         echo "::endgroup::"
         if [[ "$ALLOW_FAILURES" == "1" ]]; then
           echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
         fi
       else
-        record_project_compatibility "$name" "exit success" "check" "none" "" \
-          "${_cached_files:-0}" "" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
+        record_project_compatibility \
+          "$name" "${_cached_class:-exit success}" "check" \
+          "${_cached_status:-none}" "${_cached_delta:-}" \
+          "$_cached_sources" "" "${_cached_tsz_rc:-0}" "$tsconfig" "$src_dir" \
+          "${_cached_tsc_rc:-$tsc_exit_codes}"
         echo "${name} compiled successfully."
         echo "::endgroup::"
       fi
@@ -840,17 +1174,38 @@ check_project() {
     fi
   fi
 
-  # Only reached on cache miss — avoid running find on cache hits.
-  local file_count
-  file_count="$(count_ts_files "$src_dir")"
+  # On a cache miss, resolve exact pinned-TS7 root and source-graph sequences.
+  # Missing either count or fingerprint makes an ordinary compile non-evidence; textual
+  # extended-diagnostics totals are never substituted.
+  local tsc_root_files="" tsc_source_files="" tsc_root_fp="" tsc_source_fp=""
+  run_project_tsc_graph_counts "$name" "$tsconfig" "$src_dir" || true
+  tsc_root_files="$LAST_TSC_ROOT_FILES"
+  tsc_source_files="$LAST_TSC_SOURCE_FILES"
+  tsc_root_fp="$LAST_TSC_ROOT_FINGERPRINT"
+  tsc_source_fp="$LAST_TSC_SOURCE_FINGERPRINT"
+  local tsc_graph_evidence_valid=0
+  if [[ "$tsc_root_files" =~ ^(0|[1-9][0-9]*)$ \
+    && "$tsc_source_files" =~ ^(0|[1-9][0-9]*)$ \
+    && "$tsc_root_fp" =~ ^[0-9a-f]{64}$ \
+    && "$tsc_source_fp" =~ ^[0-9a-f]{64}$ ]]; then
+    tsc_graph_evidence_valid=1
+  fi
 
   echo "::group::${name}"
+  local canonical_stats stats_file
   if [[ "$PROJECT_PERF_COUNTERS" == "1" ]]; then
     mkdir -p "$FIXTURE_ROOT/perf-counters"
-    echo "Running: $TSZ_RUN_BIN --extendedDiagnostics --perf-counters-json $FIXTURE_ROOT/perf-counters/${name}.perf.json --noEmit -p $tsconfig"
+    canonical_stats="$FIXTURE_ROOT/perf-counters/${name}.perf.json"
+    echo "Running: $TSZ_RUN_BIN --extendedDiagnostics --perf-counters-json <fresh> --noEmit -p $tsconfig"
   else
-    echo "Running: $TSZ_RUN_BIN --noEmit -p $tsconfig"
+    mkdir -p "$FIXTURE_ROOT/compiler-stats"
+    canonical_stats="$FIXTURE_ROOT/compiler-stats/${name}.json"
+    echo "Running: $TSZ_RUN_BIN --perf-counters-json <fresh> --noEmit -p $tsconfig"
   fi
+  rm -f "$canonical_stats" "${canonical_stats}.invalid"
+  stats_file="$(mktemp "${canonical_stats}.fresh.XXXXXX")"
+  rm -f "$stats_file"
+
   local rc=0 exit_class="" diagnostic_delta="" timeout_unmeasured=0
   if [[ "$PROJECT_PERF_COUNTERS" == "1" ]]; then
     run_with_timeout "$PROJECT_TIMEOUT" \
@@ -860,7 +1215,7 @@ check_project() {
         TSZ_PERF_COUNTERS=1 \
         "$TSZ_RUN_BIN" \
         --extendedDiagnostics \
-        --perf-counters-json "$FIXTURE_ROOT/perf-counters/${name}.perf.json" \
+        --perf-counters-json "$stats_file" \
         --noEmit \
         -p "$tsconfig" >"$log" 2>&1 || rc=$?
   else
@@ -868,11 +1223,239 @@ check_project() {
       env \
         TSZ_USE_EMBEDDED_LIBS=1 \
         RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}" \
-        "$TSZ_RUN_BIN" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
+        "$TSZ_RUN_BIN" --perf-counters-json "$stats_file" --noEmit -p "$tsconfig" \
+        >"$log" 2>&1 || rc=$?
   fi
 
+  local compiler_rc="$rc" root_files="" source_files="" root_fp="" source_fp="" files_reason=""
+  local stats_valid=0 files_reached="" tsc_root_mismatch=0 tsc_source_mismatch=0
+  local graph_project_root
+  graph_project_root="$(tsz_fingerprint_project_root "$(dirname "$tsconfig")")"
+  if read_project_compiler_stats "$stats_file" "$(dirname "$tsconfig")" "$graph_project_root"; then
+    stats_valid=1
+    root_files="$LAST_ROOT_FILES"
+    source_files="$LAST_SOURCE_FILES"
+    root_fp="$LAST_ROOT_FILE_FINGERPRINT"
+    source_fp="$LAST_SOURCE_FILE_FINGERPRINT"
+    files_reached="$source_files"
+    mv "$stats_file" "$canonical_stats" 2>/dev/null || true
+    echo "Compiler stats: root_files=${root_files} source_files=${source_files} root_graph=${root_fp:0:12} source_graph=${source_fp:0:12} tsc_root_files=${tsc_root_files:-unavailable} tsc_source_files=${tsc_source_files:-unavailable}"
+  else
+    files_reason="$LAST_COMPILER_STATS_REASON"
+    [[ -f "$stats_file" ]] && mv "$stats_file" "${canonical_stats}.invalid" 2>/dev/null || true
+    echo "Compiler stats unavailable: ${files_reason}"
+  fi
+
+  if [[ "$stats_valid" == "1" && -n "$tsc_root_files" \
+    && ( "$root_files" -ne "$tsc_root_files" || "$root_fp" != "$tsc_root_fp" ) ]]; then
+    tsc_root_mismatch=1
+  fi
+  if [[ "$stats_valid" == "1" && -n "$tsc_source_files" \
+    && ( "$source_files" -ne "$tsc_source_files" || "$source_fp" != "$tsc_source_fp" ) ]]; then
+    tsc_source_mismatch=1
+  fi
+
+  local compiler_exit_class=""
   if [[ "$rc" -ne 0 ]]; then
-    exit_class="$(project_failure_class "$([[ "$rc" -eq 124 ]] && echo "timeout" || echo "nonzero exit")" "$rc")"
+    compiler_exit_class="$(project_failure_class "$([[ "$rc" -eq 124 ]] && echo "timeout" || echo "nonzero exit")" "$rc")"
+  fi
+
+  # A diagnostic oracle is evidence in both directions. For a normal nonzero
+  # tsz result it removes genuine tsc diagnostics from the false-positive
+  # delta. For tsz RC0 it proves pinned TypeScript 7 is also clean; a nonzero
+  # tsc result is a tsz false negative and can never become a green row.
+  local oracle_consulted=0 diagnostic_oracle_available=0
+  local tsz_only_count="" tsc_only_count="" diagnostics_agree=0
+  local tsz_diagnostic_count="" tsc_diagnostic_count="" diagnostic_evidence_reason=""
+  local oracle_log="" oracle_identity_root="" tsc_false_negative=0
+  local success_diagnostic_mismatch=0
+  oracle_identity_root="$(tsz_fingerprint_project_root "$(dirname "$tsconfig")")"
+  if [[ -n "$tsc_exit_codes" ]]; then
+    oracle_log="$FIXTURE_ROOT/${name}.tsc.log"
+    tsz_diagnostic_count="$(tsz_count_diagnostic_lines "$oracle_identity_root" < "$log")"
+    tsc_diagnostic_count="$(tsz_count_diagnostic_lines "$oracle_identity_root" < "$oracle_log" 2>/dev/null || true)"
+    if [[ ! -f "$oracle_log" ]] \
+      || ! tsz_diagnostic_log_is_covered "$log" "$oracle_identity_root" \
+      || ! tsz_diagnostic_log_is_covered "$oracle_log" "$oracle_identity_root"; then
+      diagnostic_evidence_reason="unparsed compiler diagnostic output"
+    else
+      oracle_consulted=1
+      diagnostic_oracle_available=1
+      if tsz_diagnostic_multisets_agree "$log" "$oracle_log" "$oracle_identity_root"; then
+        diagnostics_agree=1
+      fi
+      if [[ "$rc" -eq 0 && "$tsc_exit_codes" -ne 0 ]]; then
+        tsc_false_negative=1
+      elif [[ "$rc" -eq 0 && "$diagnostics_agree" != "1" ]]; then
+        success_diagnostic_mismatch=1
+      fi
+    fi
+  fi
+  if [[ "$stats_valid" == "1" && "$LAST_SEMANTIC_COMPLETION" == "complete" && "$source_files" -gt 0 \
+    && -z "$tsc_exit_codes" && "${#TSC_ORACLE_CMD[@]}" -gt 0 \
+    && ( "$rc" -eq 0 || "$compiler_exit_class" == "nonzero exit" ) ]]; then
+    oracle_log="$FIXTURE_ROOT/${name}.tsc.log"
+    if run_project_tsc_oracle "$name" "$tsconfig" "$src_dir" "$oracle_log"; then
+      oracle_consulted=1
+      tsc_exit_codes="$LAST_TSC_ORACLE_RC"
+      tsz_only_count="$(tsz_only_delta_lines "$log" "$oracle_log" "$oracle_identity_root" | tsz_count_diagnostic_lines "$oracle_identity_root")"
+      tsc_only_count="$(tsz_only_delta_lines "$oracle_log" "$log" "$oracle_identity_root" | tsz_count_diagnostic_lines "$oracle_identity_root")"
+      tsz_diagnostic_count="$(tsz_count_diagnostic_lines "$oracle_identity_root" < "$log")"
+      tsc_diagnostic_count="$(tsz_count_diagnostic_lines "$oracle_identity_root" < "$oracle_log")"
+      if ! tsz_diagnostic_log_is_covered "$log" "$oracle_identity_root" \
+        || ! tsz_diagnostic_log_is_covered "$oracle_log" "$oracle_identity_root"; then
+        diagnostic_evidence_reason="unparsed compiler diagnostic output"
+      elif { [[ "$rc" -ne 0 && "$tsz_diagnostic_count" -eq 0 ]] \
+        || [[ "$LAST_TSC_ORACLE_RC" -ne 0 && "$tsc_diagnostic_count" -eq 0 ]]; }; then
+        diagnostic_evidence_reason="nonzero compiler exit without parsed diagnostics"
+      else
+        diagnostic_oracle_available=1
+        if tsz_diagnostic_multisets_agree "$log" "$oracle_log" "$oracle_identity_root"; then
+          diagnostics_agree=1
+        fi
+      fi
+      if [[ "$rc" -eq 0 && "$LAST_TSC_ORACLE_RC" -ne 0 ]]; then
+        tsc_false_negative=1
+      elif [[ "$rc" -eq 0 && "$diagnostics_agree" != "1" ]]; then
+        success_diagnostic_mismatch=1
+      fi
+    fi
+  fi
+  if [[ "$diagnostic_oracle_available" == "1" ]]; then
+    local tsz_diag_stats="" tsc_diag_stats=""
+    tsz_diag_stats="$(tsz_diagnostic_record_stats "$log" "$oracle_identity_root" 2>/dev/null || true)"
+    tsc_diag_stats="$(tsz_diagnostic_record_stats "$oracle_log" "$oracle_identity_root" 2>/dev/null || true)"
+    IFS=$'\t' read -r LAST_DIAGNOSTIC_RECORDS LAST_DIAGNOSTIC_FINGERPRINT <<< "$tsz_diag_stats"
+    IFS=$'\t' read -r LAST_ORACLE_DIAGNOSTIC_RECORDS LAST_ORACLE_DIAGNOSTIC_FINGERPRINT <<< "$tsc_diag_stats"
+    if [[ ! "$LAST_DIAGNOSTIC_RECORDS" =~ ^(0|[1-9][0-9]*)$ \
+      || ! "$LAST_DIAGNOSTIC_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
+      || ! "$LAST_ORACLE_DIAGNOSTIC_RECORDS" =~ ^(0|[1-9][0-9]*)$ \
+      || ! "$LAST_ORACLE_DIAGNOSTIC_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+      diagnostic_oracle_available=0
+      diagnostic_evidence_reason="diagnostic record fingerprint unavailable"
+    fi
+  fi
+  local oracle_evidence_missing=0
+  if [[ "$stats_valid" == "1" && "$LAST_SEMANTIC_COMPLETION" == "complete" && "$source_files" -gt 0 \
+    && ( "$rc" -eq 0 || "$compiler_exit_class" == "nonzero exit" ) \
+    && ( "$tsc_graph_evidence_valid" != "1" \
+      || "$diagnostic_oracle_available" != "1" ) ]]; then
+    oracle_evidence_missing=1
+  fi
+
+  # `result_rc` is the harness verdict. `compiler_rc` remains the actual tsz
+  # exit code recorded in the compatibility artifact.
+  local result_rc="$rc" diagnostic_status=""
+
+  if [[ "$stats_valid" != "1" ]]; then
+    result_rc=70
+    exit_class="runner error"
+    diagnostic_status="$files_reason"
+    diagnostic_delta="harness: ${files_reason}; --perf-counters-json did not produce schema v2 counts plus exact root/source path sequences"
+    local compiler_lines
+    compiler_lines="$(diagnostic_lines_from_file "tsz" "$log" 19)"
+    [[ -n "$compiler_lines" ]] && diagnostic_delta="${diagnostic_delta}"$'\n'"${compiler_lines}"
+    files_reached=""
+  elif [[ "$LAST_SEMANTIC_COMPLETION" != "complete" ]]; then
+    result_rc=68
+    exit_class="${compiler_exit_class:-exit success}"
+    diagnostic_status="semantic completion ${LAST_SEMANTIC_COMPLETION}"
+    diagnostic_delta="harness: typed ${LAST_SEMANTIC_COMPLETION} completion is non-evidence"
+  elif [[ "$source_files" -eq 0 ]]; then
+    result_rc=65
+    exit_class="fixture invalid"
+    diagnostic_status="zero source files processed"
+    files_reason="zero source files processed"
+    files_reached=""
+    diagnostic_delta="harness: tsz selected ${root_files} root file(s) but processed zero source files; row is non-evidence"
+    local zero_lines
+    zero_lines="$(diagnostic_lines_from_file "tsz" "$log" 19)"
+    [[ -n "$zero_lines" ]] && diagnostic_delta="${diagnostic_delta}"$'\n'"${zero_lines}"
+  elif [[ "$oracle_evidence_missing" == "1" ]]; then
+    result_rc=69
+    exit_class="oracle unavailable"
+    diagnostic_status="pinned TypeScript 7 evidence unavailable"
+    diagnostic_delta="harness: exact pinned TypeScript 7 project evidence is required"
+    if [[ -z "$tsc_root_files" ]]; then
+      diagnostic_delta="${diagnostic_delta}"$'\n'"harness: ${LAST_TSC_ROOT_FILES_REASON:-tsc root oracle unavailable}"
+    fi
+    if [[ -z "$tsc_source_files" ]]; then
+      diagnostic_delta="${diagnostic_delta}"$'\n'"harness: ${LAST_TSC_SOURCE_FILES_REASON:-tsc source oracle unavailable}"
+    fi
+    if [[ "$diagnostic_oracle_available" != "1" ]]; then
+      diagnostic_delta="${diagnostic_delta}"$'\n'"harness: ${diagnostic_evidence_reason:-tsc diagnostic oracle unavailable or incomplete}"
+    fi
+    local unavailable_lines
+    unavailable_lines="$(diagnostic_lines_from_file "tsz" "$log" 16)"
+    [[ -n "$unavailable_lines" ]] \
+      && diagnostic_delta="${diagnostic_delta}"$'\n'"${unavailable_lines}"
+  elif [[ "$tsc_root_mismatch" == "1" || "$tsc_source_mismatch" == "1" \
+    || "$tsc_false_negative" == "1" || "$success_diagnostic_mismatch" == "1" ]]; then
+    result_rc=66
+    exit_class="${compiler_exit_class:-exit success}"
+    if [[ "$tsc_false_negative" == "1" \
+      && ( "$tsc_root_mismatch" == "1" || "$tsc_source_mismatch" == "1" ) ]]; then
+      diagnostic_status="project graph and false-negative diagnostic mismatch"
+    elif [[ "$tsc_false_negative" == "1" ]]; then
+      diagnostic_status="TypeScript 7 diagnostic mismatch (tsz false negative)"
+    elif [[ "$success_diagnostic_mismatch" == "1" ]]; then
+      diagnostic_status="TypeScript 7 diagnostic mismatch after tsz exit success"
+    elif [[ "$tsc_root_mismatch" == "1" && "$tsc_source_mismatch" == "1" ]]; then
+      diagnostic_status="project root/source graph diagnostic mismatch"
+    elif [[ "$tsc_root_mismatch" == "1" ]]; then
+      diagnostic_status="project root-file diagnostic mismatch"
+    else
+      diagnostic_status="project source-file diagnostic mismatch"
+    fi
+    diagnostic_delta=""
+    if [[ "$tsc_root_mismatch" == "1" ]]; then
+      if [[ "$root_files" -ne "$tsc_root_files" ]]; then
+        diagnostic_delta="harness: root file count mismatch (tsz=${root_files}, TypeScript7=${tsc_root_files})"
+      else
+        diagnostic_delta="harness: root path sequence mismatch at equal count ${root_files} (tsz=${root_fp:0:12}, TypeScript7=${tsc_root_fp:0:12})"
+      fi
+    fi
+    if [[ "$tsc_source_mismatch" == "1" ]]; then
+      local source_mismatch_line=""
+      if [[ "$source_files" -ne "$tsc_source_files" ]]; then
+        source_mismatch_line="harness: source file count mismatch (tsz=${source_files}, TypeScript7=${tsc_source_files})"
+      else
+        source_mismatch_line="harness: source path sequence mismatch at equal count ${source_files} (tsz=${source_fp:0:12}, TypeScript7=${tsc_source_fp:0:12})"
+      fi
+      [[ -n "$diagnostic_delta" ]] \
+        && diagnostic_delta="${diagnostic_delta}"$'\n'"${source_mismatch_line}" \
+        || diagnostic_delta="$source_mismatch_line"
+    fi
+    if [[ "$tsc_false_negative" == "1" ]]; then
+      local tsc_false_negative_lines
+      tsc_false_negative_lines="$(tsz_label_diagnostic_lines "tsc" "$oracle_log" 18)"
+      if [[ -z "$tsc_false_negative_lines" ]]; then
+        tsc_false_negative_lines="$(diagnostic_lines_from_file "tsc" "$oracle_log" 18)"
+      fi
+      [[ -n "$tsc_false_negative_lines" ]] \
+        && diagnostic_delta="${diagnostic_delta}"$'\n'"${tsc_false_negative_lines}"
+    fi
+    if [[ "$success_diagnostic_mismatch" == "1" ]]; then
+      local success_delta
+      if [[ "$oracle_consulted" == "1" ]]; then
+        success_delta="$(tsz_only_and_tsc_context_delta "$log" "$oracle_log" "$oracle_identity_root")"
+      else
+        success_delta="$(diagnostic_lines_from_file "tsz" "$log" 18)"
+      fi
+      if [[ -n "$success_delta" ]]; then
+        [[ -n "$diagnostic_delta" ]] \
+          && diagnostic_delta="${diagnostic_delta}"$'\n'"${success_delta}" \
+          || diagnostic_delta="$success_delta"
+      fi
+    fi
+    local mismatch_lines
+    if [[ "$success_diagnostic_mismatch" != "1" ]]; then
+      mismatch_lines="$(diagnostic_lines_from_file "tsz" "$log" 19)"
+    fi
+    [[ -n "$mismatch_lines" ]] && diagnostic_delta="${diagnostic_delta}"$'\n'"${mismatch_lines}"
+  elif [[ "$rc" -ne 0 ]]; then
+    exit_class="$compiler_exit_class"
+    diagnostic_status="$(project_failure_status "$exit_class")"
     diagnostic_delta="$(diagnostic_lines_from_file "tsz" "$log")"
     local timeout_note=""
     if [[ "$rc" -eq 124 ]]; then
@@ -892,26 +1475,19 @@ check_project() {
     # A caller that already passed static tsc exit codes (the type-challenges
     # row, whose dedicated oracle runs and gates before check_project) is left
     # untouched so that row keeps its bespoke oracle and we do not run tsc twice.
-    local oracle_consulted=0 tsz_only_count="" oracle_log=""
-    if [[ "$exit_class" == "nonzero exit" && -z "$tsc_exit_codes" && "${#TSC_ORACLE_CMD[@]}" -gt 0 ]]; then
-      oracle_log="$FIXTURE_ROOT/${name}.tsc.log"
-      if run_project_tsc_oracle "$name" "$tsconfig" "$src_dir" "$oracle_log"; then
-        oracle_consulted=1
-        tsc_exit_codes="$LAST_TSC_ORACLE_RC"
-        tsz_only_count="$(tsz_only_delta_lines "$log" "$oracle_log" | tsz_count_diagnostic_lines)"
-      fi
-    fi
-
-    if [[ "$oracle_consulted" == "1" && "${tsz_only_count:-1}" -eq 0 ]]; then
-      # tsz matched tsc exactly: no tsz-only diagnostics. Record a green/pass
+    if [[ "$oracle_consulted" == "1" && "$diagnostics_agree" == "1" \
+      && "$compiler_rc" -eq "$LAST_TSC_ORACLE_RC" ]]; then
+      # tsz matched tsc exactly: symmetric diagnostic multiset and ordinary
+      # exit code agree. Record a green/pass
       # row carrying both sides so the artifact shows the agreed-on tsc errors,
-      # and do NOT count a gate failure. rc is normalized to 0 so the cached
-      # decision replays as a pass and the row state derives to green.
-      rc=0
+      # and do NOT count a gate failure. Only the harness result is normalized
+      # to zero; the real nonzero compiler exit is retained in artifacts/cache.
+      result_rc=0
       exit_class="exit success"
+      diagnostic_status="none"
       diagnostic_delta="$(tsc_and_tsz_oracle_delta "$log" "$oracle_log")"
       record_project_compatibility "$name" "exit success" "check" "none" \
-        "$diagnostic_delta" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" \
+        "$diagnostic_delta" "$files_reached" "$LAST_PEAK_RSS_BYTES" "$compiler_rc" \
         "$tsconfig" "$src_dir" "$tsc_exit_codes"
       if [[ -n "$LAST_TSC_ORACLE_RC" && "$LAST_TSC_ORACLE_RC" != "0" ]]; then
         echo "${name} matches tsc (tsc also reports errors; 0 tsz-only diagnostics)."
@@ -920,40 +1496,67 @@ check_project() {
       fi
       echo "::endgroup::"
     else
-      FAILURES=$((FAILURES + 1))
       if [[ "$oracle_consulted" == "1" ]]; then
-        # Report only the tsz-only diagnostics as the actionable delta, with the
-        # tsc context preserved for triage.
-        diagnostic_delta="$(tsz_only_and_tsc_context_delta "$log" "$oracle_log")"
+        diagnostic_delta="$(tsz_only_and_tsc_context_delta "$log" "$oracle_log" "$oracle_identity_root")"
+        if [[ "$diagnostics_agree" != "1" && "${tsz_only_count:-0}" -eq 0 \
+          && "${tsc_only_count:-0}" -eq 0 ]]; then
+          diagnostic_delta="harness: diagnostic message/continuation ownership mismatch"$'\n'"${diagnostic_delta}"
+        fi
+        if [[ "$compiler_rc" -ne "$LAST_TSC_ORACLE_RC" ]]; then
+          local exit_mismatch_line="harness: compiler exit mismatch (tsz=${compiler_rc}, TypeScript7=${LAST_TSC_ORACLE_RC})"
+          [[ -n "$diagnostic_delta" ]] \
+            && diagnostic_delta="${exit_mismatch_line}"$'\n'"${diagnostic_delta}" \
+            || diagnostic_delta="$exit_mismatch_line"
+        fi
       fi
-      record_project_compatibility \
-        "$name" \
-        "$exit_class" \
-        "check" \
-        "$(project_failure_status "$exit_class")" \
-        "$diagnostic_delta" \
-        "$file_count" \
-        "$LAST_PEAK_RSS_BYTES" \
-        "$rc" \
-        "$tsconfig" \
-        "$src_dir" \
-        "$tsc_exit_codes"
-      if [[ "$rc" -eq 124 ]]; then
+      diagnostic_status="exact diagnostic mismatch or compiler-exit mismatch"
+      if [[ "$compiler_rc" -eq 124 ]]; then
         echo "error: ${name} ${timeout_note}" >&2
       elif [[ "$oracle_consulted" == "1" ]]; then
-        echo "error: ${name} has ${tsz_only_count} tsz-only diagnostic(s) tsc does not report" >&2
+        echo "error: ${name} differs from TypeScript 7 (tsz-only=${tsz_only_count:-unknown}, tsc-only=${tsc_only_count:-unknown}, exits=${compiler_rc}/${LAST_TSC_ORACLE_RC})" >&2
       else
         echo "error: ${name} failed with exit code ${rc}" >&2
       fi
-      sed -n '1,160p' "$log" >&2 || true
-      echo "::endgroup::"
-      if [[ "$ALLOW_FAILURES" == "1" ]]; then
-        echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
-      fi
     fi
   else
+    result_rc=0
+    exit_class="exit success"
+    diagnostic_status="none"
+  fi
+
+  if [[ "$result_rc" -ne 0 ]]; then
+    FAILURES=$((FAILURES + 1))
+    record_project_compatibility \
+      "$name" "$exit_class" "check" "$diagnostic_status" \
+      "$diagnostic_delta" "$files_reached" "$LAST_PEAK_RSS_BYTES" \
+      "$compiler_rc" "$tsconfig" "$src_dir" "$tsc_exit_codes" "$files_reason"
+    if [[ "$exit_class" == "runner error" ]]; then
+      echo "error: ${name} has no trustworthy compiler stats (${files_reason})" >&2
+    elif [[ "$LAST_SEMANTIC_COMPLETION" != "complete" ]]; then
+      echo "error: ${name} reported semantic completion ${LAST_SEMANTIC_COMPLETION}; result is non-evidence" >&2
+    elif [[ "$exit_class" == "fixture invalid" ]]; then
+      echo "error: ${name} processed zero source files; result is non-evidence" >&2
+    elif [[ "$exit_class" == "oracle unavailable" ]]; then
+      echo "error: ${name} lacks exact pinned TypeScript 7 graph/diagnostic evidence" >&2
+    else
+      if [[ "$tsc_root_mismatch" == "1" ]]; then
+        echo "error: ${name} root graph differs from TypeScript 7 (counts=${root_files}/${tsc_root_files}, paths=${root_fp:0:12}/${tsc_root_fp:0:12})" >&2
+      fi
+      if [[ "$tsc_source_mismatch" == "1" ]]; then
+        echo "error: ${name} source graph differs from TypeScript 7 (counts=${source_files}/${tsc_source_files}, paths=${source_fp:0:12}/${tsc_source_fp:0:12})" >&2
+      fi
+      if [[ "$tsc_false_negative" == "1" ]]; then
+        echo "error: ${name} exited successfully but TypeScript 7 reports diagnostics (tsz false negative)" >&2
+      fi
+    fi
+    sed -n '1,160p' "$log" >&2 || true
+    echo "::endgroup::"
+    if [[ "$ALLOW_FAILURES" == "1" ]]; then
+      echo "::warning::${name} did not produce compatibility evidence; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
+    fi
+  elif [[ "$compiler_rc" -eq 0 ]]; then
     record_project_compatibility "$name" "exit success" "check" "none" "" \
-      "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
+      "$files_reached" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
     echo "${name} compiled successfully."
     echo "::endgroup::"
   fi
@@ -962,8 +1565,27 @@ check_project() {
   # possibly-false failure for as long as the fingerprint stays stable.
   if [[ "$timeout_unmeasured" == "1" ]]; then
     echo "::warning::${name} timeout lacks CPU-bound evidence (contention or missing sample); result not cached"
+  elif [[ "$stats_valid" != "1" ]]; then
+    echo "::warning::${name} missing/malformed compiler stats are non-evidence; result not cached"
+  elif [[ "$LAST_SEMANTIC_COMPLETION" != "complete" ]]; then
+    echo "::warning::${name} semantic completion ${LAST_SEMANTIC_COMPLETION} is non-evidence; result not cached"
+  elif [[ "$oracle_evidence_missing" == "1" ]]; then
+    echo "::warning::${name} incomplete pinned TypeScript 7 evidence; result not cached"
   elif [[ -n "$_cache_file" ]]; then
-    write_compile_cache "$_fp" "$rc" "$file_count" "$exit_class" "$diagnostic_delta" "$_cache_file"
+    local _write_observed_fp=""
+    _write_observed_fp="$(compute_compile_fingerprint "$name" "$tsconfig" "$src_dir" 2>/dev/null || true)"
+    if [[ "$LAST_COMPILE_INPUT_STABLE" != "true" \
+      || "$TSZ_COMPAT_SOURCE_STABLE" != "true" \
+      || -z "$_fp" || "$_write_observed_fp" != "$_fp" ]]; then
+      echo "::warning::${name} compile inputs/source overlay changed during the row; result not cached"
+    else
+      write_compile_cache "$_fp" "$result_rc" \
+        "$compiler_rc" \
+        "$root_files" "$source_files" "$root_fp" "$source_fp" "$files_reason" \
+        "$tsc_root_files" "$tsc_source_files" "$tsc_root_fp" "$tsc_source_fp" \
+        "$tsc_exit_codes" "$exit_class" "$diagnostic_status" "$diagnostic_delta" \
+        "$_cache_file"
+    fi
   fi
   return 0
 }
@@ -975,6 +1597,7 @@ should_check_project() {
 
 run_project_row() {
   local name="$1"
+  LAST_ROOT_FILES=""; LAST_SOURCE_FILES=""; LAST_ROOT_FILE_FINGERPRINT=""; LAST_SOURCE_FILE_FINGERPRINT=""; LAST_SEMANTIC_COMPLETION=""; LAST_TSC_ROOT_FILES=""; LAST_TSC_SOURCE_FILES=""; LAST_TSC_ROOT_FINGERPRINT=""; LAST_TSC_SOURCE_FINGERPRINT=""; LAST_COMPILE_INPUT_FINGERPRINT=""; LAST_COMPILE_INPUT_STABLE=""
 
   case "$name" in
     utility-types-project)
@@ -1210,83 +1833,83 @@ run_project_row() {
     #     with the app's own tsconfig, drop node_modules. See run_application_row. ---
     umami-project)
       run_application_row "umami-project" "umami" "$UMAMI_REPO" "$UMAMI_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "src"
       ;;
     excalidraw-project)
       run_application_row "excalidraw-project" "excalidraw" "$EXCALIDRAW_REPO" "$EXCALIDRAW_REF" \
-        "yarn install --frozen-lockfile --ignore-scripts --ignore-engines" "." "packages/excalidraw/tsconfig.json" "packages/excalidraw"
+        "yarn install --frozen-lockfile --ignore-scripts --ignore-engines" "." "$(tsz_project_application_tsconfig "$name")" "packages/excalidraw"
       ;;
     dub-project)
       run_application_row "dub-project" "dub" "$DUB_REPO" "$DUB_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/web/tsconfig.json" "apps/web"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "apps/web"
       ;;
     formbricks-project)
       run_application_row "formbricks-project" "formbricks" "$FORMBRICKS_REPO" "$FORMBRICKS_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/web/tsconfig.json" "apps/web"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "apps/web"
       ;;
     typebot-project)
       run_application_row "typebot-project" "typebot" "$TYPEBOT_REPO" "$TYPEBOT_REF" \
-        "bun install --frozen-lockfile --ignore-scripts" "." "apps/builder/tsconfig.json" "apps/builder"
+        "bun install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "apps/builder"
       ;;
     lobe-chat-project)
       run_application_row "lobe-chat-project" "lobe-chat" "$LOBE_CHAT_REPO" "$LOBE_CHAT_REF" \
-        "pnpm install --no-frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
+        "pnpm install --no-frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "src"
       ;;
     supabase-studio-project)
       run_application_row "supabase-studio-project" "supabase-studio" "$SUPABASE_STUDIO_REPO" "$SUPABASE_STUDIO_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/studio/tsconfig.json" "apps/studio"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "apps/studio"
       ;;
     infisical-project)
       run_application_row "infisical-project" "infisical" "$INFISICAL_REPO" "$INFISICAL_REF" \
-        "npm ci --ignore-scripts" "." "frontend/tsconfig.json" "frontend"
+        "npm ci --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "frontend"
       ;;
     payload-project)
       run_application_row "payload-project" "payload" "$PAYLOAD_REPO" "$PAYLOAD_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "packages/payload/tsconfig.json" "packages/payload/src"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "packages/payload/src"
       ;;
     medusa-project)
       run_application_row "medusa-project" "medusa" "$MEDUSA_REPO" "$MEDUSA_REF" \
-        "yarn install --immutable --mode=skip-build" "." "packages/medusa/tsconfig.json" "packages/medusa/src"
+        "yarn install --immutable --mode=skip-build" "." "$(tsz_project_application_tsconfig "$name")" "packages/medusa/src"
       ;;
     outline-project)
       run_application_row "outline-project" "outline" "$OUTLINE_REPO" "$OUTLINE_REF" \
-        "yarn install --immutable --mode=skip-build" "." "tsconfig.json" "app"
+        "yarn install --immutable --mode=skip-build" "." "$(tsz_project_application_tsconfig "$name")" "app"
       ;;
     trigger-dev-project)
       run_application_row "trigger-dev-project" "trigger-dev" "$TRIGGER_DEV_REPO" "$TRIGGER_DEV_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "apps/webapp/tsconfig.json" "apps/webapp/app"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "apps/webapp/app"
       ;;
     joplin-project)
       run_application_row "joplin-project" "joplin" "$JOPLIN_REPO" "$JOPLIN_REF" \
-        "yarn install --immutable --mode=skip-build" "." "packages/app-desktop/tsconfig.json" "packages/app-desktop"
+        "yarn install --immutable --mode=skip-build" "." "$(tsz_project_application_tsconfig "$name")" "packages/app-desktop"
       ;;
     directus-project)
       run_application_row "directus-project" "directus" "$DIRECTUS_REPO" "$DIRECTUS_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "api/tsconfig.json" "api/src"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "api/src"
       ;;
     n8n-project)
       run_application_row "n8n-project" "n8n" "$N8N_REPO" "$N8N_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "packages/cli/tsconfig.json" "packages/cli/src"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "packages/cli/src"
       ;;
     cal-com-project)
       run_application_row "cal-com-project" "cal-com" "$CAL_COM_REPO" "$CAL_COM_REF" \
-        "yarn install --immutable --mode=skip-build" "." "apps/web/tsconfig.json" "apps/web"
+        "yarn install --immutable --mode=skip-build" "." "$(tsz_project_application_tsconfig "$name")" "apps/web"
       ;;
     documenso-project)
       run_application_row "documenso-project" "documenso" "$DOCUMENSO_REPO" "$DOCUMENSO_REF" \
-        "npm install --ignore-scripts --no-audit --no-fund" "." "apps/remix/tsconfig.json" "apps/remix"
+        "npm install --ignore-scripts --no-audit --no-fund" "." "$(tsz_project_application_tsconfig "$name")" "apps/remix"
       ;;
     affine-project)
       run_application_row "affine-project" "affine" "$AFFINE_REPO" "$AFFINE_REF" \
-        "yarn install --immutable --mode=skip-build" "." "packages/frontend/core/tsconfig.json" "packages/frontend/core/src"
+        "yarn install --immutable --mode=skip-build" "." "$(tsz_project_application_tsconfig "$name")" "packages/frontend/core/src"
       ;;
     immich-server-project)
       run_application_row "immich-server-project" "immich-server" "$IMMICH_SERVER_REPO" "$IMMICH_SERVER_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "server/tsconfig.json" "server/src"
+        "pnpm install --frozen-lockfile --ignore-scripts" "." "$(tsz_project_application_tsconfig "$name")" "server/src"
       ;;
     rocketchat-project)
       run_application_row "rocketchat-project" "rocketchat" "$ROCKETCHAT_REPO" "$ROCKETCHAT_REF" \
-        "yarn install --immutable --mode=skip-build" "." "apps/meteor/tsconfig.json" "apps/meteor/client"
+        "yarn install --immutable --mode=skip-build" "." "$(tsz_project_application_tsconfig "$name")" "apps/meteor/client"
       ;;
     vite-vanilla-ts-app)
       if [[ "$INCLUDE_GENERATED_APPS" != "1" ]]; then

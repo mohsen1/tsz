@@ -1,102 +1,22 @@
-# nextest configuration for tsz
-# Run tests with: cargo nextest run
-# Install with: cargo install cargo-nextest
-#
-# Protection against hangs, OOM, and timeouts:
-# - slow-timeout: Warns about slow tests, terminate-after kills after N periods
-# - leak-timeout: Detects tests that don't terminate (infinite loops)
-# - Each test runs in its own process, so one crash doesn't affect others
+# Nextest policy for the active clean-slate workspace. Every selected rewrite
+# test is required to pass; disabled legacy oracle files are not Cargo targets.
 
 [profile.default]
-# Kill tests after 60s (30s warning, then terminate)
 slow-timeout = { period = "30s", terminate-after = 2 }
-# Detect leaked handles/threads that prevent test from terminating
 leak-timeout = "5s"
-# Fail fast disabled - run all tests to see full picture
 fail-fast = false
-# No retries - tests should be deterministic
 retries = 0
-# Use all available cores
 test-threads = "num-cpus"
 
-# Heavy-test overrides below are guarded (#17675, part 3):
-#   * scripts/ci/check-nextest-overrides.mjs runs in the per-merge fast lane and
-#     fails if any literal `test(NAME)` filter here matches no test in the tree
-#     (a rename/move that silently orphaned an override).
-#   * scripts/ci/known-failures-check.mjs classifies a nextest timeout in the
-#     nightly unit lane distinctly: it tells the author to ADD a slow-timeout
-#     override here, never to baseline the (correct) test, and warns when a
-#     still-passing test already exceeds the 30s base period without an override.
-# So a new correct-but-heavy test belongs in one of these blocks, not in
-# scripts/ci/known-failures.txt.
-#
-# Global default-lib merge validation (#17675). Merging a user global interface
-# into a lib type (e.g. `Node.kind`) forces a correct-but-large post-merge
-# recheck of the affected default-lib subgraph — for a DOM merge, nearly all of
-# lib.dom.d.ts. Measured solo on an idle 4-core box: 113.7s and >240s
-# respectively, the latter blowing even the 120s x 2 shared default-lib window.
-# The recheck's residual cost is tracked for profiling under #17675; this window
-# keeps the nightly unit lane green so it does not mask unrelated regressions.
-# (The report's third test, `skip_lib_check_skips_default_lib_recheck...`, is now
-# O(ms) and needs no override: `skipLibCheck` skips the recheck outright.)
-[[profile.default.overrides]]
-filter = 'test(global_lib_merge_keeps_one_element_identity_for_array_callbacks) | test(collect_diagnostics_reports_default_lib_breakage_from_global_node_merge)'
-slow-timeout = { period = "180s", terminate-after = 2 }
-threads-required = "num-test-threads"
-
-[[profile.default.overrides]]
-filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_related_index_react16_fixture_reports_only_distinct_key_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
-slow-timeout = { period = "120s", terminate-after = 2 }
-
-[[profile.default.overrides]]
-filter = 'test(/^no_false_ts2322_generic_conditional_default_/) | test(real_ts2322_is_still_reported_with_conditional_default) | test(explicit_third_arg_mismatch_still_errors)'
-threads-required = "num-test-threads"
-
-# Issue #10677 / #10683 regression. Faithfully reproducing the per-file
-# instantiation-fuel exhaustion requires evaluating ~2000 generic Applications
-# of the kysely builder machinery before the target statement, so the tests are
-# intentionally heavy. Give them the longer slow-timeout and run alone to
-# avoid memory pressure from co-tenant heavy tests. The `_inside_function_body`
-# variant proves the fuel reset also applies between block/function-body
-# statements (kysely introspectors are methods).
-[[profile.default.overrides]]
-filter = 'test(fuel_drained_earlier_statements_keep_select_callback_context) | test(fuel_drained_inside_function_body_keeps_select_callback_context)'
-slow-timeout = { period = "120s", terminate-after = 2 }
-threads-required = "num-test-threads"
-
-# DOM lib-heritage publication witnesses intentionally build enough files to
-# exercise the fresh per-file checker pool. Run them alone with the longer
-# timeout used by other heavy checker regression tests.
-#
-# forced_parallel_dom_heritage_matches_sequential_witness (#13862) and
-# forced_parallel_webworker_global_augmentation_matches_sequential_witness
-# (#13245) are the same class of witness (40 generated files, a sequential
-# baseline plus 8 forced-parallel attempts = 9 full-project checks each) added
-# later without joining this override; under the unmodified 60s default
-# signoff timeout they measured 175.72s and 164.11s respectively solo on an
-# idle 4-core box (issue #17203 — the nightly unit lane's lone
-# `parallel_sequential_agreement_tests` timeout, not a compiler hang).
-[[profile.default.overrides]]
-filter = 'test(dom_element_heritage_clean_sequential) | test(forced_parallel_lib_iterator_heritage_matches_sequential) | test(forced_parallel_dom_heritage_matches_sequential_witness) | test(forced_parallel_webworker_global_augmentation_matches_sequential_witness)'
-slow-timeout = { period = "120s", terminate-after = 2 }
-threads-required = "num-test-threads"
-
-# junit `path` resolves relative to the per-profile store directory
-# (`target/nextest/default/`), so a bare file name lands the report at
-# `target/nextest/default/junit.xml`. A root-relative path here would be
-# APPENDED to the store dir and bury the report at
-# `target/nextest/default/target/nextest/default/junit.xml` (#15646).
 [profile.default.junit]
 path = "junit.xml"
 
-# Quick profile for fast feedback during development
 [profile.quick]
 slow-timeout = { period = "10s", terminate-after = 1 }
 leak-timeout = "2s"
 fail-fast = true
 test-threads = "num-cpus"
 
-# Pre-commit profile - fast, fail immediately on any issue
 [profile.precommit]
 slow-timeout = { period = "15s", terminate-after = 2 }
 leak-timeout = "2s"
@@ -104,32 +24,6 @@ fail-fast = true
 test-threads = "num-cpus"
 status-level = "fail"
 
-[[profile.precommit.overrides]]
-filter = 'test(test_ts2536_with_lib_mismatched_keyof_source) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
-slow-timeout = { period = "90s", terminate-after = 2 }
-
-# Signoff profile (#15399) - fail-fast disabled and junit on. While main
-# carries a known-failing set, `precommit`'s `fail-fast = true` bails on the
-# first red test, so it can never produce a full failure inventory to
-# distinguish NEW regressions from the known baseline. This profile runs the
-# whole suite, writes junit, and lets scripts/ci/known-failures-check.mjs
-# adjudicate against scripts/ci/known-failures.txt.
-#
-# Since #15646 this profile is what BOTH the unit CI job and local signoff
-# run (it replaced the retired `[profile.ci]`), so it is the one owner of the
-# unit lane's timeout policy: 30s base period, and the shared heavy-test
-# lists arrive by inheritance — nextest consults
-# `[[profile.default.overrides]]` for any profile that does not override the
-# same setting, so the 120s / threads-required blocks above apply to signoff
-# runs as-is. One policy for both environments keeps the shared
-# known-failures baseline meaningful: a stricter local-only policy would seed
-# it with timeouts that pass in CI, and a laxer one would hide CI timeouts
-# from local runs. Hosted runners additionally cap test threads via
-# UNIT_NEXTEST_TEST_THREADS / CHECKER_NEXTEST_TEST_THREADS (full-ci.sh);
-# memory-heavy checker tests can be SIGKILLed at num-cpus there.
-# The base values below deliberately PIN the unit-lane policy even where
-# they currently equal [profile.default]: retuning the local dev profile must
-# not silently retune the CI gate.
 [profile.signoff]
 slow-timeout = { period = "30s", terminate-after = 2 }
 leak-timeout = "3s"
@@ -137,13 +31,9 @@ fail-fast = false
 test-threads = "num-cpus"
 status-level = "fail"
 
-# See the `[profile.default.junit]` note: `path` resolves relative to the
-# per-profile store dir, so this lands at `target/nextest/signoff/junit.xml`
-# (the path scripts/ci/unit-nextest.sh collects).
 [profile.signoff.junit]
 path = "junit.xml"
 
-# Long-running tests profile (for conformance tests)
 [profile.conformance]
 slow-timeout = { period = "120s", terminate-after = 2 }
 leak-timeout = "10s"

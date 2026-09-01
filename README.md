@@ -1,4 +1,3 @@
-
 <br>
 <br>
 
@@ -13,89 +12,91 @@
 <br>
 <br>
 
+`tsz` is a clean-slate TypeScript compiler experiment written in Rust. It
+targets the pinned TypeScript `7.0.2` compiler as its behavioral oracle. _z_ is
+for _Zang_, the Persian word for “rust.”
 
-`tsz` is a performance-first TypeScript compiler in Rust. _z_ is for _Zang_!<sup>[1](#footnote-1)</sup>
-The goal is a correct, fast, drop-in replacement for `tsc`, with both native and WASM targets.
+The eventual goal is exact TypeScript compatibility and at least 3x the
+throughput of `tsgo` on every project that is already correct. A project with
+different diagnostics, incomplete dependencies, or an unsupported compiler
+surface is not a performance win.
 
-`tsz` is built the with help of AI-assistant coding. Many tools and AI models were used during its development.
+## Current status: R0
 
-## Performance
-
-`tsz` is aiming to be 2x faster than tsgo on all benchmarks. It is 3x faster in small file samples. Work on larger projects is underway.
-<!-- PERFORMANCE_START -->
-<p align="left">
-  <a href="https://tsz.dev/benchmarks/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="crates/tsz-website/static/benchmark-data/readme-perf-dark.png">
-      <source media="(prefers-color-scheme: light)" srcset="crates/tsz-website/static/benchmark-data/readme-perf-light.png">
-      <img src="crates/tsz-website/static/benchmark-data/readme-perf-light.png" alt="Latest tsz vs tsgo benchmark performance" width="760">
-    </picture>
-  </a>
-</p>
-<!-- PERFORMANCE_END -->
-
-## Install
-
+<!-- R0_STATUS_START -->
 > [!WARNING]
-> `tsz` is pre-release software and not yet a drop-in replacement for `tsc`.
-> Diagnostics, inference, and emit may differ from TypeScript today. Use for
-> experimentation only.
+> The rewrite is validation-only. There is no supported install, package
+> release, WASM build, or drop-in replacement yet. Build it from source only
+> when working on the compiler or its validation harnesses.
 
-To check whether `tsz` currently matches `tsc` on your project:
+The fresh vertical slice currently proves exact seed behavior for:
+
+- declarations, literal inference, and `let`/`var` widening;
+- explicit annotations and assignment diagnostics;
+- function calls, arguments, and return diagnostics;
+- object properties and a bounded union subset;
+- JavaScript emit for the seed syntax;
+- deterministic diagnostics across repeated runs and reversed root-file order.
+
+Exact seed assertions cover diagnostic codes, spans, messages, ordering, exit
+status, and emitted bytes against TypeScript `7.0.2`.
+<!-- R0_STATUS_END -->
+
+Broad TypeScript is deliberately unsupported at R0. This includes substantial
+parser recovery, configuration and module resolution, standard library loading,
+classes, generics, flow analysis, advanced and recursive types, declaration
+emit, source maps, incremental language-service behavior, full LSP/fourslash,
+project-corpus compatibility, releases, and WASM.
+
+For the execution plan and architectural invariants, read
+[`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md) and
+[`docs/architecture/RESET.md`](docs/architecture/RESET.md).
+
+## Build and validate
+
+The native binaries are development artifacts, not releases:
 
 ```sh
-npx try-tsz
+cargo run -p tsz-cli --bin tsz -- --help
 ```
 
-**macOS & Linux**
+Run the exact seed oracle and focused Rust suites with:
 
 ```sh
-curl -fsSL https://tsz.dev/install | sh
+scripts/reset/seed-oracle.sh --tsz .target/debug/tsz
+cargo nextest run --workspace --all-features
 ```
 
-**Windows (PowerShell)**
+The conformance, emit, fourslash, project, and performance harnesses remain in
+the repository. During R0, broad results are observations of unsupported work,
+not a compatibility percentage or speed claim.
 
-```powershell
-irm https://tsz.dev/install.ps1 | iex
-```
+## Frozen legacy checkpoint
 
-## TypeScript compatibility
+The table below records the retired implementation at parent checkpoint
+`2770da88d4` on 2026-08-20. These are historical evidence only. They are not
+rewrite results, not an R0 floor, and not refreshed from current artifacts.
 
-`tsz` runs TypeScript's own test suite for compatibility across type-checking, code emission, and LSP.
-<!-- TS_VERSION_START -->
-Currently targeting `TypeScript`@`7.0.2`
-<!-- TS_VERSION_END -->
-### Type Checker
+| Retired suite | Frozen result |
+| --- | ---: |
+| Diagnostic conformance | 11,667 / 12,043 runnable cases (96.9%) |
+| JavaScript emit | 11,562 / 11,563 cases |
+| Declaration emit | 1,377 / 1,390 cases (99.1%) |
+| Fourslash | 6,562 / 6,562 cases |
 
-To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
-test suite against it.
+The old benchmark images and published dashboards are likewise frozen
+pre-reset artifacts. New performance reporting resumes only for rewrite rows
+that first match the pinned TypeScript oracle.
 
+## Project principles
 
-<!-- CONFORMANCE_START -->
-```
-Progress: [███████████████████░] 96.9% (11,667/12,043 runnable tests)
-Candidates: 12,585 (12,043 runnable, 507 unsupported, 35 skipped)
-```
-<!-- CONFORMANCE_END -->
+- TypeScript `7.0.2` behavior is the compatibility source of truth.
+- Deferred semantic forms remain symbolic until their owning operation forces
+  them.
+- One checker owns one type universe; incomplete work does not enter definitive
+  caches.
+- Correctness precedes speed, and every public metric carries provenance.
+- Sound Mode was removed. There is one TypeScript-compatible semantics.
 
-
-### Emitter
-
-
-<!-- EMIT_START -->
-```
-JavaScript:  [████████████████████] 100.0% (11,562 / 11,563 tests)
-Declaration: [████████████████████] 99.1% (1,377 / 1,390 tests)
-```
-<!-- EMIT_END -->
-
-### Language Service
-
-<!-- FOURSLASH_START -->
-```
-Progress: [████████████████████] 100.0% (6,562 / 6,562 tests)
-```
-<!-- FOURSLASH_END -->
-
-
-<a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".
+`tsz` is developed with AI-assisted coding and reviewed through executable
+oracle, unit, architecture, and process contracts.

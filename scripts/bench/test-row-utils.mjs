@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 
 import {
   didNotFinish,
+  GREEN_COMPAT,
+  hasExactProjectEvidence,
   isPositiveFiniteTiming,
   isSpeedChartEligible,
   isSpeedRatioEligible,
   SLOWDOWN_FAILURE_FACTOR,
 } from "./row-utils.mjs";
+import { fixtureStubEvidenceFor } from "./lib/fixture-stub-inventory.mjs";
+
+const ROOT = new URL("../..", import.meta.url).pathname;
 
 // A completed measurement (both compilers finished, exit 0) is never DNF.
 assert.equal(
@@ -137,9 +142,114 @@ assert.equal(isSpeedRatioEligible(undefined), false, "undefined row is ineligibl
 const cleanPair = { name: "ok", tsz_ms: 8, tsgo_ms: 12, winner: "tsz" };
 assert.equal(isSpeedRatioEligible(cleanPair), true, "a clean measured pair is eligible");
 assert.equal(
-  isSpeedRatioEligible({ name: "ok-green", tsz_ms: 8, tsgo_ms: 12, winner: "tsz", compatibility: { exit_class: "exit success", exit_codes: { tsz: [0], tsgo: [0] } } }),
+  isSpeedRatioEligible({ name: "ok-green", tsz_ms: 8, tsgo_ms: 12, winner: "tsz", compatibility: GREEN_COMPAT }),
   true,
-  "a green completed pair is eligible",
+  "a schema-v2-evidenced green completed pair is eligible",
+);
+assert.equal(
+  hasExactProjectEvidence(GREEN_COMPAT, "utility-types-project"),
+  true,
+  "source-derived zero-stub evidence keeps a real-dependency project eligible",
+);
+for (const [field, value, message] of [
+  ["evidence_protocol_fingerprint", undefined, "missing evidence-protocol identity"],
+  ["compile_input_stable", undefined, "missing compile-input stability"],
+  ["compile_input_stable", false, "moving compile inputs"],
+]) {
+  const compatibility = { ...GREEN_COMPAT };
+  if (value === undefined) delete compatibility[field];
+  else compatibility[field] = value;
+  assert.equal(
+    hasExactProjectEvidence(compatibility, "utility-types-project"),
+    false,
+    `${message} cannot certify project evidence`,
+  );
+}
+for (const semantic_completion of [undefined, null, "deferred", "cycle", "limit"]) {
+  const compatibility = { ...GREEN_COMPAT, semantic_completion };
+  assert.equal(
+    hasExactProjectEvidence(compatibility, "utility-types-project"),
+    false,
+    `${String(semantic_completion)} completion cannot certify project evidence`,
+  );
+  assert.equal(
+    isSpeedRatioEligible({
+      name: "utility-types-project",
+      tsz_ms: 8,
+      tsgo_ms: 12,
+      winner: "tsz",
+      compatibility,
+    }),
+    false,
+    `${String(semantic_completion)} completion cannot reach a timing claim`,
+  );
+}
+{
+  const omitted = { ...GREEN_COMPAT };
+  delete omitted.stub_inventory_schema;
+  delete omitted.stubbed_modules;
+  delete omitted.stubbed_any_members;
+  delete omitted.stub_inventory_fingerprint;
+  assert.equal(
+    hasExactProjectEvidence(omitted, "utility-types-project"),
+    false,
+    "an artifact cannot omit stub evidence and remain exact",
+  );
+}
+for (const name of ["msw-project", "effect-project", "drizzle-orm-project"]) {
+  assert.equal(
+    hasExactProjectEvidence(GREEN_COMPAT, name),
+    false,
+    `${name}: forged zero stub fields disagree with source inventory`,
+  );
+  const actual = fixtureStubEvidenceFor(ROOT, name);
+  const compatibility = {
+    ...GREEN_COMPAT,
+    stub_inventory_schema: actual.stubInventorySchema,
+    stubbed_modules: actual.stubbedModules,
+    stubbed_any_members: actual.stubbedAnyMembers,
+    stub_inventory_fingerprint: actual.stubInventoryFingerprint,
+  };
+  assert.equal(
+    hasExactProjectEvidence(compatibility, name),
+    false,
+    `${name}: honest nonzero stub evidence remains non-green and non-timing`,
+  );
+  assert.equal(
+    isSpeedRatioEligible({ name, tsz_ms: 8, tsgo_ms: 12, winner: "tsz", compatibility }),
+    false,
+    `${name}: a forged timing pair is rejected by the shared consumer gate`,
+  );
+}
+{
+  const actual = fixtureStubEvidenceFor(ROOT, "kysely-project");
+  assert.equal(actual.stubbedModules, 0, "Kysely's declaration-writing helper has no module stub");
+  assert.equal(actual.stubbedAnyMembers, 0, "Kysely's typed declaration contains no any member");
+  assert.deepEqual(actual.stubInventoryOwners, ["tsz_write_kysely_globals"]);
+  const compatibility = {
+    ...GREEN_COMPAT,
+    stub_inventory_schema: actual.stubInventorySchema,
+    stubbed_modules: actual.stubbedModules,
+    stubbed_any_members: actual.stubbedAnyMembers,
+    stub_inventory_fingerprint: actual.stubInventoryFingerprint,
+    stub_inventory_owners: actual.stubInventoryOwners,
+  };
+  assert.equal(
+    hasExactProjectEvidence(compatibility, "kysely-project"),
+    false,
+    "a typed zero-any declaration-writing helper remains a stub owner and cannot certify exact evidence",
+  );
+}
+assert.equal(
+  isSpeedRatioEligible({
+    name: "legacy-green",
+    tsz_ms: 8,
+    tsgo_ms: 12,
+    winner: "tsz",
+    compatibility: { exit_class: "exit success", exit_codes: { tsc: [0], tsz: [0], tsgo: [0] } },
+  }),
+  false,
+  "a phase-only compatibility label cannot certify a timing pair",
 );
 
 // --- isSpeedChartEligible: base gate + the slowdown-failure threshold ---

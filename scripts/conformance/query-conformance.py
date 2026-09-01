@@ -442,10 +442,15 @@ def show_snapshot_freshness(
 
 
 def conformance_summary_from_readme_text(text):
-    section = text.split("<!-- CONFORMANCE_START -->", 1)
-    if len(section) != 2:
+    start_marker = "<!-- CONFORMANCE_START -->"
+    end_marker = "<!-- CONFORMANCE_END -->"
+    if text.count(start_marker) != 1 or text.count(end_marker) != 1:
         return None
-    section = section[1].split("<!-- CONFORMANCE_END -->", 1)[0]
+    start = text.index(start_marker) + len(start_marker)
+    end = text.index(end_marker)
+    if end < start:
+        return None
+    section = text[start:end]
     match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", section)
     if not match:
         return None

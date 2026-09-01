@@ -23,20 +23,6 @@ import {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
-  ["utility-types", "utility-types-project"],
-  ["rxjs", "rxjs-project"],
-  ["Kysely", "kysely-project"],
-  ["Zod", "zod-project"],
-  ["ts-toolbelt", "ts-toolbelt-project"],
-  ["type-fest", "type-fest-project"],
-  ["ts-essentials", "ts-essentials-project"],
-  ["generated Vite app", "vite-vanilla-ts-app"],
-  ["generated Next app", "nextjs-fresh-app"],
-  ["large-ts-repo", "large-ts-repo"],
-  ["Next.js full project", "nextjs"],
-]);
-
 function sortedUnique(values) {
   return [...new Set(values)].sort();
 }
@@ -192,6 +178,21 @@ printf '%s\\n' "\${_TSZ_PACKED_COMPAT_ROWS}"
   };
 }
 
+function shellApplicationTsconfig(rowName) {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+tsz_project_application_tsconfig "${rowName}"
+`;
+  const result = runShellScript(script);
+  assert.equal(
+    result.status,
+    0,
+    `application tsconfig lookup failed for ${rowName}:\n${result.stderr}`,
+  );
+  return result.stdout.trim();
+}
+
 function sharedConfigWriterName(row) {
   if (row.generated_by !== undefined) return null;
   // Application rows compile with the app's OWN tsconfig (jsx + paths), not a
@@ -214,28 +215,11 @@ function without(values, excluded) {
   return values.filter((value) => !excluded.has(value));
 }
 
-function roadmapRequiredProjectRows() {
+function roadmapTrackedProjectRowCount() {
   const roadmap = readRepoFile("docs/plan/ROADMAP.md");
-  const rows = [];
-  let inTable = false;
-
-  for (const line of roadmap.split(/\r?\n/)) {
-    if (line.trim() === "Required project rows:") {
-      inTable = true;
-      continue;
-    }
-    if (!inTable) continue;
-    if (!line.startsWith("|")) {
-      if (rows.length > 0) break;
-      continue;
-    }
-    if (line.includes("---") || line.includes("| Project |")) continue;
-
-    const label = line.split("|")[1]?.trim();
-    if (label) rows.push(label);
-  }
-
-  return rows;
+  const match = roadmap.match(/all\s+(\d+)\s+rows visible\b/i);
+  assert.ok(match, "ROADMAP must state how many retained project rows stay visible");
+  return Number(match[1]);
 }
 
 const requiredRows = sortedUnique(REQUIRED_PROJECT_ROWS);
@@ -249,17 +233,13 @@ const pinnedSourceRows = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.repo !== undefined || row.ref !== undefined)
   .map((row) => row.name);
 const compatibilityRows = COMPATIBILITY_CORPUS_ROWS.map((row) => row.name);
-const roadmapRequiredRows = roadmapRequiredProjectRows();
-const mappedRoadmapRequiredRows = roadmapRequiredRows.map((label) => (
-  ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL.get(label) || `unmapped roadmap row: ${label}`
-));
+const roadmapTrackedRows = roadmapTrackedProjectRowCount();
 
 assertNoDuplicates("REQUIRED_PROJECT_ROWS", REQUIRED_PROJECT_ROWS);
 assertNoDuplicates("COMPILE_GUARD_REQUIRED_ROWS", COMPILE_GUARD_REQUIRED_ROWS);
 assertNoDuplicates("COMPILE_CANARY_PROJECT_ROWS", COMPILE_CANARY_PROJECT_ROWS);
 assertNoDuplicates("COMPILE_GUARD_CANARY_PROJECT_ROWS", COMPILE_GUARD_CANARY_PROJECT_ROWS);
 assertNoDuplicates("COMPATIBILITY_CORPUS_ROWS", compatibilityRows);
-assertNoDuplicates("ROADMAP required project rows", roadmapRequiredRows);
 assert.deepEqual(
   shellSyncedProjectRowGroups(),
   {
@@ -285,15 +265,10 @@ assert.deepEqual(
   sortedUnique([...REQUIRED_PROJECT_ROWS, ...COMPILE_CANARY_PROJECT_ROWS]),
   "_TSZ_PACKED_COMPAT_ROWS must cover all compatibility rows (required ∪ canary) from project-rows.mjs",
 );
-assert.deepEqual(
-  sortedUnique(ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL.keys()),
-  sortedUnique(roadmapRequiredRows),
-  "ROADMAP required project row labels drifted from scripts/bench/test-project-rows.mjs",
-);
-assert.deepEqual(
-  sortedUnique(mappedRoadmapRequiredRows),
-  sortedUnique(mappedRoadmapRequiredRows.filter((row) => requiredRows.includes(row))),
-  "docs/plan/ROADMAP.md required project rows must be benchmark_set: required in scripts/bench/project-rows.mjs",
+assert.equal(
+  PROJECT_ROW_DEFINITIONS.length,
+  roadmapTrackedRows,
+  "ROADMAP retained project-row count drifted from scripts/bench/project-rows.mjs",
 );
 assert.deepEqual(
   sortedUnique(compatibilityRows),
@@ -351,6 +326,32 @@ assert.deepEqual(
   projectCompileGuardRows,
   sortedUnique(without(allTrackedRows, PROJECT_COMPILE_GUARD_EXCLUDED_ROWS)),
   "project-compile-guard rows drifted from scripts/bench/project-rows.mjs",
+);
+
+const applicationRows = PROJECT_ROW_DEFINITIONS.filter(
+  (row) => row.category === "application",
+);
+for (const row of applicationRows) {
+  assert.equal(
+    shellApplicationTsconfig(row.name),
+    row.app_tsconfig,
+    `${row.name} guard tsconfig must come from project-rows.mjs metadata`,
+  );
+}
+assert.equal(
+  shellApplicationTsconfig("infisical-project"),
+  "frontend/tsconfig.app.json",
+  "Infisical must compile its leaf app config, not the zero-root solution config",
+);
+assert.equal(
+  (projectCompileGuardScript.match(/tsz_project_application_tsconfig "\$name"/g) || []).length,
+  applicationRows.length,
+  "every application guard row must consume the canonical metadata tsconfig",
+);
+assert.doesNotMatch(
+  projectCompileGuardScript,
+  /frontend\/tsconfig\.json/,
+  "the stale zero-root Infisical solution config must not reappear in the guard",
 );
 
 const fixtureSourceRows = extractFixtureSourceRows(

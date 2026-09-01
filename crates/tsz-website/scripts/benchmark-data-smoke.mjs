@@ -3,9 +3,21 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { GREEN_COMPAT } from "../../../scripts/bench/row-utils.mjs";
+
 const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "tsz-benchmark-data-"));
 const artifact = path.join(tmpDir, "bench-vs-tsgo-test.json");
 const failedOnlyArtifact = path.join(tmpDir, "bench-vs-tsgo-failed-only.json");
+
+function exactProjectCompatibility(sourceFiles) {
+  return {
+    ...GREEN_COMPAT,
+    source_files: sourceFiles,
+    oracle_source_files: sourceFiles,
+    files_reached: sourceFiles,
+    exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
+  };
+}
 
 const fixtureSource = `type Variant =
   | { kind: "a"; value: string }
@@ -57,6 +69,7 @@ await fs.writeFile(artifact, `${JSON.stringify({
       tsgo_ms: 30,
       winner: "tsz",
       compatibility: {
+        ...exactProjectCompatibility(10),
         generated_at: "2026-05-16T00:00:00.000Z",
         source_commit: "local",
         workflow_name: "Bench",
@@ -147,6 +160,7 @@ await fs.writeFile(artifact, `${JSON.stringify({
       winner: "tsgo",
       factor: 3,
       compatibility: {
+        ...exactProjectCompatibility(12),
         generated_at: "2026-05-16T00:00:00.000Z",
         source_commit: "local",
         workflow_name: "Bench",

@@ -10,7 +10,7 @@ import {
   PROJECT_ROW_DEFINITIONS,
   REQUIRED_PROJECT_ROWS,
 } from "./project-rows.mjs";
-import { GREEN_COMPAT, YELLOW_COMPAT, RED_COMPAT } from "./row-utils.mjs";
+import { GREEN_COMPAT, YELLOW_COMPAT, RED_COMPAT, isGreen } from "./row-utils.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -24,8 +24,9 @@ assert.ok(
 );
 
 const SAMPLE_COMPATIBILITY = {
+  ...GREEN_COMPAT,
   generated_at: "2026-05-19T01:02:03.000Z",
-  source_commit: "abcdef1234567890",
+  source_commit: "abcdef1234567890abcdef1234567890abcdef12",
   workflow_name: "Bench",
   workflow_run_id: "12345",
   workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/12345",
@@ -1240,7 +1241,12 @@ withTempDir((dir) => {
 // artifact_missing row mixed with required green rows: the artifact_missing
 // row must not count as a green win even though its winner is set.
 withTempDir((dir) => {
-  const missingRow = REQUIRED_PROJECT_ROWS[0];
+  // Required rows with a declared fixture owner are intentionally ineligible
+  // for green timing even when that owner writes no `any` members. Derive the
+  // exact baseline instead of assuming every required row is zero-stub.
+  const requiredGreenRows = REQUIRED_PROJECT_ROWS.filter((name) => isGreen(projectRow(name)));
+  assert.ok(requiredGreenRows.length > 0, "test fixture expects a green required project row");
+  const missingRow = requiredGreenRows[0];
   const rows = REQUIRED_PROJECT_ROWS.map((name) =>
     name === missingRow
       ? { name, artifact_missing: true, winner: "tsz", ratio: 1, tsz_ms: 1, tsgo_ms: 2 }
@@ -1250,7 +1256,7 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
   assert.equal(merged.totals.rows, REQUIRED_PROJECT_ROWS.length);
-  assert.equal(merged.totals.green_tsz_wins, REQUIRED_PROJECT_ROWS.length - 1, "artifact_missing row must not count as a green win");
+  assert.equal(merged.totals.green_tsz_wins, requiredGreenRows.length - 1, "artifact_missing row must not count as a green win");
 });
 
 // green_tsz_wins / green_tsgo_wins: yellow/red rows with non-green compat do not count

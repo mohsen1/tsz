@@ -30,7 +30,8 @@ Stage only files in scope.
 ## PR Body
 
 Never rely on `--fill` alone. Read `references/pr-body-checklist.md` when
-creating or materially editing a body. The `pr-body-gate` CI job enforces:
+creating or materially editing a body. This is a reviewer/future-session
+contract; there is no `pr-body-gate` CI job:
 
 ```markdown
 Goal: <green|fast|grow|hold>

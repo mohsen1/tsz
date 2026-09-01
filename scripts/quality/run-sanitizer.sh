@@ -6,7 +6,7 @@ cd "$repo_root"
 
 target="${TSZ_SANITIZER_TARGET:-x86_64-unknown-linux-gnu}"
 sanitizer="${TSZ_SANITIZER:-address}"
-package="${TSZ_SANITIZER_PACKAGE:-tsz-scanner}"
+package="${TSZ_SANITIZER_PACKAGE:-tsz-core}"
 
 case "$(uname -s)" in
   Linux) ;;

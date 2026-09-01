@@ -7,54 +7,47 @@ permalink: /compatibility/index.html
 
 # Compatibility
 
-`tsz` is close to `tsc` compatibility across diagnostics, emit, and editor behavior. The remaining work is concentrated in real-project compile readiness and the last release-gate gaps tracked below.
+The clean-slate compiler targets the pinned TypeScript `7.0.2` implementation.
+R0 is a capability gate, not a broad compatibility percentage.
 
-Currently tracking **TypeScript `{{ metrics.ts_version }}`**.
+## Current rewrite capability
 
-## Type Checking
+The exact seed oracle currently covers:
 
-The conformance suite compares `tsz` diagnostics with `tsc` on TypeScript's own compiler tests. This is the main signal for whether `tsz` agrees with `tsc` about types and errors.
+- declarations, literal inference, and `let`/`var` widening;
+- explicit annotations and assignment diagnostics;
+- function calls, argument checking, and return diagnostics;
+- object properties and a bounded union subset;
+- JavaScript emit for the seed syntax;
+- stable diagnostic output over ten runs and reversed root-file order.
 
-<div class="progress-row">
-  <span class="progress-label">Type checking</span>
-  <div class="progress-bar" aria-label="Type checking {{ metrics.conformance_rate_label }}, {{ metrics.conformance_passed }} of {{ metrics.conformance_total }}">
-    <div class="progress-fill conformance" style="width: {{ metrics.conformance_bar_rate }}%"><span>{{ metrics.conformance_rate_label }}</span></div>
-  </div>
-</div>
+Codes, spans, messages, order, exit status, and emitted bytes must match the
+TypeScript `7.0.2` oracle. Those supported seed families form the R0 floor.
 
-<p class="compat-note">{{ metrics.conformance_passed }} of {{ metrics.conformance_total }} compiler tests match <code>tsc</code>.</p>
+## Broad-suite status
 
-## Emit
+Current full-corpus conformance, JavaScript/declaration emit, fourslash, and
+project percentages are unavailable as compatibility claims. The retained
+runners may publish full-corpus observations, including failures and unsupported
+cases, but an observation does not expand the declared R0 capability surface.
 
-Emit compatibility means the generated output matches what TypeScript users expect from `tsc`. JavaScript emit and declaration emit are tracked separately because they fail for different reasons and matter to different users.
+Substantial parser recovery, project configuration, module resolution, library
+loading, classes, generics, flow analysis, advanced and recursive types,
+declaration emit, source maps, incremental services, full LSP/fourslash, and the
+real-project corpus remain unsupported.
 
-<div class="progress-row">
-  <span class="progress-label">JavaScript emit</span>
-  <div class="progress-bar" aria-label="JavaScript emit {{ metrics.emit_js_rate_label }}, {{ metrics.emit_js_passed }} of {{ metrics.emit_js_total }}{{ metrics.emit_js_extra }}">
-    <div class="progress-fill emit-js" style="width: {{ metrics.emit_js_bar_rate }}%"><span>{{ metrics.emit_js_rate_label }}</span></div>
-  </div>
-</div>
+## Frozen legacy checkpoint
 
-<div class="progress-row">
-  <span class="progress-label">Declaration emit</span>
-  <div class="progress-bar" aria-label="Declaration emit {{ metrics.emit_dts_rate_label }}, {{ metrics.emit_dts_passed }} of {{ metrics.emit_dts_total }}{{ metrics.emit_dts_extra }}">
-    <div class="progress-fill emit-dts" style="width: {{ metrics.emit_dts_bar_rate }}%"><span>{{ metrics.emit_dts_rate_label }}</span></div>
-  </div>
-</div>
+These values belong to the retired implementation at parent checkpoint
+`2770da88d4` on 2026-08-20. They are historical evidence only—not rewrite
+results and not an R0 floor.
 
-<p class="compat-note">JavaScript emit is at {{ metrics.emit_js_rate_label }}{{ metrics.emit_js_extra }}. Declaration emit is at {{ metrics.emit_dts_rate_label }}{{ metrics.emit_dts_extra }}.</p>
+| Retired suite | Frozen result |
+| --- | ---: |
+| Diagnostic conformance | 11,667 / 12,043 runnable cases (96.9%) |
+| JavaScript emit | 11,562 / 11,563 cases |
+| Declaration emit | 1,377 / 1,390 cases (99.1%) |
+| Fourslash | 6,562 / 6,562 cases |
 
-## Language Service
-
-The language-service suite checks editor-facing behavior: completions, hover, go-to-definition, diagnostics, and related workflows that developers feel in an IDE.
-
-<div class="progress-row">
-  <span class="progress-label">Editor behavior</span>
-  <div class="progress-bar" aria-label="Editor behavior {{ metrics.fourslash_rate_label }}, {{ metrics.fourslash_passed }} of {{ metrics.fourslash_total }}">
-    <div class="progress-fill fourslash" style="width: {{ metrics.fourslash_bar_rate }}%"><span>{{ metrics.fourslash_rate_label }}</span></div>
-  </div>
-</div>
-
-<p class="compat-note">{{ metrics.fourslash_passed }} of {{ metrics.fourslash_total }} editor tests match the TypeScript suite.</p>
-
-{{ project_compatibility_dashboard | safe }}
+The compatibility page will regain live percentages family by family only when
+the rewrite can evaluate the underlying domain honestly.

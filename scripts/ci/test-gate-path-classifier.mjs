@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyGatePaths, normalizePathList } from "./gate-path-classifier.mjs";
+import {
+  KNOWN_UNIT_CRATES,
+  classifyGatePaths,
+  normalizePathList,
+} from "./gate-path-classifier.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(SCRIPT_DIR, "gate-path-classifier.mjs");
@@ -12,6 +16,8 @@ const SCRIPT = path.join(SCRIPT_DIR, "gate-path-classifier.mjs");
 function classify(paths) {
   return classifyGatePaths(paths.join("\n"));
 }
+
+assert.deepEqual(KNOWN_UNIT_CRATES, ["tsz-core", "tsz-cli", "tsz-conformance"]);
 
 assert.deepEqual(normalizePathList("docs/a.md\n\ndocs/a.md\r\nREADME.md\n"), [
   "README.md",
@@ -22,9 +28,9 @@ assert.equal(classify(["docs/usage.md", "README.md", "LICENSE"]).docsOnly, true)
 assert.equal(classify(["docs/usage.md", "src/lib.rs"]).docsOnly, false);
 
 assert.equal(
-  classify(["crates/tsz-wasm/src/lib.rs"]).compilerChecksRequired,
+  classify(["crates/tsz-core/src/lib.rs"]).compilerChecksRequired,
   true,
-  "wasm crate changes must require compiler CI",
+  "active core changes must require compiler CI",
 );
 assert.equal(
   classify([".github/workflows/bench.yml"]).compilerChecksRequired,
@@ -50,7 +56,7 @@ assert.equal(classify(["docs/usage.md"]).compilerChecksRequired, false);
 }
 
 assert.equal(
-  classify(["scripts/bench/build-fixture.sh", "crates/tsz-checker/src/lib.rs"]).benchShellOnly,
+  classify(["scripts/bench/build-fixture.sh", "crates/tsz-core/src/lib.rs"]).benchShellOnly,
   false,
 );
 assert.equal(classify(["scripts/perf/collect.py", "docs/perf.md"]).perfToolOnly, true);
@@ -67,16 +73,23 @@ assert.equal(classify(["scripts/arch/guard.py", "docs/arch.md"]).archToolOnly, t
 
 {
   const result = classify([
-    "crates/tsz-solver/src/relations.rs",
-    "crates/tsz-checker/tests/checker.rs",
+    "crates/tsz-core/src/semantics/relation.rs",
+    "crates/tsz-cli/tests/process.rs",
     "docs/checker.md",
   ]);
   assert.equal(result.draftUnitNarrow.canNarrow, true);
-  assert.deepEqual(result.draftUnitNarrow.unitPackages, ["tsz-checker", "tsz-solver"]);
+  assert.deepEqual(result.draftUnitNarrow.unitPackages, ["tsz-cli", "tsz-core"]);
 }
 
 {
   const result = classify(["crates/tsz-cli/src/main.rs"]);
+  assert.equal(result.draftUnitNarrow.canNarrow, true);
+  assert.deepEqual(result.draftUnitNarrow.unitPackages, ["tsz-cli"]);
+}
+
+{
+  const result = classify(["crates/not-a-workspace-member/src/lib.rs"]);
+  assert.equal(result.compilerChecksRequired, false);
   assert.equal(result.draftUnitNarrow.canNarrow, false);
   assert.match(result.draftUnitNarrow.reason, /non-unit crate paths touched/);
 }

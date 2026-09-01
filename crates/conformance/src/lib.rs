@@ -1,13 +1,14 @@
 //! TSZ Conformance Test Runner Library
 
-pub(crate) mod batch_pool;
 pub mod cache;
 pub mod cli;
 pub mod compiler_options;
-pub(crate) mod options_convert;
-pub(crate) mod process_rss;
+pub mod corpus;
+pub mod integrity;
+pub mod jsonc;
+pub mod oracle;
 pub mod runner;
-pub(crate) mod server_pool;
+pub mod test_directives;
 pub mod test_filter;
 pub mod test_parser;
 pub mod text_decode;

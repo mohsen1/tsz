@@ -1,649 +1,137 @@
 #!/usr/bin/env python3
-"""Refresh README.md progress blocks from the latest suite artifact JSON files.
+"""Validate the clean-slate README status contract.
 
-Reads:
-  - ci-metrics/conformance.json (or scripts/conformance/conformance-detail.json)
-  - ci-metrics/emit.json (or scripts/emit/emit-detail.json)
-  - ci-metrics/fourslash.json (or scripts/fourslash/fourslash-snapshot.json)
-  - https://tsz.dev/benchmark-data/latest.json
-
-Updates the progress blocks between marker comments in README.md:
-  <!-- PERFORMANCE_START --> ... <!-- PERFORMANCE_END -->
-  <!-- CONFORMANCE_START --> ... <!-- CONFORMANCE_END -->
-  <!-- EMIT_START --> ... <!-- EMIT_END -->
-  <!-- FOURSLASH_START --> ... <!-- FOURSLASH_END -->
+The retired compiler's conformance, emit, fourslash, and benchmark artifacts
+remain useful evidence, but they must never be promoted into current rewrite
+claims. This script intentionally does not read CI metrics, benchmark snapshots,
+or the network. It only keeps the R0 status block canonical and rejects the old
+live-dashboard markers.
 
 Usage:
-  python3 scripts/refresh-readme.py                           # dry-run
-  python3 scripts/refresh-readme.py --write                   # write README.md and performance PNG
-  python3 scripts/refresh-readme.py --benchmark-json bench.json --write
+    python3 scripts/refresh-readme.py          # validate README.md
+    python3 scripts/refresh-readme.py --check  # same, explicit for CI
+    python3 scripts/refresh-readme.py --write  # repair only the R0 status block
 """
 
+from __future__ import annotations
+
 import argparse
-import functools
-import json
-import os
-import re
-import subprocess
 import sys
-import tempfile
-import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lib.query_snapshot import fourslash_bucket_counts  # noqa: E402
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
-PERFORMANCE_PNG_DIR = ROOT / "crates" / "tsz-website" / "static" / "benchmark-data"
-PERFORMANCE_PNG_LIGHT = PERFORMANCE_PNG_DIR / "readme-perf-light.png"
-PERFORMANCE_PNG_DARK = PERFORMANCE_PNG_DIR / "readme-perf-dark.png"
-PERFORMANCE_BENCHMARK_URL = "https://tsz.dev/benchmark-data/latest.json"
+STATUS_START = "<!-- R0_STATUS_START -->"
+STATUS_END = "<!-- R0_STATUS_END -->"
+LEGACY_CHECKPOINT = "2770da88d4"
+
+STATUS_BLOCK = """<!-- R0_STATUS_START -->
+> [!WARNING]
+> The rewrite is validation-only. There is no supported install, package
+> release, WASM build, or drop-in replacement yet. Build it from source only
+> when working on the compiler or its validation harnesses.
+
+The fresh vertical slice currently proves exact seed behavior for:
+
+- declarations, literal inference, and `let`/`var` widening;
+- explicit annotations and assignment diagnostics;
+- function calls, arguments, and return diagnostics;
+- object properties and a bounded union subset;
+- JavaScript emit for the seed syntax;
+- deterministic diagnostics across repeated runs and reversed root-file order.
+
+Exact seed assertions cover diagnostic codes, spans, messages, ordering, exit
+status, and emitted bytes against TypeScript `7.0.2`.
+<!-- R0_STATUS_END -->"""
+
+RETIRED_LIVE_MARKERS = (
+    "<!-- PERFORMANCE_START -->",
+    "<!-- PERFORMANCE_END -->",
+    "<!-- CONFORMANCE_START -->",
+    "<!-- CONFORMANCE_END -->",
+    "<!-- EMIT_START -->",
+    "<!-- EMIT_END -->",
+    "<!-- FOURSLASH_START -->",
+    "<!-- FOURSLASH_END -->",
+)
+
+REQUIRED_CONTEXT = (
+    "Current status: R0",
+    "TypeScript `7.0.2`",
+    "Frozen legacy checkpoint",
+    LEGACY_CHECKPOINT,
+    "11,667 / 12,043 runnable cases (96.9%)",
+    "eventual goal is exact TypeScript compatibility and at least 3x",
+    "There is no supported install, package",
+)
 
 
-def progress_bar(current, total, width=20):
-    if total == 0:
-        return "[" + "░" * width + "] 0.0%"
-    pct = current / total
-    filled = round(pct * width)
-    empty = width - filled
-    return f"[{'█' * filled}{'░' * empty}] {pct * 100:.1f}%"
+def replace_status_block(text: str) -> str:
+    """Return *text* with exactly one managed R0 block made canonical."""
+
+    if text.count(STATUS_START) != 1 or text.count(STATUS_END) != 1:
+        raise ValueError("README must contain exactly one complete R0 status block")
+    start = text.index(STATUS_START)
+    end = text.index(STATUS_END, start) + len(STATUS_END)
+    return f"{text[:start]}{STATUS_BLOCK}{text[end:]}"
 
 
-def load_metric_json(path):
-    with open(path) as f:
-        return json.load(f)
+def validation_errors(text: str) -> list[str]:
+    """Report ways the README could misrepresent retired results as current."""
 
-
-@functools.lru_cache(maxsize=1)
-def current_head_sha():
-    """Return the repo's current ``HEAD`` SHA, or ``None`` when unavailable.
-
-    Used to decide whether a suite artifact describes the tree the README is
-    being refreshed for. Any failure (not a git checkout, git missing, a
-    detached or unborn ``HEAD``) degrades to ``None`` so the caller keeps the
-    magnitude-based staleness guard rather than crashing the refresh. Cached
-    because ``HEAD`` cannot move within one refresh and both suite loaders ask.
-    """
+    errors: list[str] = []
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    sha = result.stdout.strip()
-    return sha or None
+        if replace_status_block(text) != text:
+            errors.append("the managed R0 status block is not canonical")
+    except ValueError as exc:
+        errors.append(str(exc))
+
+    for marker in RETIRED_LIVE_MARKERS:
+        if marker in text:
+            errors.append(f"retired live-dashboard marker remains: {marker}")
+
+    for required in REQUIRED_CONTEXT:
+        if required not in text:
+            errors.append(f"required rewrite context is missing: {required!r}")
+
+    return errors
 
 
-def artifact_sha(data):
-    """Return the git SHA a suite artifact recorded for its measured tree.
-
-    Suite snapshots stamp the commit they measured under ``git_sha``.
-    ``conformance.sh`` writes the literal ``"unknown"`` when ``git rev-parse``
-    fails during a snapshot; that is not a tree identity, so it is treated as
-    absent. Returns ``None`` when the artifact does not self-identify its tree.
-    """
-    if not isinstance(data, dict):
-        return None
-    sha = data.get("git_sha")
-    if not isinstance(sha, str):
-        return None
-    sha = sha.strip()
-    if not sha or sha.lower() == "unknown":
-        return None
-    return sha
-
-
-def artifact_describes_current_tree(data, head_sha):
-    """True when ``data`` was measured against the repo's current ``HEAD``.
-
-    Zero drift is the one case where a *lower* number is known to be a current
-    reading rather than a stale local artifact left over from an older tree, so
-    the monotonic publish guard must yield to it and let a genuine regression
-    surface. The comparison is prefix-tolerant so an abbreviated recorded
-    ``git_sha`` still matches a full 40-char ``HEAD``; fewer than 7 shared
-    characters is too little to trust as a commit identity.
-    """
-    recorded = artifact_sha(data)
-    if recorded is None or not head_sha:
-        return False
-    shared = min(len(recorded), len(head_sha))
-    if shared < 7:
-        return False
-    return recorded[:shared] == head_sha[:shared]
-
-
-def resolve_published_summary(
-    summary, readme_summary, data, path, *, is_ahead, suite_label
-):
-    """Pick between a freshly measured artifact summary and the README's block.
-
-    A local suite artifact may be stale, so the default is to keep the README's
-    higher block when it is ``is_ahead``. But when the artifact records the
-    current ``HEAD`` it is a *current* reading -- not a stale leftover -- and is
-    published even downward so a genuine regression, or a flaky run the monotonic
-    guard would otherwise ratchet in permanently, can surface. ``is_ahead`` is
-    the suite's magnitude guard; ``suite_label`` names the suite in the stderr
-    note/warning.
-    """
-    rel = path.relative_to(ROOT)
-    if artifact_describes_current_tree(data, current_head_sha()):
-        if is_ahead(summary, readme_summary):
-            print(
-                f"note: publishing {suite_label} metrics from {rel} even though "
-                "they are below the existing README block, because the artifact "
-                "records the current HEAD (zero drift -- a current reading, not a "
-                "stale artifact)",
-                file=sys.stderr,
-            )
-        return summary
-    if is_ahead(summary, readme_summary):
-        print(
-            f"warning: preserving README {suite_label} metrics because {rel} is "
-            f"behind the existing README {suite_label} block and does not record "
-            "the current HEAD",
-            file=sys.stderr,
-        )
-        return readme_summary
-    return summary
-
-
-def normalize_suite_summary(data, suite):
-    summary = data.get("summary")
-    if summary:
-        if suite == "conformance":
-            runnable = summary.get(
-                "runnable",
-                summary.get("total", summary.get("total_tests")),
-            )
-            unsupported = summary.get("unsupported", 0)
-            skipped = summary.get("skipped", 0)
-            candidates = summary.get("candidates")
-            return {
-                "passed": summary.get("passed"),
-                "total": runnable,
-                "runnable": runnable,
-                "candidates": candidates,
-                "unsupported": unsupported,
-                "skipped": skipped,
-            }
-        return {
-            "passed": summary.get("passed"),
-            "total": summary.get("total", summary.get("total_tests")),
-        }
-
-    if suite == "fourslash" and isinstance(data.get("pass"), list):
-        # Summary-less snapshot: count from the buckets. Slow counts as passing
-        # (keeping it out made the published figure move with machine load,
-        # issue #17010); the taxonomy lives in lib.query_snapshot.
-        passed, total = fourslash_bucket_counts(data)
-        return {"passed": passed, "total": total}
-
-    if data.get("suite") != suite:
-        return None
-
-    if suite == "conformance":
-        runnable = data.get("runnable", data.get("total"))
-        return {
-            "passed": data.get("passed"),
-            "total": runnable,
-            "runnable": runnable,
-            "candidates": data.get("candidates"),
-            "unsupported": data.get("unsupported", 0),
-            "skipped": data.get("skipped", 0),
-        }
-
-    return {
-        "passed": data.get("passed"),
-        "total": data.get("total"),
-    }
-
-
-def suite_metric_candidates(explicit_path, default_paths):
-    candidates = []
-    if explicit_path is not None:
-        path = explicit_path
-        if not path.is_absolute():
-            path = ROOT / path
-        candidates.append(path)
-    candidates.extend(default_paths)
-    return candidates
-
-
-def load_suite_counts(suite, explicit_path, default_paths):
-    for p in suite_metric_candidates(explicit_path, default_paths):
-        if not p.exists():
-            continue
-        summary = normalize_suite_summary(load_metric_json(p), suite)
-        if summary is None:
-            continue
-        passed = summary.get("passed")
-        total = summary.get("total")
-        if passed is not None and total is not None:
-            return passed, total
-    return None, None
-
-
-def conformance_summary_from_readme(text):
-    section = text.split("<!-- CONFORMANCE_START -->", 1)
-    if len(section) != 2:
-        return None
-    section = section[1].split("<!-- CONFORMANCE_END -->", 1)[0]
-    match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", section)
-    if not match:
-        return None
-    summary = {
-        "passed": int(match.group(1).replace(",", "")),
-        "total": int(match.group(2).replace(",", "")),
-    }
-    summary["runnable"] = summary["total"]
-    partition = re.search(
-        r"Candidates:\s*([\d,]+)\s*\(([\d,]+) runnable,\s*"
-        r"([\d,]+) unsupported,\s*([\d,]+) skipped\)",
-        section,
-    )
-    if partition:
-        summary.update(
-            {
-                "candidates": int(partition.group(1).replace(",", "")),
-                "runnable": int(partition.group(2).replace(",", "")),
-                "total": int(partition.group(2).replace(",", "")),
-                "unsupported": int(partition.group(3).replace(",", "")),
-                "skipped": int(partition.group(4).replace(",", "")),
-            }
-        )
-    return summary
-
-
-def readme_suite_summary_is_ahead(candidate, readme_summary):
-    if readme_summary is None:
-        return False
-    candidate_domain = candidate.get("candidates")
-    readme_domain = readme_summary.get("candidates")
-    if candidate_domain is not None:
-        # An old README has no candidate-domain evidence and must not override
-        # a partition-aware artifact merely because its runnable total is larger.
-        if readme_domain is None:
-            return False
-        if readme_domain != candidate_domain:
-            return readme_domain > candidate_domain
-    if readme_summary.get("total", 0) > candidate.get("total", 0):
-        return True
-    return (
-        readme_summary.get("total") == candidate.get("total")
-        and readme_summary.get("passed", 0) >= candidate.get("passed", 0)
-    )
-
-
-def load_conformance(args, readme_text):
-    readme_summary = conformance_summary_from_readme(readme_text)
-    explicit_path = args.conformance_metrics_json
-    default_paths = [
-        ROOT / "ci-metrics" / "conformance.json",
-        ROOT / "scripts" / "conformance" / "conformance-snapshot.json",
-        ROOT / "scripts" / "conformance" / "conformance-detail.json",
-    ]
-    for p in suite_metric_candidates(explicit_path, default_paths):
-        if not p.exists():
-            continue
-        data = load_metric_json(p)
-        summary = normalize_suite_summary(data, "conformance")
-        if summary is None:
-            continue
-        if summary.get("passed") is None or summary.get("total") is None:
-            continue
-        if explicit_path is None and p in default_paths[1:]:
-            return resolve_published_summary(
-                summary, readme_summary, data, p,
-                is_ahead=readme_suite_summary_is_ahead,
-                suite_label="conformance",
-            )
-        return summary
-    return None
-
-
-def normalize_emit_summary(data):
-    summary = data.get("summary")
-    if summary:
-        return summary
-
-    if data.get("suite") != "emit":
-        return None
-
-    return {
-        "jsPass": data.get("js_passed"),
-        "jsTotal": data.get("js_total"),
-        "jsSkip": data.get("js_skipped", 0),
-        "jsTimeout": data.get("js_timeouts", 0),
-        "dtsPass": data.get("dts_passed"),
-        "dtsTotal": data.get("dts_total"),
-        "dtsSkip": data.get("dts_skipped", 0),
-    }
-
-
-def emit_summary_from_readme(text):
-    section = text.split("<!-- EMIT_START -->", 1)
-    if len(section) != 2:
-        return None
-    section = section[1].split("<!-- EMIT_END -->", 1)[0]
-
-    summary = {}
-    for line in section.splitlines():
-        if "JavaScript" in line:
-            prefix = "js"
-        elif "Declaration" in line:
-            prefix = "dts"
-        else:
-            continue
-
-        match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", line)
-        if not match:
-            continue
-        summary[f"{prefix}Pass"] = int(match.group(1).replace(",", ""))
-        summary[f"{prefix}Total"] = int(match.group(2).replace(",", ""))
-
-    if {"jsPass", "jsTotal", "dtsPass", "dtsTotal"}.issubset(summary):
-        summary.setdefault("jsSkip", 0)
-        summary.setdefault("jsTimeout", 0)
-        summary.setdefault("dtsSkip", 0)
-        return summary
-    return None
-
-
-def readme_emit_summary_is_ahead(candidate, readme_summary):
-    if readme_summary is None:
-        return False
-
-    same_domain = (
-        readme_summary.get("jsTotal") == candidate.get("jsTotal")
-        and readme_summary.get("dtsTotal") == candidate.get("dtsTotal")
-    )
-    ahead_or_equal = (
-        readme_summary.get("jsPass", 0) >= candidate.get("jsPass", 0)
-        and readme_summary.get("dtsPass", 0) >= candidate.get("dtsPass", 0)
-    )
-    return same_domain and ahead_or_equal
-
-
-def load_emit(args, readme_text):
-    readme_summary = emit_summary_from_readme(readme_text)
-    candidates = []
-    if args.emit_metrics_json is not None:
-        path = args.emit_metrics_json
-        if not path.is_absolute():
-            path = ROOT / path
-        candidates.append(path)
-    candidates.extend([
-        ROOT / "ci-metrics" / "emit.json",
-        ROOT / "scripts" / "emit" / "emit-detail.json",
-    ])
-
-    for p in candidates:
-        if not p.exists():
-            continue
-        with open(p) as f:
-            data = json.load(f)
-        summary = normalize_emit_summary(data)
-        if summary is not None:
-            if args.emit_metrics_json is None and p == ROOT / "scripts" / "emit" / "emit-detail.json":
-                return resolve_published_summary(
-                    summary, readme_summary, data, p,
-                    is_ahead=readme_emit_summary_is_ahead,
-                    suite_label="emit",
-                )
-            return summary
-    return None
-
-
-def load_fourslash(args):
-    passed, total = load_suite_counts(
-        "fourslash",
-        args.fourslash_metrics_json,
-        [
-            ROOT / "ci-metrics" / "fourslash.json",
-            ROOT / "scripts" / "fourslash" / "fourslash-snapshot.json",
-        ],
-    )
-    if passed is None or total is None:
-        return None
-    return {"passed": passed, "total": total}
-
-
-def replace_block(text, start_marker, end_marker, new_content):
-    start_idx = text.find(start_marker)
-    end_idx = text.find(end_marker)
-    if start_idx == -1 or end_idx == -1:
-        return text
-    after_start = start_idx + len(start_marker)
-    return text[:after_start] + "\n" + new_content + "\n" + text[end_idx:]
-
-
-def performance_block():
-    return (
-        '<p align="left">\n'
-        '  <a href="https://tsz.dev/benchmarks/">\n'
-        '    <picture>\n'
-        '      <source media="(prefers-color-scheme: dark)" '
-        'srcset="crates/tsz-website/static/benchmark-data/readme-perf-dark.png">\n'
-        '      <source media="(prefers-color-scheme: light)" '
-        'srcset="crates/tsz-website/static/benchmark-data/readme-perf-light.png">\n'
-        '      <img src="crates/tsz-website/static/benchmark-data/readme-perf-light.png" '
-        'alt="Latest tsz vs tsgo benchmark performance" width="760">\n'
-        '    </picture>\n'
-        '  </a>\n'
-        '</p>'
-    )
-
-
-def parse_args():
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Refresh generated README.md blocks and benchmark chart assets.",
+        description="Validate or repair the README's clean-slate R0 status block.",
     )
-    parser.add_argument("--write", action="store_true", help="write README.md and generated assets")
-    parser.add_argument(
-        "--benchmark-json",
-        type=Path,
-        help="use a local benchmark artifact instead of fetching the published latest.json",
-    )
-    parser.add_argument(
-        "--benchmark-url",
-        default=PERFORMANCE_BENCHMARK_URL,
-        help="published benchmark artifact URL used for the README performance chart",
-    )
-    parser.add_argument(
-        "--skip-performance",
-        action="store_true",
-        help="skip the README performance chart block and PNG generation",
-    )
-    parser.add_argument(
-        "--emit-metrics-json",
-        type=Path,
-        help="use a local emit metrics artifact instead of the default ci-metrics/emit.json",
-    )
-    parser.add_argument(
-        "--conformance-metrics-json",
-        type=Path,
-        help="use a local conformance metrics artifact instead of the default ci-metrics/conformance.json",
-    )
-    parser.add_argument(
-        "--fourslash-metrics-json",
-        type=Path,
-        help="use a local fourslash metrics artifact instead of the default ci-metrics/fourslash.json",
-    )
-    return parser.parse_args()
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="validate without writing (default)")
+    mode.add_argument("--write", action="store_true", help="repair the managed R0 block, then validate")
+    return parser.parse_args(argv)
 
 
-def load_benchmark_json(args):
-    if args.skip_performance:
-        return None, None
-    if args.benchmark_json is not None:
-        path = args.benchmark_json
-        if not path.is_absolute():
-            path = ROOT / path
-        if not path.exists():
-            print(
-                f"warning: skipping README performance chart because the "
-                f"benchmark artifact was not found: {path} (re-run the "
-                "benchmark, e.g. scripts/bench/bench-vs-tsgo.sh --json)",
-                file=sys.stderr,
-            )
-            return None, None
-        return path, None
-
-    try:
-        request = urllib.request.Request(
-            args.benchmark_url,
-            headers={"User-Agent": "tsz-refresh-readme/1.0"},
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = response.read()
-    except Exception as exc:
-        print(
-            f"Warning: unable to fetch benchmark artifact from {args.benchmark_url}: {exc}",
-            file=sys.stderr,
-        )
-        return None, None
-
-    temp = tempfile.NamedTemporaryFile(
-        prefix="tsz-readme-benchmark-",
-        suffix=".json",
-        delete=False,
-    )
-    try:
-        temp.write(data)
-        return Path(temp.name), Path(temp.name)
-    finally:
-        temp.close()
-
-
-def write_performance_png(benchmark_json):
-    PERFORMANCE_PNG_DIR.mkdir(parents=True, exist_ok=True)
-    for output, theme in [
-        (PERFORMANCE_PNG_LIGHT, "light"),
-        (PERFORMANCE_PNG_DARK, "dark"),
-    ]:
-        if not benchmark_json.exists():
-            # The artifact can be deleted concurrently between this check and
-            # load_benchmark_json's own check (e.g. a concurrent clean.sh run).
-            # Only this specific race is safe to downgrade to a warning below;
-            # any other subprocess failure (e.g. a missing `sharp` dependency)
-            # must keep failing loudly.
-            raise FileNotFoundError(benchmark_json)
-        subprocess.run(
-            [
-                "node",
-                str(ROOT / "scripts" / "bench" / "readme-perf-svg.mjs"),
-                "--theme",
-                theme,
-                str(benchmark_json),
-                str(output),
-            ],
-            cwd=ROOT,
-            env={**os.environ, "TSZ_README_PERF_REQUIRE_SHARP": "1"},
-            check=True,
-        )
-
-
-def main():
-    args = parse_args()
-    write = args.write
-
-    if not README.exists():
-        print(f"Error: {README} not found")
-        sys.exit(1)
-
-    benchmark_json, temp_benchmark_json = load_benchmark_json(args)
-
-    original = README.read_text()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    original = README.read_text(encoding="utf-8")
     text = original
 
-    # Performance
-    if benchmark_json is not None:
-        text = replace_block(
-            text,
-            "<!-- PERFORMANCE_START -->",
-            "<!-- PERFORMANCE_END -->",
-            performance_block(),
-        )
+    if args.write:
+        try:
+            text = replace_status_block(text)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if text != original:
+            README.write_text(text, encoding="utf-8")
+            print("updated README.md R0 status block")
 
-    # Conformance
-    conformance = load_conformance(args, original)
-    if conformance is not None:
-        passed = conformance["passed"]
-        total = conformance["runnable"]
-        bar = progress_bar(passed, total)
-        if conformance.get("candidates") is None:
-            block = f"```\nProgress: {bar} ({passed:,}/{total:,} tests)\n```"
-        else:
-            block = (
-                f"```\nProgress: {bar} ({passed:,}/{total:,} runnable tests)\n"
-                f"Candidates: {conformance['candidates']:,} "
-                f"({total:,} runnable, {conformance['unsupported']:,} unsupported, "
-                f"{conformance['skipped']:,} skipped)\n```"
-            )
-        text = replace_block(text, "<!-- CONFORMANCE_START -->", "<!-- CONFORMANCE_END -->", block)
+    errors = validation_errors(text)
+    if errors:
+        for error in errors:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
 
-    # Emit
-    emit = load_emit(args, original)
-    if emit is not None:
-        js_bar = progress_bar(emit["jsPass"], emit["jsTotal"])
-        dts_bar = progress_bar(emit["dtsPass"], emit["dtsTotal"])
-        block = (
-            f"```\n"
-            f"JavaScript:  {js_bar} ({emit['jsPass']:,} / {emit['jsTotal']:,} tests)\n"
-            f"Declaration: {dts_bar} ({emit['dtsPass']:,} / {emit['dtsTotal']:,} tests)\n"
-            f"```"
-        )
-        text = replace_block(text, "<!-- EMIT_START -->", "<!-- EMIT_END -->", block)
-
-    # Fourslash
-    fs = load_fourslash(args)
-    if fs is not None:
-        bar = progress_bar(fs["passed"], fs["total"])
-        block = f"```\nProgress: {bar} ({fs['passed']:,} / {fs['total']:,} tests)\n```"
-        text = replace_block(text, "<!-- FOURSLASH_START -->", "<!-- FOURSLASH_END -->", block)
-
-    try:
-        if text == original and not (write and benchmark_json is not None):
-            print("README.md is already up to date (or no artifact files found).")
-            return
-
-        if write:
-            if benchmark_json is not None:
-                try:
-                    write_performance_png(benchmark_json)
-                    print(f"{PERFORMANCE_PNG_LIGHT.relative_to(ROOT)} updated.")
-                    print(f"{PERFORMANCE_PNG_DARK.relative_to(ROOT)} updated.")
-                except FileNotFoundError as exc:
-                    print(
-                        "warning: skipping README performance chart because the "
-                        f"benchmark artifact vanished before it could be read: {exc}",
-                        file=sys.stderr,
-                    )
-            if text != original:
-                README.write_text(text)
-                print("README.md updated.")
-            elif benchmark_json is None:
-                print("README.md is already up to date (or no artifact files found).")
-        else:
-            # Show what would change
-            import difflib
-            diff = difflib.unified_diff(
-                original.splitlines(keepends=True),
-                text.splitlines(keepends=True),
-                fromfile="README.md (before)",
-                tofile="README.md (after)",
-            )
-            sys.stdout.writelines(diff)
-            print("\nDry run. Pass --write to apply changes.")
-    finally:
-        if temp_benchmark_json is not None:
-            temp_benchmark_json.unlink(missing_ok=True)
+    print("README.md clean-slate status contract is current")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

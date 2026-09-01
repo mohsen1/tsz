@@ -16,6 +16,7 @@ from lib.results import (
     compute_diff,
     normalize_harness_path,
     parse_runner_output,
+    require_complete_runner_summary,
     summarize_runner_output,
 )
 
@@ -280,11 +281,15 @@ class TestSummarizeRunnerOutput(unittest.TestCase):
             "Runnable: 2\n"
             "Unsupported: 1\n"
             "Skipped: 1\n"
+            "Known failures: 0\n"
+            "Crashed: 0\n"
+            "Timeout: 0\n"
             "FINAL RESULTS: 1/2 passed (50.0%)\n"
         )
         tmp = _write_tmp(content)
         try:
             summary = summarize_runner_output(tmp)
+            validated = require_complete_runner_summary(tmp)
         finally:
             os.unlink(tmp)
 
@@ -295,6 +300,7 @@ class TestSummarizeRunnerOutput(unittest.TestCase):
         self.assertEqual(summary["recorded_candidates"], 4)
         self.assertEqual(summary["recorded_runnable"], 2)
         self.assertTrue(summary["partition_valid"])
+        self.assertEqual(validated["passed"], 1)
 
     def test_legacy_output_derives_candidate_partition(self):
         content = (
@@ -313,6 +319,55 @@ class TestSummarizeRunnerOutput(unittest.TestCase):
         self.assertEqual(summary["runnable"], 1)
         self.assertEqual(summary["skipped"], 1)
         self.assertTrue(summary["partition_valid"])
+
+    def test_complete_validator_rejects_duplicate_identity(self):
+        content = (
+            "PASS same.ts\nPASS same.ts\n"
+            "Candidates: 2\nRunnable: 2\nUnsupported: 0\nSkipped: 0\n"
+            "Known failures: 0\nCrashed: 0\nTimeout: 0\n"
+            "FINAL RESULTS: 2/2 passed (100.0%)\n"
+        )
+        tmp = _write_tmp(content)
+        try:
+            with self.assertRaisesRegex(ValueError, "repeats terminal identities"):
+                require_complete_runner_summary(tmp)
+        finally:
+            os.unlink(tmp)
+
+    def test_complete_validator_rejects_status_arithmetic_mismatch(self):
+        content = (
+            "PASS pass.ts\nCRASH crash.ts\n"
+            "Candidates: 2\nRunnable: 2\nUnsupported: 0\nSkipped: 0\n"
+            "Known failures: 0\nCrashed: 0\nTimeout: 0\n"
+            "FINAL RESULTS: 1/2 passed (50.0%)\n"
+        )
+        tmp = _write_tmp(content)
+        try:
+            with self.assertRaisesRegex(ValueError, "crashed identities"):
+                require_complete_runner_summary(tmp)
+        finally:
+            os.unlink(tmp)
+
+    def test_complete_validator_rejects_panic_and_signal_statuses_on_red_suite(self):
+        content = (
+            "FAIL fail.ts\n"
+            "  expected: [TS2322]\n"
+            "  actual: []\n"
+            "Candidates: 1\nRunnable: 1\nUnsupported: 0\nSkipped: 0\n"
+            "Known failures: 0\nCrashed: 0\nTimeout: 0\n"
+            "FINAL RESULTS: 0/1 passed (0.0%)\n"
+        )
+        tmp = _write_tmp(content)
+        try:
+            self.assertEqual(
+                require_complete_runner_summary(tmp, runner_status=1)["runner_status"],
+                1,
+            )
+            for status in (101, 137):
+                with self.assertRaisesRegex(ValueError, "exactly 1"):
+                    require_complete_runner_summary(tmp, runner_status=status)
+        finally:
+            os.unlink(tmp)
 
 
 class TestAnalyzeConformancePattern(unittest.TestCase):

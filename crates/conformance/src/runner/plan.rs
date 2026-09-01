@@ -1,12 +1,10 @@
 use crate::cli::{Args, ShardStrategy};
 use crate::test_filter::{is_conformance_source_file, matches_path_filter};
-use crate::test_parser::{
-    parse_test_file, select_ts7_oracle_configurations, should_skip_test_at_path,
-};
+use crate::test_parser::{parse_test_file, test_disposition_at_path, TestDisposition};
 use crate::text_decode::{decode_source_text, DecodedSourceText};
 use anyhow::Context;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -258,20 +256,21 @@ pub(crate) fn parse_shard_spec(spec: Option<&str>) -> anyhow::Result<Option<(usi
 // a test from the partition, because dropping skipped or unsupported members
 // would shift the weighted bin-packing of the remaining tests.
 fn discover_candidate_tests(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
+    let mut files = discover_all_candidate_tests(&args.test_dir)?;
+    files.retain(|path| matches_path_filter(path, args.filter.as_deref()));
+    Ok(files)
+}
+
+fn discover_all_candidate_tests(test_dir: &str) -> anyhow::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(&args.test_dir)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-    {
+    for entry in WalkDir::new(test_dir).follow_links(true) {
+        let entry =
+            entry.with_context(|| format!("failed to walk conformance corpus {test_dir}"))?;
         let path = entry.path();
         if path.is_dir() || is_appledouble_file(path) {
             continue;
         }
         if !is_conformance_source_file(path) {
-            continue;
-        }
-        if !matches_path_filter(path, args.filter.as_deref()) {
             continue;
         }
         files.push(path.to_path_buf());
@@ -282,9 +281,8 @@ fn discover_candidate_tests(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
 }
 
 fn plan_path_disposition(path: &Path) -> anyhow::Result<PlanDisposition> {
-    let Ok(bytes) = std::fs::read(path) else {
-        return Ok(PlanDisposition::Runnable);
-    };
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read conformance candidate {}", path.display()))?;
     let content = match decode_source_text(&bytes) {
         DecodedSourceText::Text(content) | DecodedSourceText::TextWithOriginalBytes(content, _) => {
             content
@@ -293,15 +291,147 @@ fn plan_path_disposition(path: &Path) -> anyhow::Result<PlanDisposition> {
     };
     let parsed = parse_test_file(&content)
         .with_context(|| format!("failed to parse test directives in {}", path.display()))?;
-    let Some(reason) = should_skip_test_at_path(path, &parsed.directives) else {
-        return Ok(PlanDisposition::Runnable);
-    };
-    if reason == "unsupported by TypeScript 7"
-        && select_ts7_oracle_configurations(&parsed.directives).is_err()
-    {
-        return Ok(PlanDisposition::Unsupported);
+    match test_disposition_at_path(path, &parsed.directives) {
+        TestDisposition::Runnable => Ok(PlanDisposition::Runnable),
+        TestDisposition::Unsupported(_) => Ok(PlanDisposition::Unsupported),
+        TestDisposition::Skipped(_) => Ok(PlanDisposition::Skipped),
     }
-    Ok(PlanDisposition::Skipped)
+}
+
+fn disposition_identity(path: &Path) -> anyhow::Result<String> {
+    let bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read conformance candidate {}", path.display()))?;
+    let content = match decode_source_text(&bytes) {
+        DecodedSourceText::Text(content) | DecodedSourceText::TextWithOriginalBytes(content, _) => {
+            content
+        }
+        DecodedSourceText::Binary(_) => return Ok("runnable".to_string()),
+    };
+    let parsed = parse_test_file(&content)
+        .with_context(|| format!("failed to parse test directives in {}", path.display()))?;
+    match test_disposition_at_path(path, &parsed.directives) {
+        TestDisposition::Runnable => Ok("runnable".to_string()),
+        TestDisposition::Unsupported(reason) => Ok(format!("unsupported:{}", reason.code())),
+        TestDisposition::Skipped(reason) => Ok(format!("skipped:{reason}")),
+    }
+}
+
+/// Bind live corpus discovery and selector classification exactly to the
+/// cache/domain pair before applying any invocation subset.
+pub(crate) fn validate_live_domain(
+    args: &Args,
+    cache: &crate::cache::TscCache,
+    domain: &crate::cache::ConformanceDomain,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    if domain.schema_version != 2
+        || !crate::integrity::is_lower_hex(&domain.corpus_commit, 40)
+        || !crate::integrity::is_lower_hex(&domain.corpus_tree, 40)
+        || !crate::integrity::is_lower_hex(&domain.candidate_content_sha256, 64)
+    {
+        anyhow::bail!("cache/domain identity schema is incomplete");
+    }
+    let cache_paths = cache
+        .keys()
+        .map(|path| path.replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    let unsupported_paths = domain
+        .unsupported
+        .keys()
+        .map(|path| path.replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    let skipped_paths = domain
+        .skipped
+        .keys()
+        .map(|path| path.replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    if cache_paths.len() != cache.len()
+        || unsupported_paths.len() != domain.unsupported.len()
+        || skipped_paths.len() != domain.skipped.len()
+    {
+        anyhow::bail!("cache/domain contains duplicate normalized paths");
+    }
+    if !cache_paths.is_disjoint(&unsupported_paths)
+        || !cache_paths.is_disjoint(&skipped_paths)
+        || !unsupported_paths.is_disjoint(&skipped_paths)
+    {
+        anyhow::bail!("cache/domain path classifications overlap");
+    }
+
+    let mut expected = BTreeMap::new();
+    for path in cache.keys() {
+        expected.insert(path.replace('\\', "/"), "runnable".to_string());
+    }
+    for (path, reason) in &domain.unsupported {
+        expected.insert(path.replace('\\', "/"), format!("unsupported:{reason}"));
+    }
+    for (path, reason) in &domain.skipped {
+        expected.insert(path.replace('\\', "/"), format!("skipped:{reason}"));
+    }
+
+    let declared_partition_count = domain
+        .runnable_count
+        .checked_add(domain.unsupported_count)
+        .and_then(|count| count.checked_add(domain.skipped_count));
+    if domain.runnable_count != cache.len()
+        || domain.unsupported_count != domain.unsupported.len()
+        || domain.skipped_count != domain.skipped.len()
+        || declared_partition_count != Some(domain.candidate_count)
+        || domain.candidate_count != expected.len()
+    {
+        anyhow::bail!("cache/domain declared partition counts are inconsistent");
+    }
+    if cache.values().any(|entry| {
+        entry.metadata.typescript_version.as_deref() != Some(domain.typescript_version.as_str())
+    }) {
+        anyhow::bail!("cache/domain TypeScript version identity is inconsistent");
+    }
+
+    let test_dir = Path::new(&args.test_dir);
+    let mut live = BTreeMap::new();
+    let mut source_hashes = BTreeMap::new();
+    let mut content_records = Vec::new();
+    for path in discover_all_candidate_tests(&args.test_dir)? {
+        let key = crate::cache::cache_key(&path, test_dir)
+            .with_context(|| format!("candidate escaped test root: {}", path.display()))?
+            .replace('\\', "/");
+        let disposition = disposition_identity(&path)?;
+        let source_sha256 = crate::integrity::sha256_bytes(
+            &std::fs::read(&path)
+                .with_context(|| format!("failed to hash candidate {}", path.display()))?,
+        );
+        if disposition == "runnable" {
+            let cached = cache
+                .get(&key)
+                .with_context(|| format!("runnable candidate has no cache row: {key}"))?;
+            if cached.metadata.source_sha256 != source_sha256 {
+                anyhow::bail!("runnable candidate source hash differs from cache: {key}");
+            }
+        }
+        if live.insert(key.clone(), disposition.clone()).is_some() {
+            anyhow::bail!("live conformance corpus contains duplicate path identity {key}");
+        }
+        source_hashes.insert(key.clone(), source_sha256.clone());
+        content_records.push((key, disposition, source_sha256));
+    }
+    if live != expected {
+        let first = live
+            .iter()
+            .find(|(path, identity)| expected.get(*path) != Some(*identity))
+            .map(|(path, identity)| format!("live {path}={identity}"))
+            .or_else(|| {
+                expected
+                    .keys()
+                    .find(|path| !live.contains_key(*path))
+                    .map(|path| format!("missing live {path}"))
+            })
+            .unwrap_or_else(|| "classification mismatch".to_string());
+        anyhow::bail!("live conformance domain differs from cache/domain: {first}");
+    }
+    let live_content_sha256 = crate::integrity::candidate_content_sha256(&content_records);
+    if live_content_sha256 != domain.candidate_content_sha256 {
+        anyhow::bail!("live conformance candidate bytes differ from cache/domain");
+    }
+    Ok(source_hashes)
 }
 
 fn load_baseline_passes(path: &Path) -> anyhow::Result<HashSet<String>> {
@@ -367,6 +497,116 @@ mod tests {
         std::fs::write(path, content).expect("test file should be written");
     }
 
+    fn cache_result(source: &[u8]) -> crate::tsc_results::TscResult {
+        crate::tsc_results::TscResult {
+            metadata: crate::tsc_results::FileMetadata {
+                mtime_ms: 0,
+                size: 0,
+                typescript_version: Some("7.0.2".to_string()),
+                source_sha256: crate::integrity::sha256_bytes(source),
+            },
+            error_codes: Vec::new(),
+            diagnostic_fingerprints: Vec::new(),
+            diagnostic_blocks_complete: true,
+            ordinary_exit_statuses: vec![0],
+        }
+    }
+
+    #[test]
+    fn live_domain_requires_exact_paths_and_classifications() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cases = temp.path().join("cases");
+        write(&cases.join("compiler/run.ts"), "let value = 1;\n");
+        write(&cases.join("compiler/skip.ts"), "// @skip: tracked\n");
+        write(
+            &cases.join("compiler/unsupported.ts"),
+            "// @target: es5\nlet value = 1;\n",
+        );
+        write(
+            &cases.join("compiler/trace.ts"),
+            "// @traceResolution: true\nimport 'pkg';\n",
+        );
+        let args = parse_args(&[
+            "tsz-conformance",
+            "--test-dir",
+            cases.to_str().expect("utf8 path"),
+        ]);
+        let run_path = cases.join("compiler/run.ts");
+        let cache = crate::cache::TscCache::from([(
+            "compiler/run.ts".to_string(),
+            cache_result(&std::fs::read(&run_path).expect("run source")),
+        )]);
+        let skip_path = cases.join("compiler/skip.ts");
+        let unsupported_path = cases.join("compiler/unsupported.ts");
+        let trace_path = cases.join("compiler/trace.ts");
+        let records = [
+            (&run_path, "compiler/run.ts"),
+            (&skip_path, "compiler/skip.ts"),
+            (&unsupported_path, "compiler/unsupported.ts"),
+            (&trace_path, "compiler/trace.ts"),
+        ]
+        .into_iter()
+        .map(|(path, key)| {
+            let bytes = std::fs::read(path).expect("candidate source");
+            (
+                key.to_string(),
+                disposition_identity(path).expect("disposition"),
+                crate::integrity::sha256_bytes(&bytes),
+            )
+        })
+        .collect::<Vec<_>>();
+        let mut domain = crate::cache::ConformanceDomain {
+            schema_version: 2,
+            typescript_version: "7.0.2".to_string(),
+            corpus_commit: "0".repeat(40),
+            corpus_tree: "1".repeat(40),
+            candidate_content_sha256: crate::integrity::candidate_content_sha256(&records),
+            oracle: serde_json::json!({}),
+            candidate_count: 4,
+            runnable_count: 1,
+            unsupported_count: 2,
+            skipped_count: 1,
+            unsupported: BTreeMap::from([
+                (
+                    "compiler/unsupported.ts".to_string(),
+                    crate::tsc_results::UnsupportedReason::TypeScript7Configuration
+                        .code()
+                        .to_string(),
+                ),
+                (
+                    "compiler/trace.ts".to_string(),
+                    crate::tsc_results::UnsupportedReason::TraceResolutionOutputNotCompared
+                        .code()
+                        .to_string(),
+                ),
+            ]),
+            skipped: BTreeMap::from([("compiler/skip.ts".to_string(), "@skip".to_string())]),
+        };
+
+        validate_live_domain(&args, &cache, &domain).expect("exact live domain");
+        domain
+            .skipped
+            .insert("compiler/run.ts".to_string(), "overlap".to_string());
+        domain.skipped_count += 1;
+        domain.candidate_count += 1;
+        assert!(validate_live_domain(&args, &cache, &domain).is_err());
+        domain.skipped.remove("compiler/run.ts");
+        domain.skipped_count -= 1;
+        domain.candidate_count -= 1;
+        domain
+            .skipped
+            .insert("compiler/skip.ts".to_string(), "different".to_string());
+        assert!(validate_live_domain(&args, &cache, &domain).is_err());
+
+        // Same path and selector classification with different raw bytes must
+        // fail both the per-row source identity and aggregate candidate digest.
+        domain
+            .skipped
+            .insert("compiler/skip.ts".to_string(), "@skip".to_string());
+        write(&run_path, "let value = 2;\n");
+        assert!(validate_live_domain(&args, &cache, &domain).is_err());
+    }
+
     #[test]
     fn plan_keeps_non_runnable_candidates_out_of_total_and_passed() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -382,6 +622,10 @@ mod tests {
             "// @target: es5\nlet unsupported = 1;\n",
         );
         write(
+            &cases.join("compiler/trace.ts"),
+            "// @traceResolution: true\nimport 'pkg';\n",
+        );
+        write(
             &cases.join("compiler/lib.d.ts"),
             "declare const ignored: string;\n",
         );
@@ -394,7 +638,8 @@ mod tests {
             "PASS TypeScript/tests/cases/compiler/pass.ts\n\
              FAIL TypeScript/tests/cases/compiler/fail.js\n\
              PASS TypeScript/tests/cases/compiler/skipped.ts\n\
-             PASS TypeScript/tests/cases/compiler/unsupported.ts\n",
+             PASS TypeScript/tests/cases/compiler/unsupported.ts\n\
+             PASS TypeScript/tests/cases/compiler/trace.ts\n",
         );
 
         let args = parse_args(&[
@@ -407,10 +652,10 @@ mod tests {
         let plan = build_shard_plan_with_baseline(&args, 2, &baseline).unwrap();
 
         assert_eq!(plan.shard_count, 2);
-        assert_eq!(plan.candidates, 4);
+        assert_eq!(plan.candidates, 5);
         assert_eq!(plan.total, 2);
         assert_eq!(plan.runnable, 2);
-        assert_eq!(plan.unsupported, 1);
+        assert_eq!(plan.unsupported, 2);
         assert_eq!(plan.skipped, 1);
         assert_eq!(
             plan.candidates,
@@ -424,7 +669,7 @@ mod tests {
                 .iter()
                 .map(|shard| shard.candidates)
                 .sum::<usize>(),
-            4
+            5
         );
         assert_eq!(
             plan.shards.iter().map(|shard| shard.total).sum::<usize>(),

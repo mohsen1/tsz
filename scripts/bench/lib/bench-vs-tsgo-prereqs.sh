@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 print_header() {
     echo
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -863,6 +864,7 @@ collect_pgo_workload() {
 }
 
 check_prerequisites() {
+    local bench_build_manifest="${TSZ_BENCH_BUILD_MANIFEST:-$(dirname "$TSZ")/conformance-build-manifest.json}"
     print_header "Prerequisites Check"
 
     # Check hyperfine
@@ -884,12 +886,12 @@ check_prerequisites() {
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         if [ ! -d "$TSZ_LIB_DIR" ]; then
             echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
-            echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/src/lib-assets exists."
+            echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/data/lib exists."
             exit 1
         fi
         echo -e "${GREEN}✓${NC} tsz lib assets: $TSZ_LIB_DIR"
     else
-        echo -e "${GREEN}✓${NC} tsz lib assets: embedded (built-in)"
+        echo -e "${GREEN}✓${NC} tsz lib assets: retained at crates/tsz-core/data/lib"
     fi
 
     # Check/build tsz with the dedicated benchmark target directory unless
@@ -919,6 +921,13 @@ check_prerequisites() {
             -type f -name "*.rs" -newer "$TSZ" -print -quit 2>/dev/null)"
         if [ -n "$newest_src" ]; then
             echo -e "${YELLOW}Source changed since last build, rebuilding...${NC}"
+            need_rebuild=true
+        elif ! PYTHONDONTWRITEBYTECODE=1 python3 \
+            "$PROJECT_ROOT/scripts/conformance/build-manifest.py" verify \
+            --repo "$PROJECT_ROOT" \
+            --manifest "$bench_build_manifest" \
+            --binary "tsz=$TSZ" >/dev/null 2>&1; then
+            echo -e "${YELLOW}Benchmark binary provenance is missing or stale, rebuilding...${NC}"
             need_rebuild=true
         elif [[ "${BENCH_REQUIRE_PGO:-0}" == "1" && ! -f "$BENCH_PGO_MARKER" ]]; then
             echo -e "${YELLOW}Existing tsz binary is not marked PGO optimized, rebuilding...${NC}"
@@ -1118,6 +1127,14 @@ check_prerequisites() {
             rm -rf "$optimized_target_dir"
             rm -rf "$pgo_target_dir"
         fi
+    fi
+
+    if [ "$need_rebuild" = true ]; then
+        PYTHONDONTWRITEBYTECODE=1 python3 \
+            "$PROJECT_ROOT/scripts/conformance/build-manifest.py" write \
+            --repo "$PROJECT_ROOT" \
+            --manifest "$bench_build_manifest" \
+            --binary "tsz=$TSZ"
     fi
 
     # Preflight: the binary must execute on this machine. A target-cpu above

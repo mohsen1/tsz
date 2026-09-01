@@ -223,10 +223,6 @@ fn eval_cache_skips_sibling_of_unresolved_lazy_index_access_in_same_union() {
 /// The assignability cache (`CompatChecker`) and subtype cache (`SubtypeChecker`)
 /// are kept separate to prevent cross-contamination.
 ///
-/// For example, with `sound_mode` enabled:
-/// - `is_subtype_of`: `SubtypeChecker` with configured `any_propagation` mode
-/// - `is_assignable_to`: `CompatChecker` with full TypeScript rules (weak types, etc.)
-///
 /// Even though both may return similar results for basic `any` checks,
 /// the caches must be separate because they can diverge in complex cases.
 #[test]

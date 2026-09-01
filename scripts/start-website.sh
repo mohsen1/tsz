@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Starts local website preview using Eleventy.
-# This prepares benchmark data + WASM + docs sync, then starts local preview.
+# This prepares benchmark data, then starts the static local preview.
 #
 # Usage:
 #   ./scripts/start-website.sh
@@ -13,7 +13,6 @@ set -euo pipefail
 #   2. Existing CI artifact                      — reused when refresh is unavailable
 #
 # Other env vars:
-#   TSZ_WEBSITE_BUILD_WASM=1  — build WASM package for playground if missing
 #   TSZ_WEBSITE_BENCH_REFRESH=0 — skip CI benchmark refresh
 #   TSZ_WEBSITE_BENCH_URL=https://... — override benchmark data URL
 
@@ -106,31 +105,10 @@ prepare_benchmarks() {
   echo "  (expected artifact: artifacts/bench-vs-tsgo-github-latest.json)"
 }
 
-prepare_wasm() {
-  if ! command -v wasm-pack >/dev/null 2>&1; then
-    echo "error: wasm-pack is required to build playground WASM." >&2
-    echo "Install: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh" >&2
-    exit 1
-  fi
-
-  echo "WASM: building web target for playground..."
-  cp "$ROOT/LICENSE.txt" "$ROOT/crates/tsz-wasm/LICENSE.txt"
-  (
-    cd "$ROOT"
-    # Keep local preview aligned with production: wasm-opt currently breaks
-    # the browser-facing build during wasm-bindgen externref table init.
-    wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web --no-opt
-  )
-}
-
 prepare_benchmarks
 
 if [ "${1:-}" = "--prepare-only" ]; then
   exit 0
-fi
-
-if [ "${TSZ_WEBSITE_BUILD_WASM:-0}" = "1" ]; then
-  prepare_wasm
 fi
 
 cd "$WEBSITE_DIR"

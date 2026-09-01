@@ -35,7 +35,7 @@ class DebugPrintReportTests(unittest.TestCase):
             root = Path(temp_dir)
             self.write_file(
                 root,
-                "crates/tsz-checker/src/lib.rs",
+                "crates/tsz-core/src/lib.rs",
                 "\n".join(
                     [
                         "pub fn report() {",
@@ -52,26 +52,25 @@ class DebugPrintReportTests(unittest.TestCase):
             )
             self.write_file(
                 root,
-                "crates/tsz-checker/src/tests/debug.rs",
+                "crates/tsz-core/src/tests/debug.rs",
                 "pub fn test_probe() { println!(\"test output is out of scope\"); }\n",
             )
 
-            hits = self.report.scan(root, ("crates/tsz-checker/src",))
+            hits = self.report.scan(root, ("crates/tsz-core/src",))
 
         self.assertEqual([hit.macro for hit in hits], ["println!", "dbg!"])
-        self.assertEqual(hits[0].path, "crates/tsz-checker/src/lib.rs")
+        self.assertEqual(hits[0].path, "crates/tsz-core/src/lib.rs")
 
     def test_default_scan_dirs_exclude_cli_user_facing_output(self):
-        self.assertIn("crates/tsz-checker/src", self.report.DEFAULT_SCAN_DIRS)
-        self.assertIn("crates/tsz-core/src", self.report.DEFAULT_SCAN_DIRS)
+        self.assertEqual(self.report.DEFAULT_SCAN_DIRS, ("crates/tsz-core/src",))
         self.assertNotIn("crates/tsz-cli/src", self.report.DEFAULT_SCAN_DIRS)
 
-    def test_trace_resolution_stdout_is_intentional_output(self):
+    def test_trace_like_stdout_is_still_reported(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.write_file(
                 root,
-                "crates/tsz-core/src/module_resolver/mod.rs",
+                "crates/tsz-core/src/program.rs",
                 "\n".join(
                     [
                         "pub fn lookup(&self) {",
@@ -90,16 +89,15 @@ class DebugPrintReportTests(unittest.TestCase):
 
             hits = self.report.scan(root, ("crates/tsz-core/src",))
 
-        self.assertEqual(len(hits), 1)
-        self.assertEqual(hits[0].line, 8)
-        self.assertEqual(hits[0].macro, "println!")
+        self.assertEqual(len(hits), 3)
+        self.assertEqual([hit.macro for hit in hits], ["println!"] * 3)
 
     def test_json_cli_reports_summary_and_hits(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.write_file(
                 root,
-                "crates/tsz-core/src/module_resolver/mod.rs",
+                "crates/tsz-core/src/program.rs",
                 "pub fn trace() { eprintln!(\"resolver trace\"); }\n",
             )
             result = subprocess.run(

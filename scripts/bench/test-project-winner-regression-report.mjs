@@ -254,7 +254,7 @@ assert.match(
 );
 assert.match(
   benchWorkflow,
-  /check-artifact-readiness\.mjs\s+\\\s*\n\s+--json\s+\\\s*\n\s+--require-application-compat\s+\\\s*\n\s+--require-green-project-timing-pairs\s+\\\s*\n\s+--require-project-timing-pairs=1\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"/,
+  /check-artifact-readiness\.mjs\s+\\[\s\S]+--json\s+\\[\s\S]+--require-application-compat\s+\\[\s\S]+--require-green-project-timing-pairs\s+\\[\s\S]+--require-project-timing-pairs=1\s+\\[\s\S]+--expect-source-commit="\$\{GITHUB_SHA\}"\s+\\[\s\S]+"\$GITHUB_WORKSPACE\/bench-results\.json"/,
   "bench publish should reject artifacts with missing app compatibility, green rows missing chart timing, or no successful project timing pairs before publishing latest.json",
 );
 assert.match(

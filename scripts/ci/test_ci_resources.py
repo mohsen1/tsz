@@ -17,14 +17,18 @@ SCRIPT = ROOT / "scripts" / "ci" / "ci-resources.sh"
 
 
 def call_function(func_name: str, *args: str, host_cpus: int = 8, shard_count: int = 4,
-                  env_overrides: Optional[dict[str, str]] = None) -> subprocess.CompletedProcess:
+                  env_overrides: Optional[dict[str, str]] = None,
+                  host_memory_mb: Optional[int] = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["HOST_CPUS"] = str(host_cpus)
     env["SHARD_COUNT"] = str(shard_count)
     if env_overrides:
         env.update(env_overrides)
     arg_str = " ".join(str(a) for a in args)
-    cmd = f'source {SCRIPT}; {func_name} {arg_str}'
+    memory_override = ""
+    if host_memory_mb is not None:
+        memory_override = f"host_memory_mb() {{ echo {host_memory_mb}; }}; "
+    cmd = f'source {SCRIPT}; {memory_override}{func_name} {arg_str}'
     return subprocess.run(
         ["bash", "-c", cmd],
         capture_output=True,
@@ -91,6 +95,7 @@ class DefaultCargoBuildJobsTests(unittest.TestCase):
             "default_cargo_build_jobs",
             host_cpus=32,
             env_overrides={"TSZ_CI_CARGO_MB_PER_JOB": "999999"},
+            host_memory_mb=32000,
         )
         self.assertEqual(result_int(r), 1)
 
@@ -105,6 +110,7 @@ class DefaultCargoBuildJobsTests(unittest.TestCase):
                 "TSZ_CI_UNIT_CARGO_MB_PER_JOB": "999999",
                 "TSZ_CI_CARGO_MB_PER_JOB": "1",
             },
+            host_memory_mb=32000,
         )
         self.assertEqual(result_int(r), 1)
 
@@ -118,6 +124,7 @@ class DefaultCargoBuildJobsTests(unittest.TestCase):
                 "TSZ_CI_DIST_CARGO_MB_PER_JOB": "999999",
                 "TSZ_CI_CARGO_MB_PER_JOB": "1",
             },
+            host_memory_mb=32000,
         )
         self.assertEqual(result_int(r), 1)
 
@@ -197,6 +204,7 @@ class DefaultFourslashWorkersTests(unittest.TestCase):
             host_cpus=32,
             shard_count=4,
             env_overrides={"TSZ_CI_FOURSLASH_MB_PER_WORKER": "999999"},
+            host_memory_mb=32000,
         )
         self.assertEqual(result_int(r), 2)
 
@@ -220,6 +228,7 @@ class DefaultConformanceWorkersTests(unittest.TestCase):
             "default_conformance_workers",
             host_cpus=32,
             env_overrides={"TSZ_CI_CONFORMANCE_MB_PER_WORKER": "999999"},
+            host_memory_mb=32000,
         )
         # mem_cap floors at 8, workers started at HOST_CPUS-8=24, capped to 8
         self.assertEqual(result_int(r), 8)

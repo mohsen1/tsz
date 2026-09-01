@@ -3,10 +3,9 @@
 # generate-fixtures.sh — synthesize the monorepo-001..006 scale-cliff fixtures
 # =============================================================================
 #
-# Per docs/plan/PERFORMANCE_PLAN.md "Step 0", these fixtures interpolate
-# from "tsz wins" (small single-package) to "tsz explodes" (monorepo with all
-# the multipliers active). The point is to find the EXACT scale at which a
-# tsz/tsgo per-file ratio breaks linearity.
+# These fixtures interpolate from a small single-package input to a synthetic
+# monorepo with several scaling multipliers. The point is to find the exact
+# scale at which a per-file ratio breaks linearity.
 #
 # Each fixture is a self-contained directory with a tsconfig and a synthetic
 # package layout. The shape is real enough to exercise the code paths we care

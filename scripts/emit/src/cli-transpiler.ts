@@ -1,7 +1,7 @@
 /**
  * CLI-based transpiler using native tsz binary
  *
- * Replaces WASM worker approach with CLI invocation to enable full type checking.
+ * Uses the canonical process boundary so the harness observes the real product.
  * Uses async execFile (no shell) for parallel execution support.
  */
 
@@ -11,7 +11,26 @@ import * as os from 'os';
 import { execFile as execFileCb, execSync, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import {
+  API as TypeScriptAPI,
+  type Diagnostic as TypeScriptDiagnostic,
+} from 'typescript/unstable/sync';
 import { targetToCliArg, moduleToCliArg } from './ts-enums.js';
+import type { CompilerOutcome, EmitProduct } from './canonical-products.js';
+import {
+  canonicalizeTszDiagnosticsJson,
+  canonicalizeTypeScriptDiagnostics,
+  witnessCodesMatch,
+  type DiagnosticNormalizationScope,
+  type DiagnosticWitness,
+} from './diagnostic-witness.js';
+import {
+  corpusPhysicalPath,
+  corpusRelativePath,
+  isStagedInputPath,
+  physicalDirectoryCompilerOptions,
+  physicalPathIdentity,
+} from './harness-config.js';
 
 const execFile = promisify(execFileCb);
 
@@ -21,9 +40,17 @@ const ROOT_DIR = path.resolve(__dirname, '../../..');
 // Default CLI timeout in ms
 const DEFAULT_TIMEOUT_MS = 5000;
 
-interface TranspileResult {
-  js: string;
-  dts?: string | null;
+export interface TranspileResult {
+  jsProducts: EmitProduct[];
+  dtsProducts: EmitProduct[];
+  outcome: CompilerOutcome;
+}
+
+export interface CompilerExecutable {
+  binaryPath: string;
+  label: string;
+  /** Real compiler evidence provider. Omit for fake/test CLIs. */
+  diagnosticWitnessProvider?: 'tsz-json' | 'typescript-7-api';
 }
 
 interface SourceInputFile {
@@ -36,14 +63,16 @@ export interface LinkInput {
   link: string;
 }
 
-interface OutputPaths {
+interface DerivedOutputPaths {
   jsPath: string;
-  jsCandidates: string[];
   dtsPath: string;
-  dtsCandidates: string[];
 }
 
 interface CompilerFlagOptions {
+  declaration?: boolean;
+  noCheck?: boolean;
+  noLib?: boolean;
+  noEmit?: boolean;
   alwaysStrict?: boolean;
   sourceMap?: boolean;
   inlineSourceMap?: boolean;
@@ -51,6 +80,15 @@ interface CompilerFlagOptions {
   downlevelIteration?: boolean;
   noEmitHelpers?: boolean;
   noEmitOnError?: boolean;
+  strict?: boolean;
+  allowJs?: boolean;
+  allowUnreachableCode?: boolean;
+  checkJs?: boolean;
+  noImplicitAny?: boolean;
+  noUnusedLocals?: boolean;
+  noUnusedParameters?: boolean;
+  skipLibCheck?: boolean;
+  strictPropertyInitialization?: boolean;
   importHelpers?: boolean;
   esModuleInterop?: boolean;
   useDefineForClassFields?: boolean;
@@ -62,6 +100,7 @@ interface CompilerFlagOptions {
   jsxFactory?: string;
   jsxFragmentFactory?: string;
   jsxImportSource?: string;
+  moduleResolution?: string;
   moduleDetection?: string;
   preserveConstEnums?: boolean;
   verbatimModuleSyntax?: boolean;
@@ -76,6 +115,164 @@ interface CompilerFlagOptions {
   outDir?: string;
   declarationDir?: string;
   rootDir?: string;
+  emitDeclarationOnly?: boolean;
+}
+
+function definedCompilerOptions(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+}
+
+function diagnosticApiCompilerOptions(
+  testDir: string,
+  target: number | undefined,
+  module: number | undefined,
+  lib: string[] | undefined,
+  opts: CompilerFlagOptions,
+): Record<string, unknown> {
+  return definedCompilerOptions({
+    declaration: opts.declaration,
+    noCheck: opts.noCheck,
+    noLib: opts.noLib,
+    noEmit: opts.noEmit,
+    alwaysStrict: opts.alwaysStrict,
+    sourceMap: opts.sourceMap,
+    inlineSourceMap: opts.inlineSourceMap,
+    declarationMap: opts.declarationMap,
+    downlevelIteration: opts.downlevelIteration,
+    noEmitHelpers: opts.noEmitHelpers,
+    noEmitOnError: opts.noEmitOnError,
+    strict: opts.strict,
+    allowJs: opts.allowJs,
+    allowUnreachableCode: opts.allowUnreachableCode,
+    checkJs: opts.checkJs,
+    noImplicitAny: opts.noImplicitAny,
+    noUnusedLocals: opts.noUnusedLocals,
+    noUnusedParameters: opts.noUnusedParameters,
+    skipLibCheck: opts.skipLibCheck,
+    strictPropertyInitialization: opts.strictPropertyInitialization,
+    importHelpers: opts.importHelpers,
+    esModuleInterop: opts.esModuleInterop,
+    useDefineForClassFields: opts.useDefineForClassFields,
+    experimentalDecorators: opts.experimentalDecorators,
+    emitDecoratorMetadata: opts.emitDecoratorMetadata,
+    strictNullChecks: opts.strictNullChecks,
+    exactOptionalPropertyTypes: opts.exactOptionalPropertyTypes,
+    jsx: opts.jsx,
+    jsxFactory: opts.jsxFactory,
+    jsxFragmentFactory: opts.jsxFragmentFactory,
+    jsxImportSource: opts.jsxImportSource,
+    moduleResolution: opts.moduleResolution,
+    moduleDetection: opts.moduleDetection,
+    preserveConstEnums: opts.preserveConstEnums,
+    verbatimModuleSyntax: opts.verbatimModuleSyntax,
+    rewriteRelativeImportExtensions: opts.rewriteRelativeImportExtensions,
+    isolatedModules: opts.isolatedModules,
+    importsNotUsedAsValues: opts.importsNotUsedAsValues,
+    preserveValueImports: opts.preserveValueImports,
+    removeComments: opts.removeComments,
+    stripInternal: opts.stripInternal,
+    baseUrl: opts.baseUrl === undefined ? undefined : corpusPhysicalPath(testDir, opts.baseUrl),
+    outFile: opts.outFile === undefined
+      ? undefined
+      : corpusPhysicalPath(testDir, opts.outFile.replace(/^[/\\]+/, '')),
+    outDir: opts.outDir,
+    declarationDir: opts.declarationDir,
+    rootDir: opts.rootDir,
+    emitDeclarationOnly: opts.emitDeclarationOnly,
+    target: target === undefined ? undefined : targetToCliArg(target),
+    module: module === undefined ? undefined : moduleToCliArg(module),
+    lib,
+  });
+}
+
+class PinnedTypeScriptDiagnosticSession {
+  private api: TypeScriptAPI | undefined;
+
+  constructor(
+    private readonly binaryPath: string,
+    private readonly workingDirectory: string,
+  ) {}
+
+  private client(): TypeScriptAPI {
+    this.api ??= new TypeScriptAPI({
+      cwd: this.workingDirectory,
+      tsserverPath: this.binaryPath,
+    });
+    return this.api;
+  }
+
+  collect(
+    configPath: string,
+    rootFiles: readonly string[],
+    compilerOptions: Readonly<Record<string, unknown>>,
+    scope: DiagnosticNormalizationScope,
+    renderedCodes: readonly string[],
+  ): DiagnosticWitness[] | undefined {
+    let snapshot: ReturnType<TypeScriptAPI['updateSnapshot']> | undefined;
+    try {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        `${JSON.stringify({ compilerOptions, files: rootFiles })}\n`,
+        'utf8',
+      );
+      const api = this.client();
+      snapshot = api.updateSnapshot({
+        openProjects: [configPath],
+        fileChanges: { invalidateAll: true },
+      });
+      const project = snapshot.getProject(configPath) ?? snapshot.getProjects().find(candidate =>
+        path.resolve(candidate.configFileName) === path.resolve(configPath)
+      );
+      if (project === undefined) return undefined;
+
+      const program = project.program;
+      const selected: TypeScriptDiagnostic[] = [...program.getConfigFileParsingDiagnostics()];
+      const syntactic = [...program.getSyntacticDiagnostics()];
+      selected.push(...syntactic);
+      if (syntactic.length === 0) {
+        const programDiagnostics = [...program.getProgramDiagnostics()];
+        const global = [...program.getGlobalDiagnostics()];
+        selected.push(...programDiagnostics, ...global);
+        if (programDiagnostics.length === 0 && global.length === 0) {
+          selected.push(...program.getSemanticDiagnostics());
+        }
+
+        const declarationRequested = compilerOptions.declaration === true ||
+          compilerOptions.emitDeclarationOnly === true;
+        const hasEarlierDiagnostics = selected.length > 0;
+        const declarationCanRun = compilerOptions.noEmit === true
+          ? !hasEarlierDiagnostics
+          : compilerOptions.noEmitOnError !== true || !hasEarlierDiagnostics;
+        if (declarationRequested && declarationCanRun) {
+          selected.push(...program.getDeclarationDiagnostics());
+        }
+      }
+
+      const witnesses = canonicalizeTypeScriptDiagnostics(selected, scope);
+      if (witnesses === undefined || !witnessCodesMatch(witnesses, renderedCodes)) {
+        return undefined;
+      }
+      return witnesses;
+    } catch {
+      return undefined;
+    } finally {
+      snapshot?.dispose();
+      if (this.api !== undefined) {
+        try {
+          const closed = this.api.updateSnapshot({ closeProjects: [configPath] });
+          closed.dispose();
+        } catch {
+          // A failed API request cannot create a witness; close() still owns cleanup.
+        }
+      }
+    }
+  }
+
+  close(): void {
+    this.api?.close();
+    this.api = undefined;
+  }
 }
 
 // Longest common directory of a set of POSIX-style relative file paths,
@@ -95,93 +292,58 @@ function longestCommonSourceDir(relPaths: string[]): string {
   return common.join('/');
 }
 
-// Append shared compiler-option flags onto a tsz CLI args array. Used by both
-// the primary emit invocation and the declaration-emit retry path so that the
-// two stay in lockstep — previously the retry path silently dropped
-// --strictNullChecks (and was at structural risk of dropping any future flag).
+// Append the compiler-option flags used by the one canonical invocation.
 function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): void {
-  if (opts.alwaysStrict) args.push('--alwaysStrict', 'true');
-  if (opts.sourceMap) args.push('--sourceMap');
-  if (opts.inlineSourceMap) args.push('--inlineSourceMap');
-  if (opts.declarationMap) args.push('--declarationMap');
-  if (opts.downlevelIteration) args.push('--downlevelIteration');
-  if (opts.noEmitHelpers) args.push('--noEmitHelpers');
-  if (opts.noEmitOnError) args.push('--noEmitOnError');
-  if (opts.importHelpers) args.push('--importHelpers');
-  if (opts.esModuleInterop) args.push('--esModuleInterop');
-  if (opts.useDefineForClassFields !== undefined) {
-    args.push('--useDefineForClassFields', opts.useDefineForClassFields ? 'true' : 'false');
-  }
-  if (opts.experimentalDecorators) args.push('--experimentalDecorators');
-  if (opts.emitDecoratorMetadata) args.push('--emitDecoratorMetadata');
-  if (opts.strictNullChecks !== undefined) args.push('--strictNullChecks', String(opts.strictNullChecks));
-  // tsz CLI defines `--exactOptionalPropertyTypes` as a presence-only flag.
-  // Passing the literal "true" turns into a positional input file, so only emit
-  // the flag when the option is enabled.
-  if (opts.exactOptionalPropertyTypes === true) {
-    args.push('--exactOptionalPropertyTypes');
-  }
+  const booleanFlag = (name: string, value: boolean | undefined): void => {
+    if (value !== undefined) args.push(name, String(value));
+  };
+  booleanFlag('--noCheck', opts.noCheck);
+  booleanFlag('--declaration', opts.declaration);
+  booleanFlag('--noLib', opts.noLib);
+  booleanFlag('--noEmit', opts.noEmit);
+  booleanFlag('--alwaysStrict', opts.alwaysStrict);
+  booleanFlag('--sourceMap', opts.sourceMap);
+  booleanFlag('--inlineSourceMap', opts.inlineSourceMap);
+  booleanFlag('--declarationMap', opts.declarationMap);
+  booleanFlag('--downlevelIteration', opts.downlevelIteration);
+  booleanFlag('--noEmitHelpers', opts.noEmitHelpers);
+  booleanFlag('--noEmitOnError', opts.noEmitOnError);
+  booleanFlag('--strict', opts.strict);
+  booleanFlag('--allowJs', opts.allowJs);
+  booleanFlag('--allowUnreachableCode', opts.allowUnreachableCode);
+  booleanFlag('--checkJs', opts.checkJs);
+  booleanFlag('--noImplicitAny', opts.noImplicitAny);
+  booleanFlag('--noUnusedLocals', opts.noUnusedLocals);
+  booleanFlag('--noUnusedParameters', opts.noUnusedParameters);
+  booleanFlag('--skipLibCheck', opts.skipLibCheck);
+  booleanFlag('--strictPropertyInitialization', opts.strictPropertyInitialization);
+  booleanFlag('--importHelpers', opts.importHelpers);
+  booleanFlag('--esModuleInterop', opts.esModuleInterop);
+  booleanFlag('--useDefineForClassFields', opts.useDefineForClassFields);
+  booleanFlag('--experimentalDecorators', opts.experimentalDecorators);
+  booleanFlag('--emitDecoratorMetadata', opts.emitDecoratorMetadata);
+  booleanFlag('--strictNullChecks', opts.strictNullChecks);
+  booleanFlag('--exactOptionalPropertyTypes', opts.exactOptionalPropertyTypes);
   if (opts.jsx) args.push('--jsx', opts.jsx);
   if (opts.jsxFactory) args.push('--jsxFactory', opts.jsxFactory);
   if (opts.jsxFragmentFactory) args.push('--jsxFragmentFactory', opts.jsxFragmentFactory);
   if (opts.jsxImportSource) args.push('--jsxImportSource', opts.jsxImportSource);
+  if (opts.moduleResolution) args.push('--moduleResolution', opts.moduleResolution);
   if (opts.moduleDetection) args.push('--moduleDetection', opts.moduleDetection);
-  if (opts.preserveConstEnums) args.push('--preserveConstEnums');
-  if (opts.verbatimModuleSyntax) args.push('--verbatimModuleSyntax');
-  if (opts.rewriteRelativeImportExtensions) args.push('--rewriteRelativeImportExtensions');
-  if (opts.isolatedModules) args.push('--isolatedModules');
+  booleanFlag('--preserveConstEnums', opts.preserveConstEnums);
+  booleanFlag('--verbatimModuleSyntax', opts.verbatimModuleSyntax);
+  booleanFlag('--rewriteRelativeImportExtensions', opts.rewriteRelativeImportExtensions);
+  booleanFlag('--isolatedModules', opts.isolatedModules);
   if (opts.importsNotUsedAsValues) args.push('--importsNotUsedAsValues', opts.importsNotUsedAsValues);
-  if (opts.preserveValueImports) args.push('--preserveValueImports');
-  if (opts.removeComments) args.push('--removeComments');
-  if (opts.stripInternal) args.push('--stripInternal');
+  booleanFlag('--preserveValueImports', opts.preserveValueImports);
+  booleanFlag('--removeComments', opts.removeComments);
+  booleanFlag('--stripInternal', opts.stripInternal);
   if (opts.baseUrl) args.push('--baseUrl', opts.baseUrl);
   if (opts.outFile) args.push('--outFile', opts.outFile.replace(/^[/\\]+/, ''));
   if (opts.outDir) args.push('--outDir', opts.outDir);
   if (opts.declarationDir) args.push('--declarationDir', opts.declarationDir);
   if (opts.rootDir) args.push('--rootDir', opts.rootDir);
-}
-
-function dedupeUseStrictPreamble(text: string): string {
-  // Only deduplicate "use strict" directives that appear in the leading preamble
-  // (before any non-empty, non-directive content). Inner "use strict" inside
-  // function bodies must be preserved as-is.
-  const lines = text.split('\n');
-  const out: string[] = [];
-  let seenInPreamble = false;
-  let preambleDone = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const isUseStrict = trimmed === '"use strict";' || trimmed === "'use strict';";
-    if (!preambleDone && isUseStrict) {
-      if (!seenInPreamble) {
-        out.push(line);
-        seenInPreamble = true;
-      }
-      // Skip subsequent "use strict" lines only while still in preamble
-      continue;
-    }
-    // Once we see any non-"use strict" non-empty content, the preamble is done
-    if (trimmed !== '') {
-      preambleDone = true;
-    }
-    out.push(line);
-  }
-  return out.join('\n');
-}
-
-function hasUseStrictPreamble(text: string): boolean {
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === '') continue;
-    return trimmed === '"use strict";' || trimmed === "'use strict';";
-  }
-  return false;
-}
-
-function normalizeLeadingTripleSlashSpacing(text: string): string {
-  // Keep leading triple-slash directives adjacent to the following statement.
-  // Some JS-input baselines expect no blank line after the directive block.
-  return text.replace(/^((?:(?:["']use strict["'];\n)?(?:\/\/\/[^\n]*\n)+))\n+/m, '$1');
+  booleanFlag('--emitDeclarationOnly', opts.emitDeclarationOnly);
 }
 
 /**
@@ -223,19 +385,30 @@ function tszInPath(): string | null {
 }
 
 /**
- * CLI-based transpiler (replaces WASM worker)
+ * CLI-based transpiler for canonical emit observations.
  */
 export class CliTranspiler {
-  private tszPath: string;
+  private compiler: CompilerExecutable;
   private counter = 0;
   private tempDir: string;
   private timeoutMs: number;
   private activeChildren = new Set<ChildProcess>();
+  private typescriptDiagnostics: PinnedTypeScriptDiagnosticSession | undefined;
 
-  constructor(timeoutMs: number = DEFAULT_TIMEOUT_MS) {
-    this.tszPath = findTszBinary();
-    this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsz-emit-'));
+  constructor(timeoutMs: number = DEFAULT_TIMEOUT_MS, compiler?: CompilerExecutable) {
+    this.compiler = compiler ?? {
+      binaryPath: findTszBinary(),
+      label: 'tsz',
+      diagnosticWitnessProvider: 'tsz-json',
+    };
+    this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${this.compiler.label}-emit-`));
     this.timeoutMs = timeoutMs;
+    if (this.compiler.diagnosticWitnessProvider === 'typescript-7-api') {
+      this.typescriptDiagnostics = new PinnedTypeScriptDiagnosticSession(
+        this.compiler.binaryPath,
+        this.tempDir,
+      );
+    }
   }
 
   /**
@@ -244,11 +417,14 @@ export class CliTranspiler {
    */
   async transpile(
     source: string,
-    target: number,
-    module: number,
+    target: number | undefined,
+    module: number | undefined,
     options: {
       sourceFileName?: string;
       declaration?: boolean;
+      noCheck?: boolean;
+      noLib?: boolean;
+      noEmit?: boolean;
       alwaysStrict?: boolean;
       sourceMap?: boolean;
       inlineSourceMap?: boolean;
@@ -256,6 +432,15 @@ export class CliTranspiler {
       downlevelIteration?: boolean;
       noEmitHelpers?: boolean;
       noEmitOnError?: boolean;
+      strict?: boolean;
+      allowJs?: boolean;
+      allowUnreachableCode?: boolean;
+      checkJs?: boolean;
+      noImplicitAny?: boolean;
+      noUnusedLocals?: boolean;
+      noUnusedParameters?: boolean;
+      skipLibCheck?: boolean;
+      strictPropertyInitialization?: boolean;
       importHelpers?: boolean;
       esModuleInterop?: boolean;
       useDefineForClassFields?: boolean;
@@ -267,6 +452,7 @@ export class CliTranspiler {
       jsxFactory?: string;
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
+      moduleResolution?: string;
       moduleDetection?: string;
       preserveConstEnums?: boolean;
       verbatimModuleSyntax?: boolean;
@@ -281,97 +467,121 @@ export class CliTranspiler {
       outDir?: string;
       declarationDir?: string;
       rootDir?: string;
+      emitDeclarationOnly?: boolean;
       sourceFiles?: SourceInputFile[];
+      rootFileNames?: string[];
       links?: LinkInput[];
-      expectedJsFileName?: string;
-      expectedDtsFileName?: string;
-      expectedJsContent?: string | null;
-      expectedDtsContent?: string | null;
-      noDtsEmitExpected?: boolean;
       lib?: string[];
     } = {}
   ): Promise<TranspileResult> {
     const {
       sourceFileName,
-      declaration = false,
+      declaration,
+      noCheck,
+      noLib,
+      noEmit,
       alwaysStrict,
-      sourceMap = false,
-      inlineSourceMap = false,
-      declarationMap = false,
-      downlevelIteration = false,
-      noEmitHelpers = false,
-      noEmitOnError = false,
-      importHelpers = false,
-      esModuleInterop = false,
+      sourceMap,
+      inlineSourceMap,
+      declarationMap,
+      downlevelIteration,
+      noEmitHelpers,
+      noEmitOnError,
+      strict,
+      allowJs,
+      allowUnreachableCode,
+      checkJs,
+      noImplicitAny,
+      noUnusedLocals,
+      noUnusedParameters,
+      skipLibCheck,
+      strictPropertyInitialization,
+      importHelpers,
+      esModuleInterop,
       useDefineForClassFields,
-      experimentalDecorators = false,
-      emitDecoratorMetadata = false,
+      experimentalDecorators,
+      emitDecoratorMetadata,
       strictNullChecks,
       exactOptionalPropertyTypes,
       jsx,
       jsxFactory,
       jsxFragmentFactory,
       jsxImportSource,
+      moduleResolution,
       moduleDetection,
-      preserveConstEnums = false,
-      verbatimModuleSyntax = false,
-      rewriteRelativeImportExtensions = false,
-      isolatedModules = false,
+      preserveConstEnums,
+      verbatimModuleSyntax,
+      rewriteRelativeImportExtensions,
+      isolatedModules,
       importsNotUsedAsValues,
-      preserveValueImports = false,
-      removeComments = false,
-      stripInternal = false,
+      preserveValueImports,
+      removeComments,
+      stripInternal,
       baseUrl,
       outFile,
       outDir,
       declarationDir,
       rootDir,
+      emitDeclarationOnly,
       sourceFiles,
+      rootFileNames,
       links = [],
-      expectedJsFileName,
-      expectedDtsFileName,
-      expectedJsContent,
-      expectedDtsContent,
-      noDtsEmitExpected = false,
       lib,
     } = options;
+    const declarationRequested = declaration === true || emitDeclarationOnly === true;
     const testName = `test_${this.counter++}`;
-    const testDir = path.join(this.tempDir, testName);
-    fs.mkdirSync(testDir, { recursive: true });
-
     const files: SourceInputFile[] = sourceFiles && sourceFiles.length > 0
       ? sourceFiles
       : [{
           name: sourceFileName ?? `${testName}.ts`,
           content: source,
         }];
-    const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
-    const outputFilePath = normalizedOutFile ? path.join(testDir, normalizedOutFile) : null;
+    const corpusPaths = [
+      ...files.map(file => file.name),
+      ...links.flatMap(link => [link.target, link.link]),
+      ...[outFile, outDir, declarationDir, rootDir].filter((value): value is string => value !== undefined),
+    ];
+    const maxParentDepth = corpusPaths.reduce((maximum, corpusPath) => {
+      const parts = corpusRelativePath(corpusPath).split('/');
+      let depth = 0;
+      while (parts[depth] === '..') depth++;
+      return Math.max(maximum, depth);
+    }, 0);
+    const testScopeDir = path.join(this.tempDir, testName);
+    // Preserve cwd-relative `..` path semantics while ensuring no product can
+    // leak into, or be reused from, another invocation's scope.
+    const requestedTestDir = path.join(
+      testScopeDir,
+      ...Array.from({ length: maxParentDepth + 1 }, () => 'cwd'),
+    );
+    fs.mkdirSync(requestedTestDir, { recursive: true });
+    const testDir = physicalPathIdentity(requestedTestDir);
+    const normalizedOutFile = outFile ? corpusRelativePath(outFile) : undefined;
+    const outputFilePath = normalizedOutFile ? corpusPhysicalPath(testDir, normalizedOutFile) : null;
     const outputDtsPath = outputFilePath?.replace(/\.js$/, '.d.ts') ?? null;
-    const virtualSrcFileNames = new Set<string>();
-    if (expectedJsContent) {
-      const virtualSrcRegex = /const _jsxFileName = "\/\.src\/([^"]+)";/g;
-      for (let match: RegExpExecArray | null; (match = virtualSrcRegex.exec(expectedJsContent)) !== null;) {
-        virtualSrcFileNames.add(match[1].replace(/\\/g, '/'));
-      }
-    }
 
-    const inputFiles: string[] = [];
-    const expectedOutputs: OutputPaths[] = [];
+    const inputPathByCorpusName = new Map<string, string>();
+    const inputPathSet = new Set<string>();
+    // A staged JS/MJS/CJS source may already have the same name as a requested
+    // output. Its mere existence is never evidence that the compiler emitted it.
+    const isCollectableOutput = (candidate: string): boolean => {
+      return fs.existsSync(candidate) && !isStagedInputPath(inputPathSet, candidate);
+    };
+    const derivedOutputs: DerivedOutputPaths[] = [];
 
     // When `rootDir` is unset, tsz (like tsc) lays output out relative to the
     // common source directory of the emittable inputs, not the test root. So a
     // test whose files all live under `src/` emits to `<outDir>/a.js`, not
     // `<outDir>/src/a.js`. Compute that common directory (over non-declaration,
     // non-node_modules sources) so the stripped output path is offered as an
-    // output-location candidate below.
+    // exact output location below.
     const emittableRelNames = files
-      .map(f => f.name.replace(/^\/+/, '').replace(/\\/g, '/'))
+      .map(f => corpusRelativePath(f.name))
       .filter(
         rel =>
           !rel.endsWith('package.json') &&
           !rel.endsWith('tsconfig.json') &&
-          !rel.endsWith('.d.ts') &&
+          !/\.d\.(?:ts|mts|cts)$/.test(rel) &&
           !rel.split('/').includes('node_modules'),
       );
     const commonSourceDir = rootDir ? '' : longestCommonSourceDir(emittableRelNames);
@@ -382,12 +592,8 @@ export class CliTranspiler {
         : relStem;
 
     for (const file of files) {
-      const relName = file.name.replace(/^\/+/, '');
-      const normalizedRelName = relName.replace(/\\/g, '/');
-      const physicalRelName = virtualSrcFileNames.has(normalizedRelName)
-        ? path.posix.join('.src', normalizedRelName)
-        : relName;
-      const filePath = path.join(testDir, physicalRelName);
+      const relName = corpusRelativePath(file.name);
+      const filePath = corpusPhysicalPath(testDir, relName);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, file.content, 'utf-8');
 
@@ -398,95 +604,51 @@ export class CliTranspiler {
         continue;
       }
 
-      inputFiles.push(filePath);
+      inputPathSet.add(physicalPathIdentity(filePath));
+      inputPathByCorpusName.set(relName, filePath);
 
+      if (relName.endsWith('.d.ts') || relName.endsWith('.d.mts') || relName.endsWith('.d.cts')) {
+        continue;
+      }
       const extMatch = relName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/);
-      const ext = extMatch ? `.${extMatch[1]}` : '.ts';
+      if (!extMatch) continue;
+      const ext = `.${extMatch[1]}`;
       const stem = filePath.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
-      const outputRelStem = (() => {
-        if (!outDir) return null;
-        const normalizedRoot = rootDir?.replace(/^[/\\]+/, '').replace(/\\/g, '/').replace(/\/+$/, '');
-        let relStem = relName.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
-        if (normalizedRoot && (relStem === normalizedRoot || relStem.startsWith(`${normalizedRoot}/`))) {
-          relStem = relStem.slice(normalizedRoot.length).replace(/^\/+/, '');
-        }
-        return path.join(testDir, outDir.replace(/^[/\\]+/, ''), relStem);
-      })();
-      // Same path with the implicit common source directory stripped (the
-      // layout tsz actually emits when `rootDir` is unset).
-      const outputRelStemCommon = (() => {
-        if (!outDir || rootDir) return null;
-        const relStem = stripCommonSourceDir(
-          relName.replace(/\\/g, '/').replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, ''),
-        );
-        return path.join(testDir, outDir.replace(/^[/\\]+/, ''), relStem);
-      })();
-      const declarationRelStem = (() => {
-        const declarationOutputDir = declarationDir ?? outDir;
-        if (!declarationOutputDir) return null;
-        const normalizedRoot = rootDir?.replace(/^[/\\]+/, '').replace(/\\/g, '/').replace(/\/+$/, '');
-        let relStem = relName.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
-        if (normalizedRoot && (relStem === normalizedRoot || relStem.startsWith(`${normalizedRoot}/`))) {
-          relStem = relStem.slice(normalizedRoot.length).replace(/^\/+/, '');
-        }
-        return path.join(testDir, declarationOutputDir.replace(/^[/\\]+/, ''), relStem);
-      })();
-      const declarationRelStemCommon = (() => {
-        const declarationOutputDir = declarationDir ?? outDir;
-        if (!declarationOutputDir || rootDir) return null;
-        const relStem = stripCommonSourceDir(
-          relName.replace(/\\/g, '/').replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, ''),
-        );
-        return path.join(testDir, declarationOutputDir.replace(/^[/\\]+/, ''), relStem);
-      })();
-      // For TS→JS: .ts→.js, .tsx→.jsx, .mts→.mjs, .cts→.cjs
-      // For JS→JS (allowJs): output has same extension as input
-      const sourceDefaultJsPath =
-        ext === '.tsx' || ext === '.jsx' ? `${stem}.jsx` :
-        ext === '.mts' || ext === '.mjs' ? `${stem}.mjs` :
-        ext === '.cts' || ext === '.cjs' ? `${stem}.cjs` :
-        `${stem}.js`;
+      const normalizedRoot = rootDir === undefined ? undefined : corpusRelativePath(rootDir);
+      let relativeStem = relName.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
+      if (rootDir !== undefined) {
+        relativeStem = path.posix.relative(normalizedRoot ?? '', relativeStem);
+      } else {
+        relativeStem = stripCommonSourceDir(relativeStem);
+      }
 
-      expectedOutputs.push({
-        jsPath: sourceDefaultJsPath,
-        jsCandidates: [
-          ...(outputFilePath ? [outputFilePath] : []),
-          ...([outputRelStem, outputRelStemCommon]
-            .filter((stem): stem is string => stem !== null)
-            .map(stem =>
-              ext === '.tsx' || ext === '.jsx' ? `${stem}.jsx` :
-              ext === '.mts' || ext === '.mjs' ? `${stem}.mjs` :
-              ext === '.cts' || ext === '.cjs' ? `${stem}.cjs` :
-              `${stem}.js`,
-            )),
-          sourceDefaultJsPath,
-          `${stem}.js`,
-          `${stem}.jsx`,
-          `${stem}.mjs`,
-          `${stem}.cjs`,
-        ],
-        dtsPath: `${stem}.d.ts`,
-        dtsCandidates: [
-          ...(outputDtsPath ? [outputDtsPath] : []),
-          ...([declarationRelStem, declarationRelStemCommon]
-            .filter((relStem): relStem is string => relStem !== null)
-            .flatMap(relStem => [
-              `${relStem}.d.ts`,
-              `${relStem}.d.mts`,
-              `${relStem}.d.cts`,
-            ])),
-          `${stem}.d.ts`,
-          `${stem}.d.mts`,
-          `${stem}.d.cts`,
-        ],
+      const preservesJsx = jsx?.toLowerCase() === 'preserve';
+      const jsExtension =
+        ext === '.mts' || ext === '.mjs' ? '.mjs' :
+        ext === '.cts' || ext === '.cjs' ? '.cjs' :
+        ext === '.tsx' || ext === '.jsx' ? (preservesJsx ? '.jsx' : '.js') :
+        '.js';
+      const dtsExtension =
+        ext === '.mts' || ext === '.mjs' ? '.d.mts' :
+        ext === '.cts' || ext === '.cjs' ? '.d.cts' :
+        '.d.ts';
+      const jsStem = outDir
+        ? path.join(corpusPhysicalPath(testDir, outDir), relativeStem)
+        : stem;
+      const declarationOutputDir = declarationDir ?? outDir;
+      const dtsStem = declarationOutputDir
+        ? path.join(corpusPhysicalPath(testDir, declarationOutputDir), relativeStem)
+        : stem;
+
+      derivedOutputs.push({
+        jsPath: outputFilePath ?? `${jsStem}${jsExtension}`,
+        dtsPath: outputDtsPath ?? `${dtsStem}${dtsExtension}`,
       });
     }
 
     for (const link of links) {
-      const relTarget = link.target.replace(/^\/+/, '');
-      const relLink = link.link.replace(/^\/+/, '');
-      const targetPath = path.join(testDir, relTarget);
-      const linkPath = path.join(testDir, relLink);
+      const targetPath = corpusPhysicalPath(testDir, link.target);
+      const linkPath = corpusPhysicalPath(testDir, link.link);
       if (!fs.existsSync(targetPath)) continue;
 
       fs.mkdirSync(path.dirname(linkPath), { recursive: true });
@@ -499,39 +661,51 @@ export class CliTranspiler {
       fs.symlinkSync(targetPath, linkPath, type);
     }
 
-    this.writeRootConfigForEmbeddedTsconfig(testDir, files);
+    const requestedRootNames = rootFileNames ?? files
+      .map(file => corpusRelativePath(file.name))
+      .filter(name => !name.endsWith('.json'));
+    const rootInputFiles: string[] = [];
+    let missingRootName: string | undefined;
+    for (const rootName of requestedRootNames) {
+      const normalizedName = corpusRelativePath(rootName);
+      const inputPath = inputPathByCorpusName.get(normalizedName);
+      if (!inputPath) {
+        missingRootName ??= rootName;
+      } else {
+        rootInputFiles.push(inputPath);
+      }
+    }
 
     try {
-      const targetArg = targetToCliArg(target);
-      const moduleArg = moduleToCliArg(module);
-
-      // Build args array (no shell parsing needed with execFile)
-      const args: string[] = [];
-      if (declaration) args.push('--declaration');
+      if (missingRootName) throw new Error(`UNREPRESENTABLE_ROOT_INPUT:${missingRootName}`);
+      // Build one authored invocation. `--pretty false` and `--ignoreConfig`
+      // are deterministic process/staging controls and are applied equally to
+      // TypeScript 7 and TSZ; semantic shortcuts are never synthesized.
+      const args: string[] = ['--pretty', 'false'];
       // The emit harness stages embedded @filename tsconfig.json files next to
       // explicit command-line inputs. That mirrors tsc baseline fixtures, but
       // the CLI intentionally rejects "files + discovered tsconfig" unless
       // --ignoreConfig is set.
-      if (inputFiles.length > 0) args.push('--ignoreConfig');
-      // Skip type checking and lib loading for JS-only emit -- the emitter
-      // only needs syntax. Type checking accounts for ~77% of per-test time
-      // and lib loading accounts for another ~50% of the remainder.
-      if (!declaration) {
-        args.push('--noCheck', '--noLib');
-      }
+      if (rootInputFiles.length > 0) args.push('--ignoreConfig');
       // The emit runner synthesizes explicit CLI invocations from baseline
       // files. Embedded tsconfig options are parsed and forwarded as flags
       // below; leaving tsconfig.json discoverable would make tsz stop with
       // TS5112 before it emits.
-      const hasEmbeddedTsconfig = files.some(f => f.name.replace(/^\/+/, '').replace(/\\/g, '/').endsWith('tsconfig.json'));
+      const hasEmbeddedTsconfig = files.some(f => corpusRelativePath(f.name).endsWith('tsconfig.json'));
       if (hasEmbeddedTsconfig) {
         args.push('--ignoreConfig');
       }
-      // Add --allowJs when any input file is a .js/.jsx/.mjs/.cjs file
-      const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
-      if (hasJsInput) args.push('--allowJs');
       if (lib && lib.length > 0) args.push('--lib', lib.join(','));
-      appendCompilerOptionFlags(args, {
+      const physicalDirectories = physicalDirectoryCompilerOptions(testDir, {
+        outDir,
+        declarationDir,
+        rootDir,
+      });
+      const compilerFlags: CompilerFlagOptions = {
+        declaration,
+        noCheck,
+        noLib,
+        noEmit,
         alwaysStrict,
         sourceMap,
         inlineSourceMap,
@@ -539,6 +713,15 @@ export class CliTranspiler {
         downlevelIteration,
         noEmitHelpers,
         noEmitOnError,
+        strict,
+        allowJs,
+        allowUnreachableCode,
+        checkJs,
+        noImplicitAny,
+        noUnusedLocals,
+        noUnusedParameters,
+        skipLibCheck,
+        strictPropertyInitialization,
         importHelpers,
         esModuleInterop,
         useDefineForClassFields,
@@ -550,6 +733,7 @@ export class CliTranspiler {
         jsxFactory,
         jsxFragmentFactory,
         jsxImportSource,
+        moduleResolution,
         moduleDetection,
         preserveConstEnums,
         verbatimModuleSyntax,
@@ -561,17 +745,69 @@ export class CliTranspiler {
         stripInternal,
         baseUrl,
         outFile,
-        outDir,
-        declarationDir,
-        rootDir,
-      });
-      const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
-      args.push(...trailingArgs);
+        emitDeclarationOnly,
+        ...physicalDirectories,
+      };
+      appendCompilerOptionFlags(args, compilerFlags);
+      if (target !== undefined) args.push('--target', targetToCliArg(target));
+      if (module !== undefined) args.push('--module', moduleToCliArg(module));
+      const diagnosticsJsonPath = path.join(testScopeDir, '.tsz-diagnostics.json');
+      if (this.compiler.diagnosticWitnessProvider === 'tsz-json') {
+        args.push('--diagnostics-json', diagnosticsJsonPath);
+      }
+      args.push(...rootInputFiles);
+
+      const normalizeOutputRelPath = (filePath: string): string => {
+        return path.relative(testDir, physicalPathIdentity(filePath)).split(path.sep).join('/').replace(/\\/g, '/');
+      };
+      const productPaths = (dtsMode: boolean): string[] => {
+        const paths = derivedOutputs.map(output => dtsMode ? output.dtsPath : output.jsPath);
+        return [...new Set(paths.map(physicalPathIdentity))];
+      };
+      const collectActualProducts = (): { jsProducts: EmitProduct[]; dtsProducts: EmitProduct[] } => {
+        const jsProducts: EmitProduct[] = [];
+        const dtsProducts: EmitProduct[] = [];
+        const seen = new Set<string>();
+        const addFile = (entryPath: string): void => {
+          if (!isCollectableOutput(entryPath)) return;
+          const relativePath = normalizeOutputRelPath(entryPath);
+          if (seen.has(relativePath)) return;
+          seen.add(relativePath);
+          const product = { path: relativePath, content: fs.readFileSync(entryPath).toString('latin1') };
+          if (/\.d\.(?:ts|mts|cts)$/.test(relativePath)) {
+            dtsProducts.push(product);
+          } else if (/\.(?:js|jsx|mjs|cjs)$/.test(relativePath)) {
+            jsProducts.push(product);
+          }
+        };
+        const visit = (directory: string): void => {
+          for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+            const entryPath = path.join(directory, entry.name);
+            if (entry.isSymbolicLink()) continue;
+            if (entry.isDirectory()) {
+              visit(entryPath);
+              continue;
+            }
+            if (entry.isFile()) addFile(entryPath);
+          }
+        };
+        visit(testScopeDir);
+        // Also add exact derived paths in case a symlinked output path is not
+        // reached by the scope walk. Staged inputs remain excluded.
+        for (const candidate of [...productPaths(false), ...productPaths(true)]) addFile(candidate);
+        jsProducts.sort((left, right) => left.path.localeCompare(right.path));
+        dtsProducts.sort((left, right) => left.path.localeCompare(right.path));
+        return { jsProducts, dtsProducts };
+      };
+      const collectResult = (outcome: CompilerOutcome): TranspileResult => {
+        const { jsProducts, dtsProducts } = collectActualProducts();
+        return { jsProducts, dtsProducts, outcome };
+      };
 
       // Run CLI asynchronously without shell overhead.
       // Use SIGKILL for timeout so the child can't ignore the signal and linger.
       const runWithArgs = async (cliArgs: string[]) => {
-        const promise = execFile(this.tszPath, cliArgs, {
+        const promise = execFile(this.compiler.binaryPath, cliArgs, {
           cwd: testDir,
           encoding: 'utf-8',
           timeout: this.timeoutMs,
@@ -583,278 +819,78 @@ export class CliTranspiler {
         return await promise;
       };
 
+      const diagnosticCodes = (stdout: unknown, stderr: unknown): string[] => {
+        const text = `${typeof stdout === 'string' ? stdout : ''}\n${typeof stderr === 'string' ? stderr : ''}`;
+        return [...text.matchAll(/\bTS(\d{4,5})\b/g)].map(match => `TS${match[1]}`);
+      };
+      const diagnosticScope: DiagnosticNormalizationScope = {
+        invocationDirectory: testDir,
+        scopeDirectory: testScopeDir,
+      };
+      const outcomeWithWitnesses = (
+        exitCode: number,
+        stdout: unknown,
+        stderr: unknown,
+      ): CompilerOutcome => {
+        const codes = diagnosticCodes(stdout, stderr);
+        const outcome: CompilerOutcome = { exitCode, diagnosticCodes: codes };
+        if (this.compiler.diagnosticWitnessProvider === 'tsz-json') {
+          try {
+            const json = JSON.parse(fs.readFileSync(diagnosticsJsonPath, 'utf8')) as unknown;
+            const witnesses = canonicalizeTszDiagnosticsJson(json, diagnosticScope);
+            if (witnesses !== undefined && witnessCodesMatch(witnesses, codes)) {
+              outcome.diagnosticWitnesses = witnesses;
+            }
+          } catch {
+            // Missing or malformed JSON leaves the ordinary nonzero outcome red.
+          }
+        } else if (this.compiler.diagnosticWitnessProvider === 'typescript-7-api') {
+          if (exitCode === 0 && codes.length === 0) {
+            outcome.diagnosticWitnesses = [];
+          } else if (codes.length > 0) {
+            const apiConfigPath = path.join(testScopeDir, '.typescript-api', 'tsconfig.json');
+            const witnesses = this.typescriptDiagnostics?.collect(
+              apiConfigPath,
+              rootInputFiles,
+              diagnosticApiCompilerOptions(testDir, target, module, lib, compilerFlags),
+              { ...diagnosticScope, forbiddenFile: apiConfigPath },
+              codes,
+            );
+            if (witnesses !== undefined) outcome.diagnosticWitnesses = witnesses;
+          }
+        }
+        return outcome;
+      };
       try {
-        await runWithArgs(args);
-      } catch (e) {
-        const errorMsg = e instanceof Error ? e.message : String(e);
-        const hasJsOutput =
-          (expectedJsFileName ? fs.existsSync(path.join(testDir, expectedJsFileName)) : false) ||
-          expectedOutputs.some(o => o.jsCandidates.some(candidate => fs.existsSync(candidate)));
-        const hasDtsOutput =
-          (expectedDtsFileName ? fs.existsSync(path.join(testDir, expectedDtsFileName)) : false) ||
-          expectedOutputs.some(o => o.dtsCandidates.some(candidate => fs.existsSync(candidate)));
-
-        // When --noEmitOnError is set and the compiler exits with errors,
-        // producing no output is correct behavior (tsc does the same).
-        // Return empty output instead of throwing.
-        if (noEmitOnError && !hasJsOutput && !hasDtsOutput) {
-          return { js: '', dts: declaration ? '' : null };
+        const completed = await runWithArgs(args);
+        return collectResult(outcomeWithWitnesses(0, completed.stdout, completed.stderr));
+      } catch (error) {
+        const failure = error as {
+          code?: number | string;
+          killed?: boolean;
+          signal?: string;
+          stdout?: unknown;
+          stderr?: unknown;
+        };
+        if (failure.killed) {
+          throw new Error(`TIMEOUT:${this.compiler.label}`);
         }
-        if (declaration && (noDtsEmitExpected || expectedDtsContent === null) && !hasDtsOutput) {
-          // Some declaration baselines have no .d.ts output because declaration
-          // serialization itself failed (for example TS6232), without an
-          // explicit @noEmitOnError directive. Keep any JS output and let the
-          // runner verify that no DTS content was produced.
-        }
-
-        // Declaration mode can fail on unresolved imports in isolated baseline snippets.
-        // Retry with noCheck/noLib to still exercise declaration printer paths.
-        const shouldRetryDeclarationFastPath =
-          declaration &&
-          (errorMsg.includes('TS2307') || errorMsg.includes('TS2304'));
-        if (declaration && (noDtsEmitExpected || expectedDtsContent === null) && !hasDtsOutput) {
-          // handled above
-        } else if (declaration && hasDtsOutput) {
-          // Keep the checked declaration output when the compile already emitted it.
-          // Retrying with --noCheck discards semantic type information and can turn
-          // otherwise-correct `.d.ts` output into `any`.
-          //
-          // This still matches tsc behavior: diagnostics do not suppress declaration
-          // emit by default unless --noEmitOnError is set.
-        } else if (!shouldRetryDeclarationFastPath) {
-          // Match tsc behavior: diagnostics can still produce outputs (exit code 2).
-          // For JS-only emit mode, continue if JS output was generated.
-          if (!declaration && hasJsOutput) {
-            // continue
-          } else if (declaration && hasDtsOutput) {
-            // declaration emit produced output despite diagnostics
-          } else {
-            throw e;
-          }
-        } else {
-          const retryArgs = ['--declaration', '--noCheck', '--noLib'];
-          if (inputFiles.length > 0 || hasEmbeddedTsconfig) {
-            retryArgs.push('--ignoreConfig');
-          }
-          appendCompilerOptionFlags(retryArgs, {
-            alwaysStrict,
-            sourceMap,
-            inlineSourceMap,
-            declarationMap,
-            downlevelIteration,
-            noEmitHelpers,
-            noEmitOnError,
-            importHelpers,
-            esModuleInterop,
-            useDefineForClassFields,
-            experimentalDecorators,
-            emitDecoratorMetadata,
-            strictNullChecks,
-            exactOptionalPropertyTypes,
-            jsx,
-            jsxFactory,
-            jsxFragmentFactory,
-            jsxImportSource,
-            moduleDetection,
-            preserveConstEnums,
-            verbatimModuleSyntax,
-            rewriteRelativeImportExtensions,
-            isolatedModules,
-            importsNotUsedAsValues,
-            preserveValueImports,
-            removeComments,
-            stripInternal,
-            baseUrl,
-            outFile,
-            outDir,
-            declarationDir,
-            rootDir,
-          });
-          retryArgs.push(...trailingArgs);
-          await runWithArgs(retryArgs);
-        }
+        if (failure.signal) throw new Error(`CRASH:${this.compiler.label}:${failure.signal}`);
+        if (typeof failure.code !== 'number') throw error;
+        return collectResult(outcomeWithWitnesses(
+          failure.code,
+          failure.stdout,
+          failure.stderr,
+        ));
       }
-
-      // Read output files
-      let js = '';
-      let dts: string | null = null;
-
-      const normalizeOutputRelPath = (filePath: string): string => {
-        return path.relative(testDir, filePath).split(path.sep).join('/').replace(/\\/g, '/');
-      };
-
-      const normalizeRequestedOutputName = (name: string): string => {
-        return name.replace(/^[/\\]+/, '').replace(/\\/g, '/');
-      };
-
-      const normalizeComparableOutput = (content: string): string => {
-        return content.replace(/\r\n/g, '\n').trim();
-      };
-
-      const collectExistingOutputPaths = (dtsMode: boolean): string[] => {
-        const seen = new Set<string>();
-        const existing: string[] = [];
-        for (const out of expectedOutputs) {
-          const candidates = dtsMode ? out.dtsCandidates : out.jsCandidates;
-          for (const candidate of candidates) {
-            if (!fs.existsSync(candidate)) continue;
-            const relPath = normalizeOutputRelPath(candidate);
-            if (!seen.has(relPath)) {
-              seen.add(relPath);
-              existing.push(candidate);
-            }
-            break;
-          }
-        }
-        return existing.sort((a, b) => normalizeOutputRelPath(a).localeCompare(normalizeOutputRelPath(b)));
-      };
-
-      const resolveNamedOutputPath = (
-        name: string | undefined,
-        dtsMode: boolean,
-        expectedContent?: string | null,
-      ): string | null => {
-        if (!name) return null;
-        const normalizedName = normalizeRequestedOutputName(name);
-        const existingOutputs = collectExistingOutputPaths(dtsMode);
-        if (normalizedName.includes('/')) {
-          const exactMatch = existingOutputs.find(candidate => normalizeOutputRelPath(candidate) === normalizedName);
-          if (exactMatch) return exactMatch;
-        }
-        const basename = path.posix.basename(normalizedName);
-        const basenameMatches = existingOutputs.filter(candidate => {
-          return path.posix.basename(normalizeOutputRelPath(candidate)) === basename;
-        });
-        if (basenameMatches.length > 0) {
-          if (expectedContent != null) {
-            const normalizedExpected = normalizeComparableOutput(expectedContent);
-            for (const candidate of basenameMatches) {
-              const candidateContent = fs.readFileSync(candidate, 'utf-8');
-              if (normalizeComparableOutput(candidateContent) === normalizedExpected) {
-                return candidate;
-              }
-            }
-          }
-          return basenameMatches[basenameMatches.length - 1];
-        }
-        if (!dtsMode) {
-          const jsStem = (fileName: string): string => {
-            return path.posix.basename(fileName).replace(/\.(js|jsx|mjs|cjs)$/i, '');
-          };
-          const requestedStem = jsStem(normalizedName);
-          const stemMatches = existingOutputs.filter(candidate => {
-            return jsStem(normalizeOutputRelPath(candidate)) === requestedStem;
-          });
-          if (stemMatches.length > 0) {
-            if (expectedContent != null) {
-              const normalizedExpected = normalizeComparableOutput(expectedContent);
-              for (const candidate of stemMatches) {
-                const candidateContent = fs.readFileSync(candidate, 'utf-8');
-                if (normalizeComparableOutput(candidateContent) === normalizedExpected) {
-                  return candidate;
-                }
-              }
-            }
-            return stemMatches[stemMatches.length - 1];
-          }
-        }
-        const directPath = path.join(testDir, normalizedName);
-        if (fs.existsSync(directPath)) return directPath;
-        return null;
-      };
-
-      const readNamedOutput = (
-        name: string | undefined,
-        dtsMode: boolean,
-        expectedContent?: string | null,
-      ): string | null => {
-        const outPath = resolveNamedOutputPath(name, dtsMode, expectedContent);
-        if (!outPath) return null;
-        return fs.readFileSync(outPath, 'utf-8');
-      };
-
-      const readFirstExisting = (candidates: string[]): string | null => {
-        const existing = firstExistingOutput(candidates);
-        return existing?.content ?? null;
-      };
-
-      const firstExistingOutput = (candidates: string[]): { path: string; content: string } | null => {
-        for (const candidate of candidates) {
-          if (fs.existsSync(candidate)) {
-            return { path: candidate, content: fs.readFileSync(candidate, 'utf-8') };
-          }
-        }
-        return null;
-      };
-
-      const namedJs = readNamedOutput(expectedJsFileName, false, expectedJsContent);
-      if (namedJs !== null) {
-        js = namedJs;
-      } else {
-        const chunks: string[] = [];
-        let sawUseStrict = false;
-        for (const out of [...expectedOutputs].sort((a, b) => {
-          return normalizeOutputRelPath(a.jsPath).localeCompare(normalizeOutputRelPath(b.jsPath));
-        })) {
-          const chunkContent = readFirstExisting(out.jsCandidates);
-          if (chunkContent !== null) {
-            let chunk = chunkContent;
-            const strictPrefix = /^\s*["']use strict["'];\s*/;
-            if (sawUseStrict) {
-              chunk = chunk.replace(strictPrefix, '');
-            } else if (strictPrefix.test(chunk)) {
-              sawUseStrict = true;
-            }
-            chunks.push(chunk);
-          }
-        }
-        js = chunks.join('');
-      }
-      js = dedupeUseStrictPreamble(js);
-      // Only CJS (1) needs "use strict" compensation for JS input files.
-      // AMD (2) and UMD (3) add "use strict" inside their wrapper functions.
-      // Preserve (200) keeps ESM as ESM, which is implicitly strict.
-      const commonJsLikeModule = module === 1;
-      if (hasJsInput && commonJsLikeModule && !hasUseStrictPreamble(js)) {
-        js = `"use strict";\n${js}`;
-      }
-      if (hasJsInput) {
-        js = normalizeLeadingTripleSlashSpacing(js);
-      }
-
-      if (declaration) {
-        const hasMultifileDtsExpectation = expectedDtsContent?.includes('//// [') === true;
-        const namedDts = hasMultifileDtsExpectation
-          ? null
-          : readNamedOutput(expectedDtsFileName, true, expectedDtsContent);
-        if (namedDts !== null) {
-          dts = namedDts;
-        } else {
-          const dtsChunks: string[] = [];
-          for (const out of [...expectedOutputs].sort((a, b) => {
-            return normalizeOutputRelPath(a.dtsPath).localeCompare(normalizeOutputRelPath(b.dtsPath));
-          })) {
-            const dtsOutput = firstExistingOutput(out.dtsCandidates);
-            if (dtsOutput !== null) {
-              if (hasMultifileDtsExpectation && dtsChunks.length > 0) {
-                dtsChunks.push(`//// [${normalizeOutputRelPath(dtsOutput.path)}]\n`);
-              }
-              dtsChunks.push(dtsOutput.content);
-            }
-          }
-          dts = dtsChunks.length > 0 ? dtsChunks.join('') : null;
-        }
-      }
-
-      return { js, dts };
     } catch (e) {
       // Handle timeout (execFile sends SIGKILL on timeout)
       if (e instanceof Error && 'killed' in e && ((e as any).signal === 'SIGKILL' || (e as any).signal === 'SIGTERM')) {
-        throw new Error('TIMEOUT');
+        throw new Error(`TIMEOUT:${this.compiler.label}`);
       }
       throw e;
     } finally {
-      try { fs.rmSync(testDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(testScopeDir, { recursive: true, force: true }); } catch {}
     }
   }
 
@@ -866,51 +902,12 @@ export class CliTranspiler {
       try { child.kill('SIGKILL'); } catch {}
     }
     this.activeChildren.clear();
+    this.typescriptDiagnostics?.close();
+    this.typescriptDiagnostics = undefined;
 
     if (fs.existsSync(this.tempDir)) {
       fs.rmSync(this.tempDir, { recursive: true, force: true });
     }
   }
 
-  private writeRootConfigForEmbeddedTsconfig(testDir: string, files: SourceInputFile[]): void {
-    if (files.some(file => file.name.replace(/^\/+/, '').replace(/\\/g, '/') === 'tsconfig.json')) {
-      return;
-    }
-
-    const embedded = files.find(file => file.name.replace(/\\/g, '/').endsWith('/tsconfig.json'));
-    if (!embedded) return;
-
-    let config: unknown;
-    try {
-      config = JSON.parse(embedded.content);
-    } catch {
-      return;
-    }
-    if (!config || typeof config !== 'object') return;
-
-    const configObject = config as Record<string, unknown>;
-    const compilerOptions = configObject.compilerOptions;
-    if (!compilerOptions || typeof compilerOptions !== 'object') return;
-    const embeddedCompilerOptions = compilerOptions as Record<string, unknown>;
-    if (
-      typeof embeddedCompilerOptions.baseUrl !== 'string' &&
-      embeddedCompilerOptions.paths === undefined
-    ) {
-      return;
-    }
-
-    const rootConfig = {
-      ...configObject,
-      compilerOptions: { ...embeddedCompilerOptions },
-    };
-    const rootCompilerOptions = rootConfig.compilerOptions as Record<string, unknown>;
-    const configDir = path.posix.dirname(embedded.name.replace(/^\/+/, '').replace(/\\/g, '/'));
-    if (typeof rootCompilerOptions.baseUrl === 'string') {
-      rootCompilerOptions.baseUrl = path.posix
-        .normalize(path.posix.join(configDir, rootCompilerOptions.baseUrl))
-        .replace(/^\.$/, '');
-    }
-
-    fs.writeFileSync(path.join(testDir, 'tsconfig.json'), JSON.stringify(rootConfig, null, 2), 'utf-8');
-  }
 }

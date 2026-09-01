@@ -227,6 +227,28 @@ Candidates: 10 (8 runnable, 1 unsupported, 1 skipped)
     def test_readme_parser_returns_none_without_markers(self):
         self.assertIsNone(query_conformance.conformance_summary_from_readme_text("no markers here"))
 
+    def test_readme_parser_rejects_unmatched_or_duplicate_markers(self):
+        valid_claim = "Progress: 100.0% (10/10 tests)"
+        for text in (
+            f"<!-- CONFORMANCE_START -->\n{valid_claim}",
+            f"{valid_claim}\n<!-- CONFORMANCE_END -->",
+            (
+                "<!-- CONFORMANCE_START -->\n"
+                f"{valid_claim}\n"
+                "<!-- CONFORMANCE_END -->\n"
+                "<!-- CONFORMANCE_END -->"
+            ),
+            (
+                "<!-- CONFORMANCE_START -->\n"
+                "<!-- CONFORMANCE_START -->\n"
+                f"{valid_claim}\n"
+                "<!-- CONFORMANCE_END -->"
+            ),
+        ):
+            self.assertIsNone(
+                query_conformance.conformance_summary_from_readme_text(text), text
+            )
+
     def test_freshness_status_reports_stale_when_readme_leads_detail(self):
         status = query_conformance.conformance_readme_freshness_status(
             {"passed": 11430, "runnable": 12043},
@@ -316,18 +338,33 @@ Candidates: 10 (8 runnable, 1 unsupported, 1 skipped)
         self.assertEqual(exit_code, 0)
         self.assertIn("aggregate-match", stderr.getvalue())
 
-    def test_committed_conformance_detail_is_not_stale_relative_to_readme(self):
-        """Guard against conformance-detail.json silently drifting behind the
-        public README aggregate (the class of bug #16031 measured: README and
-        the committed detail file disagreeing about the passed/runnable count).
-        """
-        detail_summary = query_conformance.conformance_detail_summary(query_conformance.load_detail())
+    def test_committed_conformance_claim_is_not_ahead_of_detail(self):
+        """Keep any current public claim behind the committed detail artifact."""
+        detail_summary = query_conformance.conformance_detail_summary(
+            query_conformance.load_detail()
+        )
+        readme_text = query_conformance.README_FILE.read_text(encoding="utf-8")
         public_summary = query_conformance.conformance_summary_from_readme()
+        if "<!-- CONFORMANCE_START -->" not in readme_text:
+            self.assertNotIn(
+                "<!-- CONFORMANCE_END -->",
+                readme_text,
+                "README contains an unmatched conformance aggregate marker",
+            )
+            self.assertIn(
+                "## Frozen legacy checkpoint",
+                readme_text,
+                "README must either publish a checked current aggregate or identify "
+                "its conformance numbers as frozen legacy evidence",
+            )
+            return
         self.assertIsNotNone(
             public_summary,
-            "README conformance aggregate block missing; cannot evaluate freshness",
+            "README conformance aggregate block is malformed; cannot evaluate freshness",
         )
-        status = query_conformance.conformance_readme_freshness_status(detail_summary, public_summary)
+        status = query_conformance.conformance_readme_freshness_status(
+            detail_summary, public_summary
+        )
         self.assertIn(
             status["state"],
             ("aggregate-match", "detail-ahead"),
@@ -336,7 +373,6 @@ Candidates: 10 (8 runnable, 1 unsupported, 1 skipped)
             f"({status}); refresh conformance-detail.json or README.md's "
             "CONFORMANCE block before landing conformance metric claims.",
         )
-
 
 if __name__ == "__main__":
     unittest.main()

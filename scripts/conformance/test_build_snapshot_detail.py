@@ -50,6 +50,8 @@ class BuildSnapshotDetailTests(unittest.TestCase):
                 "failed": 1,
                 "unsupported": 1,
                 "skipped": 1,
+                "crashed": 0,
+                "timeout": 0,
                 "known_failures": 0,
             },
         )
@@ -62,6 +64,28 @@ class BuildSnapshotDetailTests(unittest.TestCase):
             },
         )
         self.assertEqual(set(detail["failures"]), {"fail.ts"})
+        self.assertEqual(detail["terminal_failures"], {})
+
+    def test_preserves_crash_and_timeout_identities(self):
+        tests = {
+            "crash.ts": {"status": "CRASH", "expected": [], "actual": []},
+            "slow.ts": {"status": "TIMEOUT", "expected": [], "actual": []},
+        }
+        provenance = {"git": {"dirty": False}}
+        detail = build_snapshot_detail.build_snapshot_detail(
+            tests, provenance=provenance
+        )
+
+        self.assertEqual(detail["summary"]["crashed"], 1)
+        self.assertEqual(detail["summary"]["timeout"], 1)
+        self.assertEqual(
+            detail["terminal_failures"],
+            {
+                "crash.ts": {"status": "CRASH"},
+                "slow.ts": {"status": "TIMEOUT"},
+            },
+        )
+        self.assertEqual(detail["provenance"], provenance)
 
     def test_git_sha_is_stamped_when_provided(self):
         tests = {"pass.ts": {"status": "PASS", "expected": [], "actual": []}}

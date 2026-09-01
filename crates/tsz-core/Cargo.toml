@@ -2,126 +2,216 @@
 name = "tsz-core"
 version.workspace = true
 edition.workspace = true
-autotests = false
-description = "Core TypeScript compiler and type checker library"
+description = "Clean-slate TypeScript compiler engine"
 repository.workspace = true
+homepage.workspace = true
 license.workspace = true
 authors.workspace = true
-homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 readme.workspace = true
-exclude = [
-    "TypeScript/**",
-    "tests/**",
-    "benches/**",
-    "scripts/**",
-    "docs/**",
-    "artifacts/**",
-    "logs/**",
-    "pkg/**",
-    "wasm/**",
-    "tmp/**",
-    "target/**",
-    ".claude/**",
-    ".gemini/**",
-    ".github/**",
-    ".config/**",
-    "debug*.ts",
-    "debug*.js",
-    "test*.ts",
-    "test*.js",
-    "*.py",
-    "out*.txt",
-    "output.txt",
-    "yek.yaml",
-]
+publish = false
+autotests = false
+autobenches = false
 
 [lib]
+name = "tsz"
 crate-type = ["rlib"]
 
-[features]
-default = ["dts"]
-dts = ["tsz-emitter/dts"]
-
 [dependencies]
-tsz-common = { workspace = true }
-tsz-scanner = { workspace = true }
-tsz-parser = { workspace = true }
-tsz-binder = { workspace = true }
-tsz-solver = { workspace = true }
-tsz-lowering = { workspace = true }
-tsz-checker = { workspace = true }
-tsz-emitter = { workspace = true, default-features = false }
-tsz-lsp = { workspace = true }
-anyhow = { workspace = true }
-wasm-bindgen = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde-wasm-bindgen = { workspace = true }
-rustc-hash = { workspace = true }
-indexmap = { workspace = true }
-rayon = { workspace = true }
-tracing = { workspace = true }
-once_cell = { workspace = true }
-bincode = { workspace = true }
+rayon.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-ident.workspace = true
 
 [dev-dependencies]
-criterion = { workspace = true }
-once_cell = { workspace = true }
-tempfile = { workspace = true }
+criterion.workspace = true
+tempfile.workspace = true
 
-[[bench]]
-name = "scanner_bench"
-harness = false
+[[test]]
+name = "rewrite_foundation"
+path = "rewrite-tests/foundation.rs"
 
-[[bench]]
-name = "parser_bench"
-harness = false
+[[test]]
+name = "rewrite_standard_library"
+path = "rewrite-tests/standard_library.rs"
 
-[[bench]]
-name = "emitter_bench"
-harness = false
+[[test]]
+name = "rewrite_project_config"
+path = "rewrite-tests/project_config.rs"
 
-[[bench]]
-name = "real_world_bench"
-harness = false
+[[test]]
+name = "rewrite_semantic_completion"
+path = "rewrite-tests/semantic_completion.rs"
 
-[[bench]]
-name = "solver_bench"
-harness = false
+[[test]]
+name = "rewrite_emit_identifier_recovery"
+path = "rewrite-tests/emit_identifier_recovery.rs"
 
-[[bench]]
-name = "cfa_bench"
-harness = false
+[[test]]
+name = "rewrite_type_members"
+path = "rewrite-tests/type_members.rs"
 
-[[bench]]
-name = "parallel_bench"
-harness = false
+[[test]]
+name = "rewrite_recursive_expansion"
+path = "rewrite-tests/recursive_expansion.rs"
 
-[[bench]]
-name = "union_reduction_bench"
-harness = false
+[[test]]
+name = "rewrite_interface_heritage"
+path = "rewrite-tests/interface_heritage.rs"
 
-[[bench]]
-name = "union_literal_reduce_bench"
-harness = false
+[[test]]
+name = "rewrite_import_aliases"
+path = "rewrite-tests/import_aliases.rs"
 
-[[bench]]
-name = "object_subtype_bench"
-harness = false
+[[test]]
+name = "rewrite_reference_instantiation"
+path = "rewrite-tests/reference_instantiation.rs"
 
-[[bench]]
-name = "phase_timing_bench"
-harness = false
+[[test]]
+name = "rewrite_declaration_host_completion"
+path = "rewrite-tests/declaration_host_completion.rs"
 
-[[bench]]
-name = "conditional_mapped_eval_bench"
-harness = false
+[[test]]
+name = "rewrite_template_literals"
+path = "rewrite-tests/template_literals.rs"
 
-[[bench]]
-name = "contextual_callback_reentry_bench"
-harness = false
+[[test]]
+name = "rewrite_template_literal_variables"
+path = "rewrite-tests/template_literal_variables.rs"
+
+[[test]]
+name = "rewrite_template_literal_comments"
+path = "rewrite-tests/template_literal_comments.rs"
+
+[[test]]
+name = "rewrite_regular_expression_literals"
+path = "rewrite-tests/regular_expression_literals.rs"
+
+[[test]]
+name = "rewrite_extended_unicode_string_literals"
+path = "rewrite-tests/extended_unicode_string_literals.rs"
+
+[[test]]
+name = "rewrite_numeric_literal_recovery"
+path = "rewrite-tests/numeric_literal_recovery.rs"
+
+[[test]]
+name = "rewrite_numeric_literal_separators"
+path = "rewrite-tests/numeric_literal_separators.rs"
+
+[[test]]
+name = "rewrite_string_line_continuations"
+path = "rewrite-tests/string_line_continuations.rs"
+
+[[test]]
+name = "rewrite_capability_analysis"
+path = "rewrite-tests/capability_analysis.rs"
+
+[[test]]
+name = "rewrite_parser_recovery_completion"
+path = "rewrite-tests/parser_recovery_completion.rs"
+
+[[test]]
+name = "rewrite_function_expressions"
+path = "rewrite-tests/function_expressions.rs"
+
+[[test]]
+name = "rewrite_object_literal_methods"
+path = "rewrite-tests/object_literal_methods.rs"
+
+[[test]]
+name = "rewrite_binary_unsigned_shift"
+path = "rewrite-tests/binary_unsigned_shift.rs"
+
+[[test]]
+name = "rewrite_conditional_expressions"
+path = "rewrite-tests/conditional_expressions.rs"
+
+[[test]]
+name = "rewrite_instanceof_expression"
+path = "rewrite-tests/instanceof_expression.rs"
+
+[[test]]
+name = "rewrite_variable_declaration_grammar"
+path = "rewrite-tests/variable_declaration_grammar.rs"
+
+[[test]]
+name = "rewrite_class_property_initialization"
+path = "rewrite-tests/class_property_initialization.rs"
+
+[[test]]
+name = "rewrite_checker_dependency_completion"
+path = "rewrite-tests/checker_dependency_completion.rs"
+
+[[test]]
+name = "rewrite_generic_call_completion"
+path = "rewrite-tests/generic_call_completion.rs"
+
+[[test]]
+name = "rewrite_generic_call_identity"
+path = "rewrite-tests/generic_call_identity.rs"
+
+[[test]]
+name = "rewrite_flow_dependency_completion"
+path = "rewrite-tests/flow_dependency_completion.rs"
+
+[[test]]
+name = "rewrite_this_expression"
+path = "rewrite-tests/this_expression.rs"
+
+[[test]]
+name = "rewrite_element_access"
+path = "rewrite-tests/element_access.rs"
+
+[[test]]
+name = "rewrite_array_search_methods"
+path = "rewrite-tests/array_search_methods.rs"
+
+[[test]]
+name = "rewrite_element_access_containment"
+path = "rewrite-tests/element_access_containment.rs"
+
+[[test]]
+name = "rewrite_flow_reference"
+path = "rewrite-tests/flow_reference.rs"
+
+[[test]]
+name = "rewrite_file_nocheck_pragma"
+path = "rewrite-tests/file_nocheck_pragma.rs"
+
+[[test]]
+name = "rewrite_javascript_assignment_declarations"
+path = "rewrite-tests/javascript_assignment_declarations.rs"
+
+[[test]]
+name = "rewrite_emit_comments"
+path = "rewrite-tests/emit_comments.rs"
+
+[[test]]
+name = "rewrite_type_member_identity"
+path = "rewrite-tests/type_member_identity.rs"
+
+[[test]]
+name = "rewrite_restricted_production_line_terminators"
+path = "rewrite-tests/restricted_production_line_terminators.rs"
+
+[[test]]
+name = "rewrite_diagnostic_identity"
+path = "rewrite-tests/diagnostic_identity.rs"
+
+[[test]]
+name = "rewrite_using_declaration_modifiers"
+path = "rewrite-tests/using_declaration_modifiers.rs"
+
+[[test]]
+name = "rewrite_deferred_compiler_options"
+path = "rewrite-tests/deferred_compiler_options.rs"
+
+[[test]]
+name = "rewrite_config_option_classification"
+path = "rewrite-tests/config_option_classification.rs"
 
 [lints]
 workspace = true

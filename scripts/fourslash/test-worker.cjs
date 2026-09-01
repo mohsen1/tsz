@@ -13,27 +13,8 @@
 "use strict";
 
 const path = require("path");
-const fs = require("fs");
 const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
-
-// Module-level cache for TypeScript lib .d.ts files.
-// Populated once at worker startup; reused across all native LS instances in
-// this worker process to avoid repeated readFileSync calls for the same files.
-const libFileContentCache = new Map(); // absolute path -> string content
-
-// Pre-load lib.*.d.ts files from builtLocal into memory. Best-effort: the
-// per-call fallback in createNativeHost still reads from disk on any miss.
-function preloadLibFiles(builtLocal) {
-    try {
-        for (const name of fs.readdirSync(builtLocal)) {
-            if (name.startsWith("lib.") && name.endsWith(".d.ts")) {
-                const fullPath = path.join(builtLocal, name);
-                try { libFileContentCache.set(fullPath, fs.readFileSync(fullPath, "utf-8")); }
-                catch { /* skip unreadable files; per-call fallback handles them */ }
-            }
-        }
-    } catch { /* best-effort */ }
-}
+const { patchSessionClient } = require("./runner-session-client.cjs");
 
 // Per-test timeout (ms) - tests taking longer are killed. Fallback only:
 // runner.cjs always passes testTimeout explicitly (see its own default).
@@ -45,49 +26,6 @@ const MEMORY_CHECK_INTERVAL = 25;
 // Reset tsz-server session state after each test. Restart only when the bridge
 // itself looks unhealthy; process startup dominates fourslash CI wall time.
 const RESTART_BRIDGE_EVERY_TEST = false;
-// Temporary parity allowlist for known stragglers in the current campaign slice.
-// Keep this list narrow and remove entries as real parity fixes land.
-const TEMP_PARITY_ALLOWLIST = new Set([
-    "annotatewithtypefromjsdoc16",
-    "autoimportmodulenone1",
-    "autoimporttypeonlypreferred1",
-    "autoimporttypeonlypreferred3",
-    "bestcommontypeobjectliterals",
-    "bestcommontypeobjectliterals1",
-    "automaticconstructortoggling",
-    "calledunionsofdissimilartyeshavegooddisplay",
-    "circulargettypeatlocation",
-    "cloduleasbaseclass",
-    "cloduleasbaseclass2",
-    "classsymbollookup",
-    "codecompletionescaping",
-    "codefixcannotfindmodule_suggestion_falsepositive",
-    "codefixclassimplementinterfaceindexsignaturesstring",
-    "codefixclassimplementinterfaceinheritsabstractmethod",
-    "codefixclassimplementinterfacemultipleimplements2",
-    "codefixcorrectreturnvalue28",
-]);
-
-function isTemporarilyAllowedParityFailure(testName, errMsg) {
-    const normalizedName = String(testName || "").toLowerCase();
-    if (!TEMP_PARITY_ALLOWLIST.has(normalizedName)) return false;
-    const message = String(errMsg || "");
-    return (
-        message.length === 0 ||
-        message.includes("Should find exactly one codefix") ||
-        message.includes("Should find at least") ||
-        message.includes("No codefixes returned.") ||
-        message.includes("quick info text") ||
-        message.includes("to deeply equal") ||
-        message.includes("to equal") ||
-        message.includes("Includes: completion") ||
-        message.includes("Excludes: unexpected completion") ||
-        message.includes("isNewIdentifierLocation") ||
-        message.includes("Cannot read properties of undefined") ||
-        message.includes("Found an error:") ||
-        message.includes("Timeout waiting for tsz-server response")
-    );
-}
 
 function setupGlobals(tsDir) {
     try {
@@ -137,56 +75,7 @@ function loadHarnessModules(tsDir) {
             watchUtils.ensureWatchablePath = () => {};
         }
     } catch { /* best-effort */ }
-    // Fourslash metadata parser still allows legacy `@Module: Node` in tests.
-    // Mirror tsc behavior by accepting Node/NodeJs as CommonJS aliases.
-    try {
-        const moduleOption = ts.optionDeclarations?.find(option => option?.name === "module");
-        if (moduleOption?.type instanceof Map) {
-            const commonJsKind = moduleOption.type.get("commonjs");
-            if (commonJsKind !== undefined) {
-                if (!moduleOption.type.has("node")) moduleOption.type.set("node", commonJsKind);
-                if (!moduleOption.type.has("nodejs")) moduleOption.type.set("nodejs", commonJsKind);
-            }
-        }
-        const originalParseCustomTypeOption = ts.parseCustomTypeOption;
-        if (typeof originalParseCustomTypeOption === "function") {
-            ts.parseCustomTypeOption = (option, value, errors) => {
-                let normalizedValue = value;
-                if (option?.name === "module" && typeof value === "string") {
-                    const lower = value.trim().toLowerCase();
-                    if (lower === "node" || lower === "nodejs") {
-                        normalizedValue = "commonjs";
-                    }
-                }
-                return originalParseCustomTypeOption(option, normalizedValue, errors);
-            };
-        }
-    } catch {
-        // Best-effort compatibility shim; leave harness unchanged on failures.
-    }
     const Harness = require(path.join(builtDir, "harness/_namespaces/Harness.js"));
-    try {
-        const compilerNamespace = Harness?.Compiler;
-        const originalSetCompilerOptionsFromHarnessSetting = compilerNamespace?.setCompilerOptionsFromHarnessSetting;
-        if (typeof originalSetCompilerOptionsFromHarnessSetting === "function") {
-            compilerNamespace.setCompilerOptionsFromHarnessSetting = (settings, options) => {
-                const normalizedSettings = settings && typeof settings === "object" ? { ...settings } : settings;
-                if (normalizedSettings && typeof normalizedSettings === "object") {
-                    for (const [name, value] of Object.entries(normalizedSettings)) {
-                        if (typeof value !== "string") continue;
-                        if (name.toLowerCase() !== "module") continue;
-                        const normalizedValue = value.trim().toLowerCase();
-                        if (normalizedValue === "node" || normalizedValue === "nodejs") {
-                            normalizedSettings[name] = "commonjs";
-                        }
-                    }
-                }
-                return originalSetCompilerOptionsFromHarnessSetting(normalizedSettings, options);
-            };
-        }
-    } catch {
-        // Best-effort compatibility shim; leave harness unchanged on failures.
-    }
     const FourSlash = require(path.join(builtDir, "harness/_namespaces/FourSlash.js"));
     const HarnessLS = require(path.join(builtDir, "harness/_namespaces/Harness.LanguageService.js"));
     const clientModule = require(path.join(builtDir, "harness/client.js"));
@@ -194,30 +83,13 @@ function loadHarnessModules(tsDir) {
 }
 
 const patchTestState = require("./test-worker-patch-test-state.cjs");
-const patchSessionClientCompletions = require("./test-worker-session-client-completions.cjs");
-const patchSessionClientFixes = require("./test-worker-session-client-fixes.cjs");
-
-/**
- * Patch `SessionClient` to implement methods that throw "Not implemented"
- * by routing them to tsz-server protocol commands.
- */
-function patchSessionClient(SessionClient, ts) {
-    const proto = SessionClient.prototype;
-    const helpers = patchSessionClientCompletions(proto, ts, libFileContentCache);
-    patchSessionClientFixes(proto, ts, helpers);
-}
 
 
 function runSingleTest(FourSlash, Harness, testFile, testType) {
-    globalThis.__tszCurrentFourslashTestFile = testFile;
     const basePath = path.dirname(testFile);
     const content = Harness.IO.readFile(testFile);
     if (content == null) throw new Error(`Could not read test file: ${testFile}`);
-    const normalizedContent = content.replace(
-        /^(\s*\/\/\s*@module\s*:\s*)(nodejs|node)\b/gim,
-        "$1commonjs"
-    );
-    FourSlash.runFourSlashTestContent(basePath, testType, normalizedContent, testFile);
+    FourSlash.runFourSlashTestContent(basePath, testType, content, testFile);
 }
 
 /**
@@ -256,8 +128,6 @@ async function main() {
     // Set up globals and load harness
     setupGlobals(tsDir);
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
-
-    preloadLibFiles(path.join(tsDir, "built/local"));
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     const startBridgeWithRetries = async (candidateBridge, attempts = 4) => {
@@ -336,24 +206,10 @@ async function main() {
                 shouldRestartBridge = true;
                 restartReason = `post-failure recovery for ${testName}`;
             }
-            if (isTemporarilyAllowedParityFailure(testName, errMsg)) {
-                process.send({
-                    type: "result",
-                    workerId,
-                    testFile,
-                    testName,
-                    passed: false,
-                    xfailed: true,
-                    error: errMsg,
-                    elapsed,
-                    timedOut,
-                });
-            } else {
-                process.send({
-                    type: "result", workerId, testFile, testName,
-                    passed: false, error: errMsg, elapsed, timedOut,
-                });
-            }
+            process.send({
+                type: "result", workerId, testFile, testName,
+                passed: false, error: errMsg, elapsed, timedOut,
+            });
         }
 
         testsRun++;

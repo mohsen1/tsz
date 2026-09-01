@@ -19,6 +19,9 @@ pub struct FileMetadata {
     /// TypeScript version used to generate this cache entry.
     #[serde(default)]
     pub typescript_version: Option<String>,
+    /// SHA-256 of the exact raw candidate bytes used by the oracle.
+    #[serde(default)]
+    pub source_sha256: String,
 }
 
 /// TSC diagnostic result from cache
@@ -27,15 +30,30 @@ pub struct TscResult {
     /// File metadata for cache validation
     pub metadata: FileMetadata,
 
-    /// Error codes reported by TSC (sorted, unique)
+    /// Error codes reported by TSC in canonical order, with multiplicity.
     pub error_codes: Vec<u32>,
 
-    /// Diagnostic fingerprints with location and normalized message details.
+    /// Diagnostic fingerprints with location and byte-preserved message details.
     ///
     /// This enables richer mismatch tracking than code-only comparisons.
     /// Defaults to empty for backward compatibility with older cache files.
     #[serde(default)]
     pub diagnostic_fingerprints: Vec<DiagnosticFingerprint>,
+
+    /// Whether every oracle diagnostic was parsed as a complete primary block,
+    /// including its ordered continuation/related-information lines.
+    ///
+    /// Old caches default to `false`; every such entry, including an
+    /// expected-clean row, is rejected before TSZ is invoked until the pinned
+    /// oracle is regenerated.
+    #[serde(default)]
+    pub diagnostic_blocks_complete: bool,
+
+    /// Exact ordinary process exit for each TS7-selected configuration, in
+    /// selector order. Only 0, 1, and 2 are compiler outcomes; missing or
+    /// other values are incomplete oracle evidence.
+    #[serde(default)]
+    pub ordinary_exit_statuses: Vec<u8>,
 }
 
 /// Stable diagnostic identity used for richer conformance comparisons.
@@ -48,6 +66,9 @@ pub struct DiagnosticFingerprint {
     pub line: u32,
     pub column: u32,
     pub message_key: String,
+    /// Ordered, byte-preserving continuation lines owned by this primary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuations: Vec<String>,
 }
 
 impl DiagnosticFingerprint {
@@ -58,26 +79,9 @@ impl DiagnosticFingerprint {
             file,
             line,
             column,
-            message_key: Self::normalize_message_key(message),
+            message_key: message.to_string(),
+            continuations: Vec::new(),
         }
-    }
-
-    /// Best-effort message normalization to reduce noisy text differences.
-    fn normalize_message_key(message: &str) -> String {
-        let mut normalized = String::with_capacity(message.len());
-        let mut prev_space = false;
-        for ch in message.trim().chars() {
-            if ch.is_whitespace() {
-                if !prev_space {
-                    normalized.push(' ');
-                    prev_space = true;
-                }
-            } else {
-                normalized.push(ch);
-                prev_space = false;
-            }
-        }
-        normalized
     }
 
     /// Human-readable compact key for summaries.
@@ -87,10 +91,15 @@ impl DiagnosticFingerprint {
         } else {
             self.file.as_str()
         };
-        format!(
+        let primary = format!(
             "TS{} {}:{}:{} {}",
             self.code, file, self.line, self.column, self.message_key
-        )
+        );
+        if self.continuations.is_empty() {
+            primary
+        } else {
+            format!("{primary}\n{}", self.continuations.join("\n"))
+        }
     }
 }
 
@@ -101,6 +110,7 @@ impl PartialEq for DiagnosticFingerprint {
             && self.line == other.line
             && self.column == other.column
             && self.message_key == other.message_key
+            && self.continuations == other.continuations
     }
 }
 
@@ -111,6 +121,7 @@ impl Hash for DiagnosticFingerprint {
         self.line.hash(state);
         self.column.hash(state);
         self.message_key.hash(state);
+        self.continuations.hash(state);
     }
 }
 
@@ -134,10 +145,14 @@ pub struct TestResultFail {
     pub missing_fingerprints: Vec<DiagnosticFingerprint>,
     /// Extra diagnostic fingerprints (present in tsz but not TSC)
     pub extra_fingerprints: Vec<DiagnosticFingerprint>,
-    /// Full expected diagnostic fingerprints after conformance filtering.
+    /// Full expected diagnostic fingerprints in canonical oracle order.
     pub expected_fingerprints: Vec<DiagnosticFingerprint>,
-    /// Full actual diagnostic fingerprints after conformance filtering.
+    /// Full raw TSZ diagnostic fingerprints in observed process order.
     pub actual_fingerprints: Vec<DiagnosticFingerprint>,
+    /// Ordinary compiler exits, one per selected TS7 configuration.
+    pub expected_exit_statuses: Vec<u8>,
+    /// Fresh TSZ ordinary compiler exits, one per selected configuration.
+    pub actual_exit_statuses: Vec<u8>,
     /// Resolved compiler options used
     pub options: std::collections::HashMap<String, String>,
     /// Known conformance debt reason. These are reported separately and are
@@ -151,6 +166,17 @@ pub enum UnsupportedReason {
     /// No compiler-option configuration selected by the TypeScript 7 harness
     /// is supported by the pinned native compiler.
     TypeScript7Configuration,
+    /// The authored invocation requests module-resolution trace output. The
+    /// diagnostic conformance lane does not compare that second product yet,
+    /// so the row must remain visible but cannot enter the runnable domain.
+    TraceResolutionOutputNotCompared,
+    /// TSZ could not complete a semantic operation required to decide the
+    /// checked result. This is a capability nonclaim, not a compiler crash or
+    /// a synthetic TypeScript diagnostic.
+    SemanticIncomplete,
+    /// The cached TypeScript result predates grouped diagnostic-block
+    /// evidence, so exact message/continuation parity cannot be claimed.
+    OracleDiagnosticEvidenceIncomplete,
 }
 
 impl UnsupportedReason {
@@ -158,6 +184,11 @@ impl UnsupportedReason {
     pub const fn code(self) -> &'static str {
         match self {
             Self::TypeScript7Configuration => "typescript-7-unsupported-configuration",
+            Self::TraceResolutionOutputNotCompared => "trace-resolution-output-not-compared",
+            Self::SemanticIncomplete => "tsz-semantic-incomplete",
+            Self::OracleDiagnosticEvidenceIncomplete => {
+                "typescript-7-diagnostic-evidence-incomplete"
+            }
         }
     }
 }
@@ -260,6 +291,8 @@ impl ErrorFrequency {
 /// Statistics for test run
 #[derive(Debug, Default)]
 pub struct TestStats {
+    /// Number of paths selected for this invocation before execution starts.
+    pub selected: AtomicUsize,
     pub total: AtomicUsize,
     pub passed: AtomicUsize,
     pub failed: AtomicUsize,
@@ -274,6 +307,27 @@ pub struct TestStats {
 }
 
 impl TestStats {
+    /// Every selected path must own exactly one terminal result.
+    pub fn has_result_bijection(&self) -> bool {
+        let total = self.total.load(Ordering::SeqCst);
+        let partition = self.passed.load(Ordering::SeqCst)
+            + self.failed.load(Ordering::SeqCst)
+            + self.skipped.load(Ordering::SeqCst)
+            + self.unsupported.load(Ordering::SeqCst)
+            + self.crashed.load(Ordering::SeqCst)
+            + self.timeout.load(Ordering::SeqCst);
+        self.selected.load(Ordering::SeqCst) > 0
+            && total == self.selected.load(Ordering::SeqCst)
+            && partition == total
+    }
+
+    /// Failures, crashes, and timeouts are all terminal conformance failures.
+    pub fn has_terminal_failure(&self) -> bool {
+        self.failed.load(Ordering::SeqCst) > 0
+            || self.crashed.load(Ordering::SeqCst) > 0
+            || self.timeout.load(Ordering::SeqCst) > 0
+    }
+
     /// Number of tests in the runnable oracle domain.
     pub fn runnable(&self) -> usize {
         let total = self.total.load(Ordering::SeqCst);
@@ -306,7 +360,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     #[test]
-    fn diagnostic_fingerprint_normalizes_whitespace_and_display_uses_unknown_file() {
+    fn diagnostic_fingerprint_preserves_message_bytes_and_display_uses_unknown_file() {
         let fingerprint = DiagnosticFingerprint::new(
             2307,
             String::new(),
@@ -315,20 +369,20 @@ mod tests {
             "  Cannot   find\nmodule\t'foo'  ",
         );
 
-        assert_eq!(fingerprint.message_key, "Cannot find module 'foo'");
+        assert_eq!(fingerprint.message_key, "  Cannot   find\nmodule\t'foo'  ");
         assert_eq!(
             fingerprint.display_key(),
-            "TS2307 <unknown>:12:4 Cannot find module 'foo'"
+            "TS2307 <unknown>:12:4   Cannot   find\nmodule\t'foo'  "
         );
     }
 
     #[test]
-    fn diagnostic_fingerprint_equality_includes_message_key_normalization() {
+    fn diagnostic_fingerprint_equality_preserves_message_whitespace() {
         let a = DiagnosticFingerprint::new(2322, "file.ts".to_string(), 1, 2, "one   two");
         let b = DiagnosticFingerprint::new(2322, "file.ts".to_string(), 1, 2, "one two");
         let c = DiagnosticFingerprint::new(2322, "file.ts".to_string(), 1, 2, "different");
 
-        assert_eq!(a, b);
+        assert_ne!(a, b);
         assert_ne!(a, c);
     }
 
@@ -381,10 +435,37 @@ mod tests {
     }
 
     #[test]
+    fn result_bijection_and_terminal_failures_are_explicit() {
+        let stats = TestStats::default();
+        assert!(!stats.has_result_bijection());
+        stats.selected.store(2, Ordering::SeqCst);
+        stats.total.store(2, Ordering::SeqCst);
+        stats.passed.store(1, Ordering::SeqCst);
+        stats.crashed.store(1, Ordering::SeqCst);
+        assert!(stats.has_result_bijection());
+        assert!(stats.has_terminal_failure());
+
+        stats.total.store(1, Ordering::SeqCst);
+        assert!(!stats.has_result_bijection());
+    }
+
+    #[test]
     fn unsupported_reason_code_is_stable() {
         assert_eq!(
             UnsupportedReason::TypeScript7Configuration.code(),
             "typescript-7-unsupported-configuration"
+        );
+        assert_eq!(
+            UnsupportedReason::TraceResolutionOutputNotCompared.code(),
+            "trace-resolution-output-not-compared"
+        );
+        assert_eq!(
+            UnsupportedReason::SemanticIncomplete.code(),
+            "tsz-semantic-incomplete"
+        );
+        assert_eq!(
+            UnsupportedReason::OracleDiagnosticEvidenceIncomplete.code(),
+            "typescript-7-diagnostic-evidence-incomplete"
         );
     }
 
@@ -397,8 +478,11 @@ mod tests {
 
         let result: TscResult = serde_json::from_value(value).expect("valid TscResult JSON");
         assert!(result.diagnostic_fingerprints.is_empty());
+        assert!(!result.diagnostic_blocks_complete);
+        assert!(result.ordinary_exit_statuses.is_empty());
         assert_eq!(result.error_codes, vec![2307, 2322]);
         assert_eq!(result.metadata.typescript_version.as_deref(), Some("5.4.0"));
+        assert!(result.metadata.source_sha256.is_empty());
     }
 
     #[test]

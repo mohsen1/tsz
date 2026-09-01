@@ -41,6 +41,7 @@ import {
 import { BENCH_RUNNER_EXCLUDED_ROWS } from "./project-row-summary.mjs";
 import {
   hasCompletePhaseMetadata,
+  hasExactProjectEvidence,
   isGreen,
   isSpeedRatioEligible,
   missingDeclaredRows,
@@ -259,6 +260,7 @@ function rowState(row, duplicate = false) {
   const compat = row.compatibility;
   if (!compat) return "gray";
   if (!hasCompletePhaseMetadata(compat)) return "gray";
+  if (compat.state === "green" && !hasExactProjectEvidence(compat, row.name)) return "gray";
   if (row.status) return "red";
   if (isGreen(row)) return "green";
   if (compat.state === "yellow" || compat.state === "red") return compat.state;
@@ -272,6 +274,7 @@ function applicationCompatibilityState(row, duplicate = false) {
   const compat = row.compatibility;
   if (!compat) return "gray";
   if (!hasCompletePhaseMetadata(compat)) return "gray";
+  if (compat.state === "green" && !hasExactProjectEvidence(compat, row.name)) return "gray";
   if (compat.state === "green" || compat.state === "yellow" || compat.state === "red") {
     return compat.state;
   }
@@ -297,7 +300,8 @@ function hasGreenCompatibilityEvidence(row) {
   return state === "green"
     && exitClass === "exit success"
     && (!diagnosticStatus || diagnosticStatus === "none")
-    && hasCompletePhaseMetadata(compatibility);
+    && hasCompletePhaseMetadata(compatibility)
+    && hasExactProjectEvidence(compatibility, row?.name);
 }
 
 function cleanValidationWarnings(warnings) {
@@ -413,6 +417,19 @@ function analyzeArtifact(artifact, expectedCommit) {
     }
   }
 
+  const invalidProjectEvidenceRows = [];
+  for (const [name, row] of byName) {
+    if (!Object.hasOwn(PROJECT_ROWS_BY_NAME, name)) continue;
+    const compatibility = row?.compatibility;
+    const claimsGreen = String(compatibility?.state || "").toLowerCase() === "green";
+    const hasTimingPair = Number(row?.tsz_ms) > 0 && Number(row?.tsgo_ms) > 0;
+    const claimsWinner = row?.winner === "tsz" || row?.winner === "tsgo";
+    if ((claimsGreen || hasTimingPair || claimsWinner)
+      && !hasExactProjectEvidence(compatibility, name)) {
+      invalidProjectEvidenceRows.push({ name });
+    }
+  }
+
   const compatibilityRow = (name, stateFn) => {
     const row = byName.get(name) ?? null;
     const duplicateCount = duplicateCounts.get(name) ?? (row ? 1 : 0);
@@ -425,7 +442,8 @@ function analyzeArtifact(artifact, expectedCommit) {
       duplicate !== true &&
       row.artifact_missing !== true &&
       row.compatibility != null &&
-      hasCompletePhaseMetadata(row.compatibility)
+      hasCompletePhaseMetadata(row.compatibility) &&
+      (row.compatibility.state !== "green" || hasExactProjectEvidence(row.compatibility, name))
     );
     return {
       name,
@@ -449,6 +467,11 @@ function analyzeArtifact(artifact, expectedCommit) {
         ? compatibility.known_blockers.filter(Boolean).slice(0, 8)
         : [],
       diagnostic_status: compatibility.diagnostic_status ?? null,
+      evidence_schema: compatibility.evidence_schema ?? null,
+      stub_inventory_schema: compatibility.stub_inventory_schema ?? null,
+      stubbed_modules: compatibility.stubbed_modules ?? null,
+      stubbed_any_members: compatibility.stubbed_any_members ?? null,
+      stub_inventory_fingerprint: compatibility.stub_inventory_fingerprint ?? null,
       files_reached: compatibility.files_reached ?? null,
       files_reached_reason: compatibility.files_reached_reason ?? null,
       peak_memory_bytes: compatibility.peak_memory_bytes ?? null,
@@ -533,6 +556,7 @@ function analyzeArtifact(artifact, expectedCommit) {
     measurementProfile: measurementProfileStatus(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
     sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
+    invalidProjectEvidenceRows,
     rows,
     applicationRows,
     applicationMissing,
@@ -544,7 +568,9 @@ function analyzeArtifact(artifact, expectedCommit) {
     greenTimedRowsMissingTimingPairs,
     blockingTimedRowsMissingTimingPairs,
     advisoryTimedRowsMissingTimingPairs,
-    successfulProjectTimingPairs: byState.green.filter((row) => hasSuccessfulTimingPair(row)),
+    successfulProjectTimingPairs: byState.green.filter((row) =>
+      hasSuccessfulTimingPair(byName.get(row.name)),
+    ),
     missing: byState.missing,
     red: byState.red,
     yellow: byState.yellow,
@@ -572,6 +598,7 @@ function buildJson({
   measurementProfile,
   validationWarnings,
   sourceFreshness,
+  invalidProjectEvidenceRows,
   rows,
   applicationRows,
   applicationMissing,
@@ -626,6 +653,7 @@ function buildJson({
     // own merge-stamped status (`partial` when the merge saw the same gap). Null
     // only on the artifact-absent path, alongside `measurement_profile` below.
     required_coverage: requiredCoverage ?? null,
+    invalid_project_evidence_rows: invalidProjectEvidenceRows?.map((row) => row.name) ?? [],
     // Corpus-health verdict (#17561, point 4): the required-measured green/errored
     // split, so a consumer can see a degraded dataset and the gh-pages publish
     // gate can refuse a collapsed one (corpus_health.collapsed). Null only on the
@@ -709,6 +737,11 @@ function buildJson({
       owner_family: r.owner_family,
       known_blockers: r.known_blockers,
       diagnostic_status: r.diagnostic_status,
+      evidence_schema: r.evidence_schema,
+      stub_inventory_schema: r.stub_inventory_schema,
+      stubbed_modules: r.stubbed_modules,
+      stubbed_any_members: r.stubbed_any_members,
+      stub_inventory_fingerprint: r.stub_inventory_fingerprint,
       files_reached: r.files_reached,
       files_reached_reason: r.files_reached_reason,
       peak_memory_bytes: r.peak_memory_bytes,
@@ -793,6 +826,7 @@ function buildReport({
   measurementProfile,
   validationWarnings,
   sourceFreshness,
+  invalidProjectEvidenceRows,
   rows,
   applicationRows,
   applicationMissing,
@@ -842,6 +876,7 @@ function buildReport({
     `| Required-set coverage | ${requiredCoverage.present}/${requiredCoverage.declared} declared present${requiredCoverage.missing ? ` (${requiredCoverage.missing} absent)` : ""}${requiredCoverage.run_status ? ` · run status: ${requiredCoverage.run_status}` : ""} |`,
     `| Corpus health | ${corpusHealth.green}/${corpusHealth.measured} required-measured green${corpusHealth.errored ? `, ${corpusHealth.errored} errored` : ""}${corpusHealth.collapsed ? " · ⛔ COLLAPSED (0 green)" : ""} |`,
     `| Successful project timing pairs | ${successfulProjectTimingPairs.length} |`,
+    `| Invalid project evidence claims | ${invalidProjectEvidenceRows.length} |`,
     `| Green perf-timed rows missing timing | ${greenTimedRowsMissingTimingPairs.length} |`,
     `| Application compatibility rows | ${applicationRows.length - applicationMissing.length}/${applicationRows.length} present, ${applicationIncomplete.length} incomplete |`,
     `| ✅ green | ${green.length} |`,
@@ -858,6 +893,12 @@ function buildReport({
   if (missing.length > 0) {
     lines.push(`### 🚫 Missing required rows (${missing.length})`, "");
     for (const r of missing) lines.push(`- \`${r.name}\``);
+    lines.push("");
+  }
+
+  if (invalidProjectEvidenceRows.length > 0) {
+    lines.push(`### ⛔ Invalid project evidence claims (${invalidProjectEvidenceRows.length})`, "");
+    for (const row of invalidProjectEvidenceRows) lines.push(`- \`${row.name}\``);
     lines.push("");
   }
 
@@ -1009,6 +1050,7 @@ if (artifactAbsent || parseError) {
         corpusHealth: null,
         measurementProfile: null,
         sourceFreshness: null,
+        invalidProjectEvidenceRows: null,
         rows: null,
         applicationRows: null,
         applicationMissing: null,
@@ -1039,6 +1081,7 @@ const {
   measurementProfile,
   validationWarnings,
   sourceFreshness,
+  invalidProjectEvidenceRows,
   rows,
   applicationRows,
   applicationMissing,
@@ -1071,6 +1114,7 @@ if (jsonOutput) {
       measurementProfile,
       validationWarnings,
       sourceFreshness,
+      invalidProjectEvidenceRows,
       rows,
       applicationRows,
       applicationMissing,
@@ -1105,6 +1149,14 @@ if (missing.length > 0 || duplicates.length > 0) {
         missing.map((r) => r.name).join(", ") + "\n",
     );
   }
+  process.exit(1);
+}
+
+if (invalidProjectEvidenceRows.length > 0) {
+  process.stderr.write(
+    `bench-artifact-readiness: ${invalidProjectEvidenceRows.length} project row(s) claim green/timing ` +
+      `without exact zero-stub source evidence: ${invalidProjectEvidenceRows.map((row) => row.name).join(", ")}\n`,
+  );
   process.exit(1);
 }
 

@@ -1,0 +1,228 @@
+use super::Parser;
+use crate::syntax::{ArrowBody, TokenKind, TypeNode, TypeNodeKind};
+
+#[derive(Clone, Copy)]
+pub(super) enum ParenthesizedArrowToken {
+    Present(usize),
+    Missing,
+}
+
+impl Parser<'_> {
+    pub(super) fn parse_arrow_body(
+        &mut self,
+        await_context: bool,
+    ) -> (ArrowBody, Option<crate::source::Span>) {
+        let previous_yield_context = self.in_yield_context;
+        let previous_await_context = self.in_await_context;
+        let previous_await_binding_reserved = self.await_binding_reserved;
+        self.in_yield_context = false;
+        self.in_await_context = await_context;
+        self.await_binding_reserved = await_context;
+        let body = if self.at(TokenKind::LeftBrace) {
+            let (statements, span) = self.parse_block();
+            (ArrowBody::Block(statements), span)
+        } else {
+            (
+                ArrowBody::Expression(Box::new(self.parse_assignment_expression())),
+                None,
+            )
+        };
+        self.in_yield_context = previous_yield_context;
+        self.in_await_context = previous_await_context;
+        self.await_binding_reserved = previous_await_binding_reserved;
+        body
+    }
+
+    pub(super) fn parse_recovered_arrow_body(
+        &mut self,
+        has_arrow: bool,
+        await_context: bool,
+    ) -> (ArrowBody, Option<crate::source::Span>) {
+        if self.at(TokenKind::LeftBrace) || has_arrow {
+            return self.parse_arrow_body(await_context);
+        }
+        let token = *self.current();
+        let expression = if token.kind.is_identifier() {
+            self.parse_primary_expression()
+        } else {
+            self.missing_expression(token.span)
+        };
+        (ArrowBody::Expression(Box::new(expression)), None)
+    }
+
+    pub(super) fn paren_expression_arrow_token(
+        &mut self,
+        definite: bool,
+    ) -> Option<ParenthesizedArrowToken> {
+        if !self.at(TokenKind::LeftParen) {
+            return None;
+        }
+        if !definite {
+            return self.speculative_parenthesized_arrow_token();
+        }
+        let mut depth = 0_u32;
+        for (cursor, token) in self.tokens.iter().enumerate().skip(self.index) {
+            match token.kind {
+                TokenKind::LeftParen => depth += 1,
+                TokenKind::RightParen => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let following = self.tokens.get(cursor + 1).map(|token| token.kind);
+                        if following == Some(TokenKind::FatArrow) {
+                            return Some(ParenthesizedArrowToken::Present(cursor + 1));
+                        }
+                        if following != Some(TokenKind::Colon) {
+                            return (definite || following == Some(TokenKind::LeftBrace))
+                                .then_some(ParenthesizedArrowToken::Missing);
+                        }
+                        let annotation = cursor + 2;
+                        return (definite && self.token_kind_at(annotation) == TokenKind::FatArrow)
+                            .then_some(ParenthesizedArrowToken::Present(annotation))
+                            .or_else(|| self.type_annotation_arrow_token(annotation, definite));
+                    }
+                }
+                TokenKind::EndOfFile => break,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn speculative_parenthesized_arrow_token(&mut self) -> Option<ParenthesizedArrowToken> {
+        if self.not_parenthesized_arrows.contains(&self.index) {
+            return None;
+        }
+        let arrow = self.with_speculative_parse(|parser| {
+            parser.bump();
+            let mut compatible = true;
+            while !parser.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
+                if !parser.parameter_starts_arrow_speculation() {
+                    compatible = false;
+                    break;
+                }
+                parser.parse_parameter();
+                if parser.eat(TokenKind::Comma) || parser.at(TokenKind::RightParen) {
+                    continue;
+                }
+                if !parser.parameter_starts_arrow_speculation() {
+                    compatible = false;
+                    break;
+                }
+            }
+            compatible &= parser.eat(TokenKind::RightParen);
+            if !compatible {
+                None
+            } else if parser.at(TokenKind::FatArrow) {
+                Some(ParenthesizedArrowToken::Present(parser.index))
+            } else if parser.eat(TokenKind::Colon) {
+                let annotation = parser.parse_type();
+                if annotation.blocks_arrow_parse() {
+                    None
+                } else if parser.at(TokenKind::FatArrow) {
+                    Some(ParenthesizedArrowToken::Present(parser.index))
+                } else {
+                    parser
+                        .at(TokenKind::LeftBrace)
+                        .then_some(ParenthesizedArrowToken::Missing)
+                }
+            } else {
+                parser
+                    .at(TokenKind::LeftBrace)
+                    .then_some(ParenthesizedArrowToken::Missing)
+            }
+        });
+        if arrow.is_none() {
+            self.not_parenthesized_arrows.insert(self.index);
+        }
+        arrow
+    }
+
+    pub(super) fn parameter_starts_arrow_speculation(&self) -> bool {
+        matches!(
+            self.kind(),
+            TokenKind::DotDotDot | TokenKind::This | TokenKind::LeftBrace | TokenKind::LeftBracket
+        ) || self.kind().is_identifier()
+            || self.kind() == TokenKind::Export && self.peek_kind(1).is_identifier()
+            || self.kind() == TokenKind::In
+                && self.peek_kind(1).is_identifier()
+                && self.tokens_are_on_same_line(self.index, self.index + 1)
+    }
+
+    pub(super) fn parse_parenthesized_or_function_type(&mut self) -> TypeNode {
+        let left = self.bump().span;
+        if self.paren_is_parameter_list() {
+            let mut parameters = Vec::new();
+            while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
+                parameters.push(self.parse_parameter_with_this(true));
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RightParen, "')' expected.", 1005);
+            self.expect(TokenKind::FatArrow, "'=>' expected.", 1005);
+            let return_type = self.parse_type();
+            return TypeNode {
+                span: left.merge(return_type.span),
+                kind: TypeNodeKind::Function {
+                    id: self.alloc_node(),
+                    type_parameters: Vec::new(),
+                    parameters,
+                    parameter_list_recovered: false,
+                    return_type: Box::new(return_type),
+                },
+            };
+        }
+        let inner = self.parse_type();
+        let right = self.current().span;
+        self.expect(TokenKind::RightParen, "')' expected.", 1005);
+        TypeNode {
+            span: left.merge(right),
+            kind: TypeNodeKind::Parenthesized(Box::new(inner)),
+        }
+    }
+
+    fn paren_is_parameter_list(&self) -> bool {
+        if !self.at(TokenKind::RightParen) && !self.parameter_starts_arrow_speculation() {
+            return false;
+        }
+        let mut depth = 1_u32;
+        let mut cursor = self.index;
+        while let Some(token) = self.tokens.get(cursor) {
+            match token.kind {
+                TokenKind::LeftParen => depth += 1,
+                TokenKind::RightParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.tokens.get(cursor + 1).map(|token| token.kind)
+                            == Some(TokenKind::FatArrow);
+                    }
+                }
+                TokenKind::EndOfFile => return false,
+                _ => {}
+            }
+            cursor += 1;
+        }
+        false
+    }
+
+    fn type_annotation_arrow_token(
+        &mut self,
+        start: usize,
+        definite: bool,
+    ) -> Option<ParenthesizedArrowToken> {
+        self.with_speculative_parse(|parser| {
+            parser.index = start;
+            let annotation = parser.parse_type();
+            if parser.at(TokenKind::FatArrow) {
+                (definite || !annotation.blocks_arrow_parse())
+                    .then_some(ParenthesizedArrowToken::Present(parser.index))
+            } else if definite
+                || parser.at(TokenKind::LeftBrace) && !annotation.blocks_arrow_parse()
+            {
+                Some(ParenthesizedArrowToken::Missing)
+            } else {
+                None
+            }
+        })
+    }
+}

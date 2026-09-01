@@ -18,8 +18,12 @@ export declare const value = 1;
 
 const partial = parseBaseline(partialMissingDtsBaseline);
 assert.equal(partial.dtsFileName, 'index.d.ts');
-assert.equal(partial.dts, 'export * from "./exporter";');
+assert.equal(partial.dts, 'export * from "./exporter";\n');
 assert.equal(partial.noDtsEmitExpected, false);
+assert.deepEqual(partial.dtsOutputs, [
+  { name: 'index.d.ts' },
+  { name: 'exporter.d.ts' },
+]);
 
 const strippedBasenameCollisionBaseline = `
 //// [tests/cases/compiler/strippedBasenameCollision.ts] ////
@@ -36,5 +40,22 @@ export declare const value: 1;
 
 const collision = parseBaseline(strippedBasenameCollisionBaseline);
 assert.equal(collision.dtsFileName, 'foo.d.ts');
-assert.equal(collision.dts, 'export declare const value = 1;');
+assert.equal(collision.dts, 'export declare const value = 1;\n');
 assert.equal(collision.noDtsEmitExpected, false);
+
+const multipleProductsBaseline = `
+//// [tests/cases/compiler/multipleProducts.ts] ////
+//// [a.ts]
+export const a = 1;
+//// [b.ts]
+export const b = 1;
+//// [a.js]
+export const a = 1;
+//// [b.js]
+export const b = 1;
+`;
+const multiple = parseBaseline(multipleProductsBaseline);
+assert.deepEqual(multiple.jsOutputs, [
+  { name: 'a.js' },
+  { name: 'b.js' },
+]);

@@ -162,6 +162,47 @@ DTS_FAMILY_RULES = [
 ]
 
 
+TERMINAL_STATUSES = {"fail", "timeout", "unsupported", "crash", "incomplete"}
+STATUS_SUMMARY_SUFFIX = {
+    "pass": "Pass",
+    "fail": "Fail",
+    "skip": "Skip",
+    "unsupported": "Unsupported",
+    "timeout": "Timeout",
+    "crash": "Crash",
+    "incomplete": "Incomplete",
+}
+
+
+def is_terminal_status(status):
+    return status in TERMINAL_STATUSES
+
+
+def surface_is_selected(result, surface):
+    selected_key = f"{surface}Selected"
+    if selected_key in result:
+        return result.get(selected_key) is True
+    return result.get(f"{surface}Status") != "skip"
+
+
+def surface_product_match(result, surface):
+    """Return raw product parity without conflating typed terminal state.
+
+    Schema-v1 rows did not serialize raw parity, so only their explicit
+    complete `pass`/`fail` statuses can be projected safely.
+    """
+    key = f"{surface}ProductMatch"
+    if key in result:
+        value = result.get(key)
+        return value if isinstance(value, bool) else None
+    status = result.get(f"{surface}Status")
+    if status == "pass":
+        return True
+    if status == "fail":
+        return False
+    return None
+
+
 def load_detail():
     return load_snapshot(DETAIL_FILE, "Run: ./scripts/emit/run.sh --json-out")
 
@@ -232,38 +273,35 @@ def emit_detail_row_summary(data):
         return None
 
     summary = {
-        "jsPass": 0,
-        "jsFail": 0,
-        "jsSkip": 0,
-        "jsTimeout": 0,
-        "dtsPass": 0,
-        "dtsFail": 0,
-        "dtsSkip": 0,
+        f"{surface}{suffix}": 0
+        for surface in ("js", "dts")
+        for suffix in STATUS_SUMMARY_SUFFIX.values()
     }
     for result in results:
-        js_status = result.get("jsStatus")
-        dts_status = result.get("dtsStatus")
-        if js_status == "pass":
-            summary["jsPass"] += 1
-        elif js_status == "fail":
-            summary["jsFail"] += 1
-        elif js_status == "timeout":
-            summary["jsFail"] += 1
-            summary["jsTimeout"] += 1
-        else:
-            summary["jsSkip"] += 1
+        for surface in ("js", "dts"):
+            status = result.get(f"{surface}Status")
+            suffix = STATUS_SUMMARY_SUFFIX.get(status, "Skip")
+            summary[f"{surface}{suffix}"] += 1
 
-        if dts_status == "pass":
-            summary["dtsPass"] += 1
-        elif dts_status == "fail":
-            summary["dtsFail"] += 1
-        elif dts_status == "timeout":
-            summary["dtsFail"] += 1
-        else:
-            summary["dtsSkip"] += 1
-
-    summary["jsTotal"] = summary["jsPass"] + summary["jsFail"]
-    summary["dtsTotal"] = summary["dtsPass"] + summary["dtsFail"]
+    for surface in ("js", "dts"):
+        total = sum(
+            summary[f"{surface}{suffix}"]
+            for status, suffix in STATUS_SUMMARY_SUFFIX.items()
+            if status != "skip"
+        )
+        summary[f"{surface}Total"] = total
+        summary[f"{surface}CompleteMismatch"] = summary[f"{surface}Fail"]
+        # Preserve the legacy envelope: Fail is every selected non-pass, while
+        # typed status and raw product parity remain separately countable.
+        summary[f"{surface}Fail"] = total - summary[f"{surface}Pass"]
+        product_counts = {True: 0, False: 0, None: 0}
+        for result in results:
+            if not surface_is_selected(result, surface):
+                continue
+            product_counts[surface_product_match(result, surface)] += 1
+        summary[f"{surface}ProductMatch"] = product_counts[True]
+        summary[f"{surface}ProductMismatch"] = product_counts[False]
+        summary[f"{surface}ProductUnmeasured"] = product_counts[None]
     return summary
 
 
@@ -273,7 +311,7 @@ def emit_detail_rows_match_summary(data):
     if row_summary is None:
         return False
 
-    keys = (
+    legacy_keys = (
         "jsPass",
         "jsFail",
         "jsSkip",
@@ -284,7 +322,34 @@ def emit_detail_rows_match_summary(data):
         "dtsSkip",
         "dtsTotal",
     )
-    return all(row_summary.get(key) == detail_summary.get(key) for key in keys)
+    typed_keys = tuple(
+        f"{surface}{suffix}"
+        for surface in ("js", "dts")
+        for status, suffix in STATUS_SUMMARY_SUFFIX.items()
+        if status not in ("pass", "fail", "skip")
+    )
+    schema_v2_keys = tuple(row_summary)
+    if data.get("detailSchemaVersion") == 2 or any(
+        key.endswith("ProductMismatch") for key in detail_summary
+    ):
+        return all(
+            row_summary.get(key) == detail_summary.get(key)
+            for key in schema_v2_keys
+        )
+    typed_schema_keys = tuple(key for key in typed_keys if key != "jsTimeout")
+    if any(key in detail_summary for key in typed_schema_keys):
+        return all(
+            row_summary.get(key) == detail_summary.get(key)
+            for key in (*legacy_keys, *typed_keys)
+        )
+
+    # Historical detail files collapsed terminal states into `Fail` and did
+    # not serialize raw product parity. Keep that envelope readable.
+    legacy_summary = dict(row_summary)
+    return all(
+        legacy_summary.get(key) == detail_summary.get(key)
+        for key in legacy_keys
+    )
 
 
 def emit_detail_row_fingerprint(data):
@@ -292,9 +357,11 @@ def emit_detail_row_fingerprint(data):
     if not isinstance(results, list):
         return None
 
+    schema_v2 = data.get("detailSchemaVersion") == 2
     rows = []
     for result in results:
-        rows.append({
+        row = {
+            "artifactState": result.get("artifactState"),
             "baselineFile": result.get("baselineFile"),
             "dtsError": result.get("dtsError"),
             "dtsStatus": result.get("dtsStatus"),
@@ -302,7 +369,21 @@ def emit_detail_row_fingerprint(data):
             "jsStatus": result.get("jsStatus"),
             "name": result.get("name"),
             "testPath": result.get("testPath"),
-        })
+        }
+        if schema_v2:
+            row.update({
+                "dtsMatch": result.get("dtsMatch"),
+                "dtsProductError": result.get("dtsProductError"),
+                "dtsProductMatch": result.get("dtsProductMatch"),
+                "dtsSelected": result.get("dtsSelected"),
+                "jsMatch": result.get("jsMatch"),
+                "jsProductError": result.get("jsProductError"),
+                "jsProductMatch": result.get("jsProductMatch"),
+                "jsSelected": result.get("jsSelected"),
+                "outcomeError": result.get("outcomeError"),
+                "outcomeMatch": result.get("outcomeMatch"),
+            })
+        rows.append(row)
     encoded = json.dumps(
         sorted(rows, key=lambda row: (
             row.get("name") or "",
@@ -607,48 +688,60 @@ def show_overview(data):
     print()
 
     results = data["results"]
-    js_fails = [r for r in results if r["jsStatus"] == "fail"]
-    dts_fails = [r for r in results if r["dtsStatus"] == "fail"]
+    js_fails = [r for r in results if surface_product_match(r, "js") is False]
+    dts_fails = [r for r in results if surface_product_match(r, "dts") is False]
+    js_terminal = [r for r in results if r["jsStatus"] in TERMINAL_STATUSES - {"fail"}]
+    dts_terminal = [r for r in results if r["dtsStatus"] in TERMINAL_STATUSES - {"fail"}]
+    outcome_mismatches = [r for r in results if r.get("outcomeMatch") is False]
     timeouts = [r for r in results if r["jsStatus"] == "timeout" or r["dtsStatus"] == "timeout"]
 
-    print(f"  {detail_label}JS failures: {len(js_fails)}")
-    print(f"  {detail_label}DTS failures: {len(dts_fails)}")
+    print(f"  {detail_label}JS product mismatches: {len(js_fails)}")
+    print(f"  {detail_label}DTS product mismatches: {len(dts_fails)}")
+    print(f"  {detail_label}JS typed terminal observations: {len(js_terminal)}")
+    print(f"  {detail_label}DTS typed terminal observations: {len(dts_terminal)}")
+    print(f"  {detail_label}Invocation outcome mismatches: {len(outcome_mismatches)}")
     print(f"  {detail_label}Timeouts: {len(timeouts)}")
     print()
 
     # JS-pass but DTS-fail (close to full pass)
-    js_pass_dts_fail = [r for r in results if r["jsStatus"] == "pass" and r["dtsStatus"] == "fail"]
+    js_pass_dts_fail = [
+        r for r in results
+        if r["jsStatus"] == "pass" and is_terminal_status(r["dtsStatus"])
+    ]
     print(
         f"  {detail_label}JS pass + DTS fail (close to full pass): "
         f"{len(js_pass_dts_fail)}"
     )
 
     # DTS-pass but JS-fail
-    dts_pass_js_fail = [r for r in results if r["dtsStatus"] == "pass" and r["jsStatus"] == "fail"]
+    dts_pass_js_fail = [
+        r for r in results
+        if r["dtsStatus"] == "pass" and is_terminal_status(r["jsStatus"])
+    ]
     print(f"  {detail_label}DTS pass + JS fail: {len(dts_pass_js_fail)}")
     print()
 
     # Top error messages
-    print("Top JS failure messages:")
+    print("Top JS product mismatch messages:")
     js_error_counter = Counter()
     for r in js_fails:
-        msg = r.get("jsError", "unknown")
+        msg = r.get("jsProductError") or r.get("jsError", "unknown")
         # Normalize to first 80 chars
         js_error_counter[msg[:80]] += 1
     print_top_counter(js_error_counter, 10)
     print()
 
-    print("Top DTS failure messages:")
+    print("Top DTS product mismatch messages:")
     dts_error_counter = Counter()
     for r in dts_fails:
-        msg = r.get("dtsError", "unknown")
+        msg = r.get("dtsProductError") or r.get("dtsError", "unknown")
         dts_error_counter[msg[:80]] += 1
     print_top_counter(dts_error_counter, 10)
 
 
 def show_js_failures(data, top=40, paths_only=False):
     results = data["results"]
-    fails = [r for r in results if r["jsStatus"] == "fail"]
+    fails = [r for r in results if is_terminal_status(r["jsStatus"])]
     fails.sort(key=lambda r: r["name"])
 
     if paths_only:
@@ -665,7 +758,7 @@ def show_js_failures(data, top=40, paths_only=False):
 
 def show_dts_failures(data, top=40, paths_only=False):
     results = data["results"]
-    fails = [r for r in results if r["dtsStatus"] == "fail"]
+    fails = [r for r in results if is_terminal_status(r["dtsStatus"])]
     fails.sort(key=lambda r: r["name"])
 
     if paths_only:
@@ -696,7 +789,7 @@ def show_top_errors(data, top=20):
     print("Top JS error messages:")
     js_counter = Counter()
     for r in results:
-        if r["jsStatus"] == "fail" and r.get("jsError"):
+        if is_terminal_status(r["jsStatus"]) and r.get("jsError"):
             js_counter[r["jsError"][:100]] += 1
     print_top_counter(js_counter, top)
 
@@ -704,7 +797,7 @@ def show_top_errors(data, top=20):
     print("Top DTS error messages:")
     dts_counter = Counter()
     for r in results:
-        if r["dtsStatus"] == "fail" and r.get("dtsError"):
+        if is_terminal_status(r["dtsStatus"]) and r.get("dtsError"):
             dts_counter[r["dtsError"][:100]] += 1
     print_top_counter(dts_counter, top)
 
@@ -717,8 +810,10 @@ def failure_haystack(result, surface):
     ]
     if surface == "js":
         fields.append(result.get("jsError", ""))
+        fields.append(result.get("jsProductError", ""))
     else:
         fields.append(result.get("dtsError", ""))
+        fields.append(result.get("dtsProductError", ""))
     return " ".join(fields).lower()
 
 
@@ -733,7 +828,7 @@ def classify_failure(result, surface):
 
 def collect_failures_by_family(data, surface):
     status_key = "jsStatus" if surface == "js" else "dtsStatus"
-    failures = [r for r in data["results"] if r.get(status_key) in ("fail", "timeout")]
+    failures = [r for r in data["results"] if is_terminal_status(r.get(status_key))]
     families = {}
     for result in failures:
         family = classify_failure(result, surface)

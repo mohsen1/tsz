@@ -1,132 +1,139 @@
-# Contributing to tsz
+# Contributing to TSZ
 
-Thank you for your interest in contributing to tsz, a TypeScript compiler written in Rust.
+TSZ is being rewritten from scratch to match the pinned TypeScript 7 compiler
+exactly. Compatibility comes before throughput; performance claims apply only
+to behavior that already agrees with the oracle.
 
-## Quick Start
+## Prepare The Workspace
 
 ```bash
 git clone https://github.com/tsz-org/tsz.git
 cd tsz
-./scripts/setup/setup.sh   # installs hooks, initializes TypeScript submodule
+./scripts/setup/setup.sh
 ```
 
-Open a PR to run CI. Every open PR runs the full suite: lint, build, unit
-tests, WASM, conformance, emit, fourslash, and snapshot gates. Path-based
-skips still apply for docs-only or tooling-only changes.
+The setup script installs the repository hooks and initializes the pinned
+TypeScript submodule. Treat that submodule as read-only.
 
-When a ready PR's exact head has passed the PR-head gates (`CI Summary`,
-and any review/body checks), the PR author
-queues it with GitHub's native merge queue
-(`gh pr merge <pr> --match-head-commit <sha>`). The native queue creates a
-`merge_group` run that keeps the required queue summary check on the synthetic
-merge before merging.
+Before non-trivial work:
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
+1. Read [`plan/ROADMAP.md`](plan/ROADMAP.md) and
+   [`architecture/RESET.md`](architecture/RESET.md).
+2. Inspect open pull requests, recently merged changes, and relevant issues.
+3. Run the worktree/disk intake before a heavy build or a new worktree.
+4. Keep unrelated or pre-existing changes out of your branch.
 
-## How tsz Works
+## Replacement Workspace
 
-tsz follows a pipeline architecture where each stage has strict ownership boundaries:
+The active Cargo workspace has exactly three packages:
 
+| Package | Responsibility |
+| --- | --- |
+| `tsz-core` | Syntax, program construction, binding, checking, emit, and the service API |
+| `tsz-cli` | Thin adapters for `tsz`, `tsz-server`, `tsz-lsp`, and `try-tsz` |
+| `tsz-conformance` | External-process oracle and comparison harness |
+
+Compiler phases begin as modules in `tsz-core`. Do not recreate the deleted
+crate-per-phase graph. A new package boundary needs measured build-time or API
+isolation evidence. Browser/WASM bindings are deferred until R4 and a stable
+service API.
+
+There is one TypeScript-compatible semantics. The retired alternate-semantics
+mode and its flags, tests, configuration, and product surface must not return.
+
+## Choosing And Implementing Work
+
+Every change serves one roadmap goal: `green`, `fast`, `grow`, or `hold`.
+During the early rewrite, most compiler work is `green`; guardrails for an
+already declared capability are `hold`.
+
+For behavior work, record the rule before coding:
+
+```text
+When <structural condition>, TypeScript 7 does X; TSZ does X through <module/API>.
 ```
-source -> scanner -> parser -> binder -> checker <-> solver -> emitter
-```
 
-| Stage | Crate | Owns |
-|-------|-------|------|
-| Scanner | `tsz-scanner` | Tokenization, string interning |
-| Parser | `tsz-parser` | Syntax-only AST construction |
-| Binder | `tsz-binder` | Symbols, scopes, control-flow graph |
-| Checker | `tsz-checker` | AST traversal, diagnostics orchestration |
-| Solver | `tsz-solver` | All type relations, inference, evaluation |
-| Emitter | `tsz-emitter` | JS and declaration output |
+Use the pinned TypeScript 7.0.2 implementation and oracle output to establish
+the preconditions, order of operations, diagnostics, and emit. Prefer a
+source-linked port over a new general abstraction. Never make a semantic
+decision from fixture paths, user spellings, source snippets, rendered types,
+or formatted diagnostics.
 
-The most important rule: **if code computes type semantics, it belongs in the Solver.** The Checker is thin orchestration — it asks questions, the Solver answers them.
+Retained tests do not constrain internal APIs. Port them through the public
+service or process surface when their behavior becomes supported.
 
-See [docs/architecture/BOUNDARIES.md](docs/architecture/BOUNDARIES.md) for the full boundary model.
+## Validation
 
-## What to Work On
-
-### Conformance Maintenance
-
-tsz is expected to stay at 100% conformance with `tsc`. Each test compares
-tsz's diagnostics against TypeScript's expected output.
-
-Use the offline analysis tools to inspect the current snapshot:
+Run narrow checks that answer the question your change raises. The basic
+rewrite gate is:
 
 ```bash
-python3 scripts/conformance/query-conformance.py --dashboard
+cargo fmt --all --check
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo nextest run --workspace
+python3 scripts/arch/arch_guard.py
+python3 -m unittest discover scripts/arch -p 'test_arch_guard*.py' -v
 ```
 
-### Workflow For Semantic Changes
+Use `cargo nextest run`, never `cargo test`. Wrap long or memory-heavy commands
+with `scripts/safe-run.sh`.
 
-1. **Check active work** — inspect open PRs, recent merged PRs, and relevant issues before starting
-2. **Claim the scope** — open a PR early; a GitHub issue is optional
-3. **Research** — use offline analysis tools and existing tests before running heavy commands
-4. **Understand the root cause** — read the relevant checker/solver code
-5. **Fix the root cause** — not a symptom. Follow architecture rules
-6. **Verify narrowly** — run only targeted local checks needed for debugging
-7. **Push updates to the PR** — every push runs the full CI suite; do not wait idle
-8. **Mark ready for review** — when the change is complete; CI already ran the full suite on every push
-9. **Land your own PR** — after exact-head PR-head gates pass,
-   queue the PR yourself with
-   `gh pr merge <pr> --match-head-commit <sha>`; native queue admission and
-   summary validation run through the `merge_group` CI event
+The retained broad suites are observations until their grammar or semantic
+families are declared supported. Do not hide crashes or unsupported cases, and
+do not compare a rewrite observation with the frozen legacy checkpoint as if it
+were a regression floor.
 
-Every PR body must include a `Goal: <green|fast|grow|hold>` line, a
-`## Verification` section, and a `## Provenance` block with `Machine:`,
-`Assistant:`, `Model:`, and `Effort:` lines reporting your actual runtime
-values. Use the PR body for scope, invariants, findings, and verification.
-
-These fields are a review convention, not an enforced gate: no `pr-body-gate`
-job exists in `.github/workflows/`. Write them because reviewers and future
-sessions read them, not because CI will stop you.
-
-When adding or re-adding WIP state, leave a PR comment with the reason WIP
-state changed, the current blocker or work, and the next action, signed with
-a provenance line (e.g. `Machine: studio`). If the advisory WIP-state report
-flags a missing comment, repair it by adding that comment; no code change is
-required.
+Useful focused launches include:
 
 ```bash
-# Run a specific test when debugging the root cause
-./scripts/conformance/conformance.sh run --filter "testName" --verbose
+./scripts/conformance/conformance.sh run --filter '<case>' --max 1 --workers 1
+./scripts/emit/run.sh --filter='<case>' --max=1
+./scripts/fourslash/run-fourslash.sh --filter='<case>' --max=1 --sequential
 ```
 
-### Architecture Contributions
+Never run two conformance invocations concurrently in one worktree.
 
-Before making changes, review:
-- [docs/architecture/CONTRIBUTION_CHECKLIST.md](docs/architecture/CONTRIBUTION_CHECKLIST.md)
-- [docs/architecture/NORTH_STAR.md](docs/architecture/NORTH_STAR.md)
+## Pull Requests
 
-Key questions for every semantic PR:
-1. Is this `WHAT` (type algorithm → Solver) or `WHERE` (orchestration → Checker)?
-2. Does it route through canonical query boundaries?
-3. Does it preserve `DefId`-first resolution?
+The reset PR must not open until every item in the roadmap's R0 conviction gate
+passes on its exact head. Later pull requests should be small enough that their
+supported capability and oracle evidence are reviewable.
 
-## Code Style
+Every PR body includes:
 
-- Run `cargo fmt` before committing (hooks auto-fix)
-- `cargo clippy` with `-D warnings` must pass in CI
-- No hand-authored code, test, script, or generated-code shard may exceed 2000
-  physical lines. Split by concern before adding more code; do not add
-  file-size ratchet exceptions or per-file ceilings.
-- Prefer dedicated files per major concern
-- Use visitor helpers for type traversal — avoid repeated `TypeKey` matching
+```text
+Goal: <green|fast|grow|hold>
 
-## Pre-commit Hooks
+## Verification
+- <exact command and result>
 
-Hooks run automatically and check:
-- Formatting (`cargo fmt`)
-- TypeScript submodule guard
+## Provenance
+Machine: <actual machine>
+Assistant: <actual assistant>
+Model: <actual model>
+Effort: <actual effort>
+```
 
-Build, lint, unit, WASM, conformance, emit, and fourslash verification runs in
-CI. Every open PR gets the full CI suite; path-based skips apply only to
-docs-only or tooling-only changes.
+Also state the structural rule, owning module/API, adjacent cases, unsupported
+fallback, and performance evidence when performance motivated the change. Do
+not imply broad compatibility from a seed or narrow-filter result.
 
-To skip hooks in emergencies: `TSZ_SKIP_HOOKS=1 git commit -m "message"`
+Never merge draft, WIP, blocked, or stale-head work. The author reviews the
+exact head and uses the repository's native merge queue after required checks
+pass.
 
-## Getting Help
+## Style And Repository Hygiene
 
-- Open an issue for bugs or questions
-- Check existing docs in the `docs/` directory
-- The conformance analysis tools can help identify good areas to contribute
+- No hand-written Rust, test, script, or generated shard may exceed 2,000
+  physical lines.
+- Keep public APIs small; prefer module visibility until an item belongs to the
+  service boundary.
+- Use tracing in compiler internals; do not add print debugging or `dbg!`.
+- Preserve the test, emit, fourslash, project, and performance harnesses.
+- Run `scripts/agents/llm-context-audit.py` after changing agent instructions,
+  startup hooks, or skills.
+- Run `cargo fmt` before committing; the hook also formats staged Rust.
+
+See [`DEVELOPMENT.md`](DEVELOPMENT.md) and
+[`development/TOOLING.md`](development/TOOLING.md) for command details.

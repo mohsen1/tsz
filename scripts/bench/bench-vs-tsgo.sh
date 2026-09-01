@@ -225,6 +225,8 @@ NC='\033[0m'
 
 # shellcheck source=scripts/bench/lib/bench-vs-tsgo-prereqs.sh
 source "$SCRIPT_DIR/lib/bench-vs-tsgo-prereqs.sh"
+# shellcheck source=scripts/bench/lib/project-evidence.sh
+source "$SCRIPT_DIR/lib/project-evidence.sh"
 
 # Persist the project-file-stats line-count cache beside the other
 # run-surviving bench subdirectories (dist/, tools/, external/) instead of the

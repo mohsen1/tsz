@@ -1,19 +1,29 @@
 ---
 name: tsz-conformance
-description: Triage and maintain TSZ diagnostic conformance. Use when investigating conformance regressions, accepted-regression drift, fingerprint-only failures, issue creation from conformance data, or focused parity fixes that must preserve the conformance gate.
+description: Triage TSZ diagnostic parity against the pinned TypeScript 7 oracle. Use for seed-capability regressions, focused conformance witnesses, fingerprint mismatches, or full-corpus observations during the clean-slate rewrite.
 ---
 
 # TSZ Conformance
 
-Conformance is a regression gate. Prefer checked-in artifacts and narrow filters;
-CI owns broad runs.
+Conformance has two roles during the rewrite: declared seed capabilities are a
+strict monotonic gate, while the unsupported full corpus is an honest
+observation. Prefer checked-in artifacts and narrow filters; CI owns broad runs.
 
 ## Rules
 
 - Read `AGENTS.md` and `docs/plan/ROADMAP.md` for conformance-affecting work.
 - Do not run full conformance locally.
 - Treat a failing test as a witness for a structural rule.
-- Do not hide regressions with snapshot/allowlist churn.
+- Do not hide unsupported behavior or capability regressions with
+  snapshot/allowlist churn.
+- Syntax campaigns add authored facts, not new product-policy booleans. If a
+  family needs checker/emit/service containment, use `tsz-architecture` and
+  derive one typed nonclaim consumed by every surface.
+- Prefer operation-local Deferred results. A file-local unsupported construct
+  must not suppress unrelated diagnostics through a new whole-program skip.
+- A scoped nonclaim is sound only when semantic dependencies are closed: a
+  consumer of a nonclaimed producer defers before publishing a definitive
+  missing-name, missing-property, call, or relation diagnostic.
 
 ## Offline First
 
@@ -27,6 +37,8 @@ python3 scripts/conformance/query-conformance.py --code TS2322 --paths-only
 
 Artifacts: `conformance-detail.json`, `conformance-snapshot.json`,
 `conformance-accepted-regressions.txt`, `conformance-shard-weights.json`.
+The accepted-regression file describes the frozen legacy checkpoint; it is not
+the rewrite's R0 floor and must not be refreshed to manufacture green results.
 
 ## Oracle
 
@@ -75,13 +87,22 @@ Keep filters precise. Let harnesses rebuild stale binaries when possible.
 ## Triage
 
 Classify: new/accepted/resolved/fingerprint-only/wrong-code/missing-code/
-extra-code/crash/timeout/OOM. Then identify owner: relation, inference,
-narrowing, indexed/keyof/mapped/conditional/template, symbol resolution,
-diagnostic display, parser recovery, or emit-only.
+extra-code/crash/timeout/OOM. Then identify owner inside the replacement:
+syntax recovery, program/config/resolution, binding, relation, inference,
+narrowing, indexed/keyof/mapped/conditional/template semantics, diagnostic
+display, or emit-only.
 
 Before coding, state the structural rule and adjacent cases. Behavior changes
-need owning-crate tests.
+need tests at the public service boundary plus focused owner-module tests.
+If the change touches a capability, force path, recursion owner, or cache, also
+record `python3 scripts/arch/rewrite_architecture_metrics.py --check` and the
+temporary nonclaim's deletion condition.
 
-Accepted-regression drift: verify shard artifacts, update the accepted file
-only to match observed failing set, link/file issues for new accepts, and
-comment with numbers plus a provenance line.
+For a full-corpus observation, preserve every unsupported, crash, timeout, and
+mismatch result in the artifact. When a semantic family graduates, add exact
+public-boundary tests and establish its new monotonic floor; do not inherit or
+edit the retired implementation's accepted-failure policy.
+
+When comparing broad artifacts, read
+[references/artifact-diff.md](references/artifact-diff.md). Status totals alone
+never establish diagnostic or product parity.

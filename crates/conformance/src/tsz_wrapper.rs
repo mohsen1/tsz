@@ -4,11 +4,36 @@
 
 use crate::compiler_options::directives_to_tsconfig;
 use crate::tsc_results::DiagnosticFingerprint;
+use anyhow::Context;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 mod path_helpers;
 use path_helpers::is_windows_absolute_path;
+
+const SEMANTIC_COMPLETION_MARKER_PREFIX: &str = "---TSZ-SEMANTIC-COMPLETION:";
+
+/// Process-level semantic verdict reported by the clean-slate compiler.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SemanticCompletion {
+    Complete,
+    Deferred,
+    Cycle,
+    Limit,
+    /// Fresh-process exit 3 carries the nonclaim but intentionally does not
+    /// add protocol text to ordinary CLI output.
+    #[default]
+    #[serde(other)]
+    Incomplete,
+}
+
+impl SemanticCompletion {
+    pub const fn is_complete(self) -> bool {
+        matches!(self, Self::Complete)
+    }
+}
 
 /// Result of compiling a test file
 #[derive(Debug, Clone)]
@@ -19,6 +44,13 @@ pub struct CompilationResult {
     pub diagnostic_fingerprints: Vec<DiagnosticFingerprint>,
     /// Whether compilation crashed (panic)
     pub crashed: bool,
+    /// Explicit nonclaim when checking escaped without a definitive semantic
+    /// result. This never contributes a synthetic diagnostic code.
+    pub semantic_completion: SemanticCompletion,
+    /// Exact ordinary process exits, in TS7 configuration-selector order.
+    /// Fresh compilation owns one value; aggregate rows own one per variant.
+    /// Pooled transports cannot provide this evidence and leave it empty.
+    pub ordinary_exit_statuses: Vec<u8>,
     /// Resolved compiler options used
     pub options: HashMap<String, String>,
 }
@@ -48,7 +80,6 @@ pub fn prepare_test_dir(
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
     key_order: &[String],
-    expected_error_codes: Option<&[u32]>,
 ) -> anyhow::Result<PreparedTest> {
     prepare_test_dir_with_lib_dir(
         content,
@@ -56,7 +87,6 @@ pub fn prepare_test_dir(
         options,
         original_extension,
         key_order,
-        expected_error_codes,
         None,
     )
 }
@@ -83,7 +113,6 @@ pub fn prepare_test_dir_with_lib_dir(
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
     key_order: &[String],
-    expected_error_codes: Option<&[u32]>,
     ts_tests_lib_dir: Option<&Path>,
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
@@ -232,17 +261,6 @@ pub fn prepare_test_dir_with_lib_dir(
         create_symlink_path(&target_path, &link_path)?;
     }
 
-    // skipLibCheck: when .lib/ files were copied into the tmpdir (via /.lib/ references),
-    // enable skipLibCheck to avoid expensive type-checking of declaration files that tsc
-    // never even resolves (tsc emits TS6053 "file not found" for /.lib/ paths).
-    // The conformance runner already filters out lib diagnostics, so this is safe.
-    // Only inject when the test doesn't explicitly set skipLibCheck.
-    let has_lib_files = dir_path.join(".lib").is_dir();
-    let explicit_skip_lib_check = options.contains_key("skipLibCheck")
-        || options.contains_key("skiplibcheck")
-        || options.contains_key("skipDefaultLibCheck")
-        || options.contains_key("skipdefaultlibcheck");
-
     let tsconfig_path = project_dir.join("tsconfig.json");
     if let Some(parent) = tsconfig_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -326,11 +344,6 @@ pub fn prepare_test_dir_with_lib_dir(
     // tsc's harness passes the authored files directly to the compiler; using an
     // explicit root-file list keeps our synthetic tsconfig aligned with that shape.
     //
-    // EXCEPTION: when tsc expects TS18003 ("no inputs found"), DON'T add explicit
-    // files. This preserves the "no inputs" condition for tests whose fixture files
-    // should remain undiscoverable under the harness defaults.
-    let tsc_expects_no_inputs = expected_error_codes.is_some_and(|codes| codes.contains(&18003));
-    let tsc_expects_ts2883 = expected_error_codes.is_some_and(|codes| codes.contains(&2883));
     let needs_explicit_root_files = !filenames.is_empty()
         && filenames.iter().any(|(name, _)| {
             let lower = name.to_lowercase().replace('\\', "/");
@@ -361,62 +374,50 @@ pub fn prepare_test_dir_with_lib_dir(
                 .collect()
         })
         .unwrap_or_default();
-    let explicit_root_files: Option<Vec<String>> =
-        if needs_explicit_root_files && !tsc_expects_no_inputs {
-            let root_files: Vec<String> = filenames
-                .iter()
-                .filter_map(|(name, _)| {
-                    let lower = name.to_lowercase().replace('\\', "/");
-                    if lower.ends_with("tsconfig.json") || lower.ends_with("package.json") {
-                        return None;
-                    }
-                    // Keep authored package declarations available on disk for
-                    // module resolution, but do not make them root files. The
-                    // TypeScript harness resolves these through the importing
-                    // source; listing nested package declarations as roots can
-                    // change declaration-portability diagnostics such as TS2883.
-                    if tsc_expects_ts2883
-                        && (lower.contains("/node_modules/") || lower.starts_with("node_modules/"))
-                        && lower.ends_with(".d.ts")
-                    {
-                        return None;
-                    }
-                    // When noTypesAndSymbols is set, tsc's harness does NOT
-                    // include @types files as root files — they remain on disk
-                    // for module resolution but aren't loaded into the program
-                    // unless the `types` config allows auto-discovery.
-                    // Without this filter, ambient module declarations in
-                    // @types packages pollute the global scope unconditionally.
-                    if no_types_and_symbols
-                        && (lower.contains("/node_modules/@types/")
-                            || lower.starts_with("node_modules/@types/"))
-                    {
-                        return None;
-                    }
-                    // When this @types file is covered by `compilerOptions.types`,
-                    // skip listing it explicitly in `files`. Listing it both
-                    // places causes tsc on macOS to double-load it (because of
-                    // /var → /private/var symlink canonicalization differences
-                    // between the `files` and typeRoots resolution paths),
-                    // producing spurious TS2451 diagnostics for ambient
-                    // block-scoped globals like `declare const require`.
-                    if !types_packages_in_options.is_empty()
-                        && atypes_package_in(lower.as_str())
-                            .is_some_and(|pkg| types_packages_in_options.contains(&pkg))
-                    {
-                        return None;
-                    }
-                    Some(name.replace("..", "_").trim_start_matches('/').to_string())
-                })
-                .collect();
-            if root_files.is_empty() {
-                None
-            } else {
-                Some(root_files)
-            }
-        } else {
+    let explicit_root_files: Option<Vec<String>> = if needs_explicit_root_files {
+        let root_files: Vec<String> = filenames
+            .iter()
+            .filter_map(|(name, _)| {
+                let lower = name.to_lowercase().replace('\\', "/");
+                if lower.ends_with("tsconfig.json") || lower.ends_with("package.json") {
+                    return None;
+                }
+                // When noTypesAndSymbols is set, tsc's harness does NOT
+                // include @types files as root files — they remain on disk
+                // for module resolution but aren't loaded into the program
+                // unless the `types` config allows auto-discovery.
+                // Without this filter, ambient module declarations in
+                // @types packages pollute the global scope unconditionally.
+                if no_types_and_symbols
+                    && (lower.contains("/node_modules/@types/")
+                        || lower.starts_with("node_modules/@types/"))
+                {
+                    return None;
+                }
+                // When this @types file is covered by `compilerOptions.types`,
+                // skip listing it explicitly in `files`. Listing it both
+                // places causes tsc on macOS to double-load it (because of
+                // /var → /private/var symlink canonicalization differences
+                // between the `files` and typeRoots resolution paths),
+                // producing spurious TS2451 diagnostics for ambient
+                // block-scoped globals like `declare const require`.
+                if !types_packages_in_options.is_empty()
+                    && atypes_package_in(lower.as_str())
+                        .is_some_and(|pkg| types_packages_in_options.contains(&pkg))
+                {
+                    return None;
+                }
+                Some(name.replace("..", "_").trim_start_matches('/').to_string())
+            })
+            .collect();
+        if root_files.is_empty() {
             None
-        };
+        } else {
+            Some(root_files)
+        }
+    } else {
+        None
+    };
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
@@ -484,16 +485,6 @@ pub fn prepare_test_dir_with_lib_dir(
                 map.entry("allowJs")
                     .or_insert(serde_json::Value::Bool(true));
             }
-
-            // Skip checking .d.ts lib files copied from TypeScript/tests/lib/.
-            // tsc can't resolve /.lib/ references (emits TS6053), so it never
-            // checks these files. Without this, tsz spends ~5s per test checking
-            // interface extension compatibility in react16.d.ts (2700+ lines of
-            // complex generic types), only to have those diagnostics filtered out.
-            if has_lib_files && !explicit_skip_lib_check {
-                map.entry("skipLibCheck".to_string())
-                    .or_insert(serde_json::Value::Bool(true));
-            }
         }
         let tsconfig_content = if let Some(root_files) = harness_root_files {
             serde_json::json!({
@@ -545,26 +536,6 @@ pub fn prepare_test_dir_with_lib_dir(
         }
     } else {
         copy_tsconfig_to_project_if_needed(dir_path, &project_dir, filenames, options)?;
-        // Inject skipLibCheck into custom tsconfigs when lib files are present
-        if has_lib_files && !explicit_skip_lib_check {
-            if let Ok(raw) = std::fs::read_to_string(&tsconfig_path) {
-                if let Ok(mut tsconfig) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    if let serde_json::Value::Object(ref mut root) = tsconfig {
-                        let opts = root
-                            .entry("compilerOptions")
-                            .or_insert_with(|| serde_json::json!({}));
-                        if let serde_json::Value::Object(ref mut map) = opts {
-                            map.entry("skipLibCheck".to_string())
-                                .or_insert(serde_json::Value::Bool(true));
-                        }
-                        let _ = std::fs::write(
-                            &tsconfig_path,
-                            serde_json::to_string_pretty(&tsconfig).unwrap_or(raw),
-                        );
-                    }
-                }
-            }
-        }
         if std::env::var_os("TSZ_DEBUG_PREPARE_DIR").is_some() {
             eprintln!(
                 "[tsz_wrapper] copied tsconfig to root at {}",
@@ -725,11 +696,13 @@ pub fn parse_tsz_output(
         eprintln!("--- stderr\n{}", String::from_utf8_lossy(&output.stderr));
     }
 
-    if output.status.success() {
+    if output.status.success() && output.stdout.is_empty() && output.stderr.is_empty() {
         return CompilationResult {
             error_codes: vec![],
             diagnostic_fingerprints: vec![],
             crashed: false,
+            semantic_completion: SemanticCompletion::Complete,
+            ordinary_exit_statuses: vec![0],
             options,
         };
     }
@@ -743,6 +716,8 @@ pub fn parse_tsz_output(
                 error_codes: vec![],
                 diagnostic_fingerprints: vec![],
                 crashed: true,
+                semantic_completion: SemanticCompletion::Incomplete,
+                ordinary_exit_statuses: Vec::new(),
                 options,
             };
         }
@@ -750,411 +725,240 @@ pub fn parse_tsz_output(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}\n{}", stdout, stderr);
-    // Filter out diagnostics from .lib/ files (e.g., react16.d.ts).
-    // tsc does not load these test helper libraries, so our diagnostics from
-    // them are false positives. Filter before parsing to avoid counting them.
-    let combined = filter_lib_diagnostics(&combined, project_root);
-    let error_codes = parse_error_codes_from_text(&combined);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
+    let mut parsed_stdout = parse_diagnostic_output(&stdout, project_root);
+    let parsed_stderr = parse_diagnostic_output(&stderr, project_root);
+    let fully_covered = std::str::from_utf8(&output.stdout).is_ok()
+        && std::str::from_utf8(&output.stderr).is_ok()
+        && parsed_stdout.fully_covered
+        && parsed_stderr.fully_covered;
+    let cross_stream_diagnostics = !parsed_stdout.diagnostic_fingerprints.is_empty()
+        && !parsed_stderr.diagnostic_fingerprints.is_empty();
+    parsed_stdout.error_codes.extend(parsed_stderr.error_codes);
+    parsed_stdout
+        .diagnostic_fingerprints
+        .extend(parsed_stderr.diagnostic_fingerprints);
+    let has_diagnostics = !parsed_stdout.diagnostic_fingerprints.is_empty();
+    let status_code = output.status.code();
+    let crashed = match status_code {
+        Some(1 | 2) => !fully_covered || !has_diagnostics || cross_stream_diagnostics,
+        Some(0 | 3) => !fully_covered || cross_stream_diagnostics,
+        Some(_) | None => true,
+    };
     CompilationResult {
-        error_codes,
-        diagnostic_fingerprints,
-        crashed: false,
+        error_codes: parsed_stdout.error_codes,
+        diagnostic_fingerprints: parsed_stdout.diagnostic_fingerprints,
+        crashed,
+        semantic_completion: if !crashed && matches!(status_code, Some(0..=2)) {
+            SemanticCompletion::Complete
+        } else {
+            SemanticCompletion::Incomplete
+        },
+        ordinary_exit_statuses: if !crashed {
+            status_code
+                .and_then(|status| u8::try_from(status).ok())
+                .filter(|status| *status <= 2)
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        },
         options,
     }
 }
 
-fn parse_diagnostic_fingerprints_from_text(
-    text: &str,
-    project_root: &Path,
-) -> Vec<DiagnosticFingerprint> {
+struct ParsedDiagnosticOutput {
+    error_codes: Vec<u32>,
+    diagnostic_fingerprints: Vec<DiagnosticFingerprint>,
+    fully_covered: bool,
+}
+
+fn parse_diagnostic_output(text: &str, project_root: &Path) -> ParsedDiagnosticOutput {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
-    static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
-            .expect("valid regex")
-    });
-    static DIAG_NO_POS_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(
-            r"^(:\s*)?(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):\s*(?P<message>.+)$",
-        )
-        .unwrap()
+    static SUMMARY_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^Found (?P<count>\d+) errors?(?: in \d+ files?)?\.$")
+            .expect("valid diagnostic summary regex")
     });
 
-    let mut fingerprints = Vec::new();
-    for raw_line in text.lines() {
-        if raw_line
+    let mut error_codes = Vec::new();
+    let mut diagnostic_fingerprints = Vec::new();
+    let mut current: Option<DiagnosticFingerprint> = None;
+    let mut fully_covered = true;
+    let mut summary_count = None;
+
+    for raw_line in text.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').map_or(raw_line, |line| {
+            // Normalize a CRLF transport delimiter, but preserve a bare
+            // carriage return because it is part of the diagnostic payload.
+            line.strip_suffix('\r').unwrap_or(line)
+        });
+        if line.chars().all(char::is_whitespace) {
+            if let Some(fingerprint) = current.as_mut() {
+                fingerprint
+                    .continuations
+                    .push(normalize_message_paths(line, project_root));
+            } else {
+                fully_covered = false;
+            }
+            continue;
+        }
+
+        if line
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_whitespace())
         {
-            continue;
-        }
-
-        let line = raw_line.trim_end();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Some(caps) = DIAG_WITH_POS_RE.captures(line) {
-            let code = caps
-                .name("code")
-                .and_then(|m| m.as_str().parse::<u32>().ok());
-            let line_no = caps
-                .name("line")
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-                .unwrap_or(0);
-            let col_no = caps
-                .name("col")
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-                .unwrap_or(0);
-            if code.is_some() {
-                let file = normalize_diagnostic_path(
-                    caps.name("file").map(|m| m.as_str()).unwrap_or_default(),
-                    project_root,
-                );
-                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
-                let message = normalize_message_paths(raw_message, project_root);
-                let Some(retained_code) =
-                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
-                else {
-                    continue;
-                };
-                let (code, line_no, col_no, message) = (retained_code, line_no, col_no, message);
-                fingerprints.push(DiagnosticFingerprint::new(
-                    code, file, line_no, col_no, &message,
-                ));
+            if let Some(fingerprint) = current.as_mut() {
+                fingerprint
+                    .continuations
+                    .push(normalize_message_paths(line, project_root));
+            } else {
+                fully_covered = false;
             }
             continue;
         }
 
-        if let Some(caps) = DIAG_NO_POS_RE.captures(line) {
-            if caps
-                .name("code")
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-                .is_some()
-            {
-                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
-                let message = normalize_message_paths(raw_message, project_root);
-                let Some(retained_code) =
-                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
-                else {
-                    continue;
-                };
-                let (code, line_no, col_no, message) = (retained_code, 0, 0, message);
-                fingerprints.push(DiagnosticFingerprint::new(
-                    code,
-                    String::new(),
-                    line_no,
-                    col_no,
-                    &message,
-                ));
+        if let Some(fingerprint) = parse_primary_diagnostic(line, project_root) {
+            error_codes.push(fingerprint.code);
+            if let Some(previous) = current.replace(fingerprint) {
+                diagnostic_fingerprints.push(previous);
             }
+            continue;
+        }
+
+        if let Some(previous) = current.take() {
+            diagnostic_fingerprints.push(previous);
+        }
+        if let Some(captures) = SUMMARY_RE.captures(line) {
+            let observed = captures
+                .name("count")
+                .and_then(|value| value.as_str().parse::<usize>().ok());
+            if summary_count.replace(observed).is_some() || observed.is_none() {
+                fully_covered = false;
+            }
+        } else {
+            fully_covered = false;
         }
     }
 
-    fingerprints.sort_by(|a, b| {
-        (
-            a.code,
-            a.file.as_str(),
-            a.line,
-            a.column,
-            a.message_key.as_str(),
-        )
-            .cmp(&(
-                b.code,
-                b.file.as_str(),
-                b.line,
-                b.column,
-                b.message_key.as_str(),
-            ))
-    });
-    fingerprints.dedup();
-    fingerprints
+    if let Some(previous) = current {
+        diagnostic_fingerprints.push(previous);
+    }
+    if summary_count
+        .flatten()
+        .is_some_and(|count| count != diagnostic_fingerprints.len())
+    {
+        fully_covered = false;
+    }
+    ParsedDiagnosticOutput {
+        error_codes,
+        diagnostic_fingerprints,
+        fully_covered,
+    }
 }
 
-fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
-    let normalized = raw.trim().replace('\\', "/");
-    if normalized.is_empty() {
-        return normalized;
-    }
-
-    // Build a set of equivalent root prefixes. On macOS, the same temp directory
-    // may appear as either /var/... or /private/var/... in diagnostics.
-    let mut roots = Vec::new();
-    let project_root_str = project_root.to_string_lossy().replace('\\', "/");
-    roots.push(project_root_str.clone());
-
-    // Also add the canonicalized version (with /private prefix on macOS)
-    let project_canonical = if project_root_str.starts_with("/var/") {
-        format!("/private{}", project_root_str)
-    } else {
-        project_root_str.clone()
-    };
-    roots.push(project_canonical);
-
-    // Try to canonicalize the project root if possible
-    if let Ok(canon_root) = project_root.canonicalize() {
-        let canon_str = canon_root.to_string_lossy().replace('\\', "/");
-        if !roots.contains(&canon_str) {
-            roots.push(canon_str);
-        }
-    }
-
-    let mut expanded_roots = Vec::new();
-    for root in roots {
-        if root.is_empty() {
-            continue;
-        }
-        expanded_roots.push(root.clone());
-        // Add /private variant for /var paths (macOS)
-        if root.starts_with("/var/") && !root.starts_with("/private/") {
-            expanded_roots.push(format!("/private{}", root));
-        }
-        // Add non-/private variant for /private/var paths
-        if root.starts_with("/private/var/") {
-            if let Some(stripped) = root.strip_prefix("/private") {
-                expanded_roots.push(stripped.to_string());
-            }
-        }
-    }
-
-    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
-    expanded_roots.dedup();
-
-    // First, try to strip any of the known root prefixes directly
-    for root in &expanded_roots {
-        if normalized.starts_with(root) {
-            return normalized[root.len()..].trim_start_matches('/').to_string();
-        }
-    }
-
-    // If the path is already a simple relative path (no ../), return it
-    if !normalized.contains("../") {
-        return normalized;
-    }
-
-    // For paths with ../ components (from batch mode), manually resolve them
-    // and then strip the project root
-    let joined_path = if Path::new(&normalized).is_absolute() {
-        normalized.clone()
-    } else {
-        // Join with project root and resolve
-        format!("{}/{}", project_root_str, normalized)
-    };
-
-    // Manually resolve ../ components
-    let parts: Vec<&str> = joined_path.split('/').collect();
-    let mut resolved_parts: Vec<&str> = Vec::new();
-    for part in &parts {
-        if *part == ".." {
-            resolved_parts.pop();
-        } else if !part.is_empty() && *part != "." {
-            resolved_parts.push(part);
-        }
-    }
-
-    let resolved = format!("/{}", resolved_parts.join("/"));
-
-    // Try to strip any of the expanded roots from the resolved path
-    for root in &expanded_roots {
-        if let Some(stripped) = resolved.strip_prefix(root) {
-            return stripped.trim_start_matches('/').to_string();
-        }
-    }
-
-    // If we couldn't strip any root, return just the filename
-    // (fallback for safety)
-    Path::new(&resolved)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| resolved.clone())
+#[cfg(test)]
+fn parse_diagnostic_fingerprints_from_text(
+    text: &str,
+    project_root: &Path,
+) -> Vec<DiagnosticFingerprint> {
+    parse_diagnostic_output(text, project_root).diagnostic_fingerprints
 }
 
-/// Normalize the path inside a "File 'X' not found." message to be machine-independent.
-///
-/// Handles:
-/// 1. Windows-style backslashes → forward slashes
-/// 2. macOS temp-dir prefix `/var/folders/XX/YY/` or `/private/var/folders/XX/YY/`
-/// 3. Any other leading absolute `/` prefix
-/// 4. Leading `../` components that escape the project root
-///
-/// This ensures that `/// <reference path="..\..\..\src\harness\external\mocha.d.ts" />`
-/// produces the same normalized message on both Linux and macOS regardless of how
-/// deep the temp directory is relative to the reference path's `..` escapes.
-pub(crate) fn normalize_file_not_found_message_key(message: &str) -> String {
+fn parse_primary_diagnostic(line: &str, project_root: &Path) -> Option<DiagnosticFingerprint> {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
-    static FILE_NOT_FOUND_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"File '([^']*)' not found\.").expect("valid regex"));
-    // Matches /var/folders/XX/ or /private/var/folders/XX/ (macOS temp dir prefix).
-    // On macOS, temp dirs live under /var/folders/XX/YYYY/T/. When a reference path
-    // escapes 3 levels up from there it lands at /var/folders/XX/ (only ONE hash
-    // component above the stable path). Strip exactly that one component.
-    static VAR_FOLDERS_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^(?:/private)?/var/folders/[^/]+/").expect("valid regex"));
+    static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+(?:error|warning|suggestion|message)\s+TS(?P<code>\d+): ?(?P<message>.*)$")
+            .expect("valid regex")
+    });
+    static DIAG_NO_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"^(?::\s*)?(?:error|warning|suggestion|message)\s+TS(?P<code>\d+): ?(?P<message>.*)$",
+        )
+        .unwrap()
+    });
 
-    FILE_NOT_FOUND_RE
-        .replace_all(message, |caps: &regex::Captures| {
-            let raw = &caps[1];
+    if let Some(caps) = DIAG_WITH_POS_RE.captures(line) {
+        let code = caps.name("code")?.as_str().parse::<u32>().ok()?;
+        let line_no = caps.name("line")?.as_str().parse::<u32>().ok()?;
+        let col_no = caps.name("col")?.as_str().parse::<u32>().ok()?;
+        let file = normalize_diagnostic_path(caps.name("file")?.as_str(), project_root);
+        let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+        let message = normalize_message_paths(raw_message, project_root);
+        return Some(DiagnosticFingerprint::new(
+            code, file, line_no, col_no, &message,
+        ));
+    }
 
-            // Step 1: normalize backslashes
-            let path = raw.replace('\\', "/");
-
-            // Step 2: strip macOS-specific /var/folders/XX/YY/ prefix
-            let path = VAR_FOLDERS_RE.replace(&path, "").into_owned();
-
-            // Step 3: strip any remaining leading `/`
-            let path = path.trim_start_matches('/').to_string();
-
-            // Step 4: strip leading `../` components
-            let mut p = path.as_str();
-            while let Some(rest) = p.strip_prefix("../") {
-                p = rest;
-            }
-
-            format!("File '{p}' not found.")
-        })
-        .into_owned()
+    let caps = DIAG_NO_POS_RE.captures(line)?;
+    let code = caps.name("code")?.as_str().parse::<u32>().ok()?;
+    let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+    let message = normalize_message_paths(raw_message, project_root);
+    Some(DiagnosticFingerprint::new(
+        code,
+        String::new(),
+        0,
+        0,
+        &message,
+    ))
 }
 
-/// Strip temp directory paths embedded in diagnostic messages.
+fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    strip_exact_transport_root(raw, project_root).unwrap_or_else(|| raw.to_string())
+}
+
+/// Strip only the exact invocation-owned temp root embedded in messages.
 ///
 /// tsz resolves `/// <reference path="lib.ts" />` to an absolute path like
 /// `/private/var/.../lib.ts` in the error message. We strip the project root prefix
 /// so the message stores portable relative paths (e.g., `File 'lib.ts' not found.`).
+/// Every other path and every non-path message byte remains observable.
 fn normalize_message_paths(message: &str, project_root: &Path) -> String {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
-    static ROOT_DIR_MESSAGE_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"'rootDir' '([^/][^']*)'").expect("valid rootDir message regex"));
-
-    if message.starts_with("Cannot find a tsconfig.json file at the specified directory:") {
-        return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
-    }
-    if message.starts_with("The specified path does not exist:") {
-        return "The specified path does not exist: ''.".to_string();
-    }
-    if message.starts_with("tsconfig not found at ") {
-        return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
-    }
-
-    // Build equivalent root prefixes (handles /private/var vs /var on macOS)
-    let mut roots = Vec::new();
-    roots.push(project_root.to_string_lossy().replace('\\', "/"));
-    if let Ok(canon_root) = project_root.canonicalize() {
-        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
-    }
-
-    let mut expanded_roots = Vec::new();
-    for root in roots {
-        if root.is_empty() {
-            continue;
-        }
-        expanded_roots.push(root.clone());
-        if let Some(stripped) = root.strip_prefix("/private") {
-            if stripped.starts_with("/var/") {
-                expanded_roots.push(stripped.to_string());
-            }
-        }
-        if root.starts_with("/var/") {
-            expanded_roots.push(format!("/private{}", root));
-        }
-    }
-
-    // Sort longest first so we strip the most specific prefix
-    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
-    expanded_roots.dedup();
-
-    let mut result = message.to_string();
-    for root in &expanded_roots {
-        let root_slash = if root.ends_with('/') {
-            root.to_string()
-        } else {
-            format!("{}/", root)
-        };
-        result = result.replace(&root_slash, "");
-        // Also strip root without trailing slash (e.g., paths at end of message)
-        result = result.replace(root.as_str(), "");
-    }
-
-    // Normalize temp directory paths that differ across environments.
-    // On macOS, temp dirs can be in /tmp (symlink to /private/tmp),
-    // /var/folders/.../T/, or /private/var/folders/.../T/.
-    // Normalize these to /tmp for consistent fingerprint matching.
-    result = normalize_temp_directory_paths(&result);
-    result = normalize_builtin_iterator_return_message(&result);
-    result = normalize_ts2883_node_modules_message(&result);
-    result = ROOT_DIR_MESSAGE_RE
-        .replace_all(&result, |caps: &regex::Captures| {
-            format!("'rootDir' '/{}'", &caps[1])
+    exact_transport_roots(project_root)
+        .into_iter()
+        .fold(message.to_string(), |text, root| {
+            let windows_root = root.replace('/', "\\");
+            text.replace(&format!("{root}/"), "")
+                .replace(&format!("{windows_root}\\"), "")
+                .replace(&format!("'{root}'"), "''")
+                .replace(&format!("'{windows_root}'"), "''")
         })
-        .into_owned();
-
-    // Normalize machine-specific absolute paths inside "File 'X' not found." messages.
-    // When a `/// <reference path>` escapes the temp dir (e.g., `../../../src/harness/...`),
-    // the resolved path is machine-specific (/src/... on Linux, /var/folders/.../src/... on macOS).
-    // Strip those prefixes so the fingerprint matches the cached tsc value.
-    result = normalize_file_not_found_message_key(&result);
-
-    result
 }
 
-fn normalize_builtin_iterator_return_message(message: &str) -> String {
-    let mut result = message.replace("number | BuiltinIteratorReturn", "number | undefined");
-    result = result.replace(
-        "IteratorYieldResult<number> | IteratorReturnResult",
-        "IteratorResult<number, undefined>",
-    );
-    result
+fn exact_transport_roots(project_root: &Path) -> Vec<String> {
+    let root = project_root.to_string_lossy().replace('\\', "/");
+    if root.is_empty() {
+        return Vec::new();
+    }
+    let mut roots = vec![root.clone()];
+    if let Some(without_private) = root.strip_prefix("/private/var/") {
+        roots.push(format!("/var/{without_private}"));
+    } else if root.starts_with("/var/") {
+        roots.push(format!("/private{root}"));
+    }
+    roots.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    roots.dedup();
+    roots
 }
 
-/// Normalize temp directory paths to a consistent format for fingerprint comparison.
-///
-/// Different environments have temp directories in different locations:
-/// - /tmp (Linux, macOS symlink to /private/tmp)
-/// - /private/tmp (macOS resolved path)
-/// - /var/folders/XX/.../T/ (macOS NSTemporaryDirectory)
-/// - /private/var/folders/XX/.../T/ (macOS resolved)
-///
-/// For paths that look like temp directory references (especially for files
-/// that would be outside the project root like ../file.ts), normalize to /tmp.
-fn normalize_temp_directory_paths(path: &str) -> String {
-    // Match patterns like:
-    // - /private/var/folders/_t/.../T/filename.ts
-    // - /var/folders/_t/.../T/filename.ts
-    // - /tmp/filename.ts
-    // - /private/tmp/filename.ts
-    //
-    // These all represent temp directory paths and should be normalized to /tmp/filename.ts
-
-    // Pattern 1: macOS var/folders temp paths (with or without /private prefix)
-    let var_folders_pattern = regex::Regex::new(r"/private/var/folders/[^/]+/[^/]+/T/").unwrap();
-    let result = var_folders_pattern.replace(path, "/tmp/");
-
-    let var_folders_pattern2 = regex::Regex::new(r"/var/folders/[^/]+/[^/]+/T/").unwrap();
-    let result = var_folders_pattern2.replace(&result, "/tmp/");
-
-    // Pattern 2: /private/tmp -> /tmp
-    let private_tmp_pattern = regex::Regex::new(r"/private/tmp/").unwrap();
-    let result = private_tmp_pattern.replace(&result, "/tmp/");
-
-    result.to_string()
-}
-
-fn normalize_ts2883_node_modules_message(path: &str) -> String {
-    path.replace(
-        " from './node_modules/",
-        " from '../../../../../..node_modules/",
-    )
-    .replace(
-        " from '../../../../../../node_modules/",
-        " from '../../../../../..node_modules/",
-    )
+fn strip_exact_transport_root(path: &str, project_root: &Path) -> Option<String> {
+    exact_transport_roots(project_root)
+        .into_iter()
+        .flat_map(|root| {
+            let windows_root = root.replace('/', "\\");
+            [root, windows_root]
+        })
+        .find_map(|root| {
+            path.strip_prefix(&root)
+                .filter(|rest| rest.is_empty() || rest.starts_with('/') || rest.starts_with('\\'))
+                .map(|rest| rest.trim_start_matches(['/', '\\']).to_string())
+        })
 }
 
 fn no_types_and_symbols_enabled(options: &HashMap<String, String>) -> bool {
@@ -1281,8 +1085,8 @@ fn copy_tsconfig_to_project_if_needed(
 
     // Merge directive options into a root tsconfig's compilerOptions
     if has_directive_opts {
-        let mut tsconfig: serde_json::Value =
-            serde_json::from_str(base_content).unwrap_or_else(|_| serde_json::json!({}));
+        let mut tsconfig = crate::jsonc::parse_jsonc(base_content)
+            .with_context(|| format!("cannot parse authored project config {filename} as JSONC"))?;
         if let serde_json::Value::Object(ref mut root) = tsconfig {
             let compiler_options = root
                 .entry("compilerOptions")
@@ -1305,101 +1109,16 @@ fn copy_tsconfig_to_project_if_needed(
     Ok(())
 }
 
-/// Filter out diagnostic lines originating from `.lib/` test helper files.
-///
-/// tsc does not resolve `/.lib/react16.d.ts` references in conformance tests
-/// (it emits TS6053 "file not found" instead), so any diagnostics our runner
-/// produces from those files are false positives. This filters them out before
-/// error code and fingerprint parsing.
-fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
-    let root_str = project_root.to_string_lossy().replace('\\', "/");
-    let canon_root = project_root
-        .canonicalize()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_default();
-
-    text.lines()
-        .filter(|line| {
-            // Skip lines that are diagnostics from .lib/ files.
-            // Diagnostic format: <filepath>(<line>,<col>): <category> TS<code>: <message>
-            // The filepath may be absolute (containing project_root) or relative.
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return true;
-            }
-            // Check for relative .lib/ path at start of diagnostic
-            if trimmed.starts_with(".lib/") {
-                return false;
-            }
-            // Check for absolute path containing .lib/
-            if !root_str.is_empty() && trimmed.contains(&format!("{}/.lib/", root_str)) {
-                return false;
-            }
-            if !canon_root.is_empty() && trimmed.contains(&format!("{}/.lib/", canon_root)) {
-                return false;
-            }
-            // Also check /private/var variant on macOS
-            if trimmed.contains("/.lib/")
-                && ["error", "warning", "suggestion", "message"]
-                    .iter()
-                    .any(|category| trimmed.contains(&format!("{category} TS")))
-            {
-                return false;
-            }
-            true
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
+#[cfg(test)]
 fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
-    text.lines()
-        .filter(|raw_line| {
-            !raw_line
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_whitespace())
-        })
-        .filter_map(|raw_line| {
-            retained_diagnostic_code_from_line(raw_line.trim_end(), DiagnosticLineMode::CodeList)
-        })
-        .collect()
-}
-
-#[derive(Clone, Copy)]
-enum DiagnosticLineMode {
-    CodeList,
-    Fingerprint,
-}
-
-fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> Option<u32> {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
-    static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(
-            r"^(?:.+\(\d+,\d+\):\s+(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):.*|:\s*(?:error|warning|suggestion|message)\s+TS(?P<code2>\d+):.*|(?:error|warning|suggestion|message)\s+TS(?P<code3>\d+):.*)$",
-        )
-        .expect("valid regex")
-    });
-
-    let caps = DIAG_CODE_RE.captures(line)?;
-    if caps.name("code3").is_some() && matches!(mode, DiagnosticLineMode::CodeList) {
-        return None;
-    }
-    let code = caps
-        .name("code")
-        .or_else(|| caps.name("code2"))
-        .or_else(|| caps.name("code3"))
-        .and_then(|m| m.as_str().parse::<u32>().ok())?;
-    Some(code)
+    parse_diagnostic_output(text, Path::new("")).error_codes
 }
 
 /// Parse @symlink associations from raw test file content.
 /// Returns a map of source filename -> list of symlink paths.
 /// Format in test files: @filename: /path followed by @symlink: /link1,/link2
 fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
-    use tsz_common::test_directives::{parse_directive_line, split_list_values};
+    use crate::test_directives::{parse_directive_line, split_list_values};
 
     let mut result = Vec::new();
     let mut current_filename: Option<String> = None;
@@ -1432,7 +1151,7 @@ fn parse_symlink_associations(content: &str) -> Vec<(String, Vec<String>)> {
 /// content. TypeScript's harness treats these as symlinks rooted at the
 /// destination path that point at the source path.
 fn parse_link_associations(content: &str) -> Vec<(String, String)> {
-    use tsz_common::test_directives::parse_directive_line;
+    use crate::test_directives::parse_directive_line;
 
     let mut result = Vec::new();
 
@@ -1783,34 +1502,80 @@ fn rewrite_absolute_reference_paths(content: &str) -> String {
 ///
 /// Unlike `parse_tsz_output` which takes a `process::Output`, this takes the
 /// raw text collected from a batch worker's stdout (everything before the
-/// sentinel line). An empty output means successful compilation with no errors.
+/// sentinel line). Exactly one completion marker is mandatory; missing,
+/// duplicate, or unknown markers are capability nonclaims.
 pub fn parse_batch_output(
     text: &str,
     project_root: &Path,
     options: HashMap<String, String>,
 ) -> CompilationResult {
-    if text.trim().is_empty() {
+    let (semantic_completion, text) = strip_semantic_completion_marker(text);
+    if text.is_empty() {
         return CompilationResult {
             error_codes: vec![],
             diagnostic_fingerprints: vec![],
             crashed: false,
+            semantic_completion,
+            ordinary_exit_statuses: Vec::new(),
             options,
         };
     }
 
-    // Filter out diagnostics from .lib/ files (e.g., react16.d.ts).
-    // tsc does not load these test helper libraries, so our diagnostics from
-    // them are false positives.
-    let text = filter_lib_diagnostics(text, project_root);
-    let error_codes = parse_error_codes_from_text(&text);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
+    let parsed = parse_diagnostic_output(&text, project_root);
+    let crashed = !parsed.fully_covered;
 
     CompilationResult {
-        error_codes,
-        diagnostic_fingerprints,
-        crashed: false,
+        error_codes: parsed.error_codes,
+        diagnostic_fingerprints: parsed.diagnostic_fingerprints,
+        crashed,
+        semantic_completion: if crashed {
+            SemanticCompletion::Incomplete
+        } else {
+            semantic_completion
+        },
+        ordinary_exit_statuses: Vec::new(),
         options,
     }
+}
+
+fn strip_semantic_completion_marker(text: &str) -> (SemanticCompletion, String) {
+    let mut completion = None;
+    let mut valid = true;
+    let mut diagnostics = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        let observed = match trimmed {
+            "---TSZ-SEMANTIC-COMPLETION:complete---" => Some(SemanticCompletion::Complete),
+            "---TSZ-SEMANTIC-COMPLETION:deferred---" => Some(SemanticCompletion::Deferred),
+            "---TSZ-SEMANTIC-COMPLETION:cycle---" => Some(SemanticCompletion::Cycle),
+            "---TSZ-SEMANTIC-COMPLETION:limit---" => Some(SemanticCompletion::Limit),
+            _ if trimmed
+                .strip_prefix(SEMANTIC_COMPLETION_MARKER_PREFIX)
+                .is_some_and(|payload| payload.ends_with("---")) =>
+            {
+                valid = false;
+                None
+            }
+            _ => None,
+        };
+        if let Some(observed) = observed {
+            if completion.replace(observed).is_some() {
+                valid = false;
+            }
+        } else if trimmed.starts_with(SEMANTIC_COMPLETION_MARKER_PREFIX) {
+            valid = false;
+        } else {
+            diagnostics.push_str(line);
+        }
+    }
+    (
+        if valid {
+            completion.unwrap_or(SemanticCompletion::Incomplete)
+        } else {
+            SemanticCompletion::Incomplete
+        },
+        diagnostics,
+    )
 }
 
 #[cfg(test)]

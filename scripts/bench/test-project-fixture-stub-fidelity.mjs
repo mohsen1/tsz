@@ -31,6 +31,10 @@ import {
   toBaseline,
   BASELINE_PATH,
 } from "./project-fixture-stub-fidelity.mjs";
+import {
+  computeFixtureStubInventory,
+  fixtureStubEvidenceFor,
+} from "./lib/fixture-stub-inventory.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -183,6 +187,91 @@ test("checkAgainstBaseline reports a removed writer without failing", () => {
 
 const liveAudit = auditStubFidelity(ROOT);
 const liveBaseline = loadBaseline();
+
+test("row inventory identifies stubbed canaries and exact zero-stub rows", () => {
+  const inventory = computeFixtureStubInventory(ROOT);
+  for (const name of ["msw-project", "effect-project", "drizzle-orm-project"]) {
+    assert.ok(inventory[name], `${name} must be structurally linked to its stub writer`);
+    assert.ok(
+      inventory[name].stubbedModules > 0 || inventory[name].stubbedAnyMembers > 0,
+      `${name} must not collapse to a forged zero-stub row`,
+    );
+  }
+  const tiny = fixtureStubEvidenceFor(ROOT, "tiny-invariant-project");
+  assert.equal(tiny.stubbedModules, 0);
+  assert.equal(tiny.stubbedAnyMembers, 1, "direct process:any injection must be inventoried");
+  assert.deepEqual(tiny.stubInventoryOwners, ["tsz_write_tiny_invariant_config"]);
+  const kysely = fixtureStubEvidenceFor(ROOT, "kysely-project");
+  assert.equal(kysely.stubbedModules, 0);
+  assert.equal(kysely.stubbedAnyMembers, 0);
+  assert.deepEqual(
+    kysely.stubInventoryOwners,
+    ["tsz_write_kysely_globals"],
+    "typed guard-wrapper declarations remain nonzero stub ownership",
+  );
+  const zero = fixtureStubEvidenceFor(ROOT, "utility-types-project");
+  assert.equal(zero.stubbedModules, 0);
+  assert.equal(zero.stubbedAnyMembers, 0);
+  assert.deepEqual(zero.stubInventoryOwners, []);
+  assert.match(zero.stubInventoryFingerprint, /^[0-9a-f]{64}$/);
+});
+
+test("row inventory follows nested guard/config helpers to typed declaration writers", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stub-call-graph-"));
+  try {
+    const files = {
+      "scripts/bench/project-fixtures.sh": [
+        "tsz_write_demo_globals() {",
+        "  cat > \"$1\" <<'TYPES'",
+        "declare const Buffer: { compare(left: unknown, right: unknown): number };",
+        "TYPES",
+        "}",
+        "tsz_write_demo_config() {",
+        "  cat > \"$1\" <<'JSON'",
+        "{\"compilerOptions\":{\"strict\":true}}",
+        "JSON",
+        "}",
+      ].join("\n"),
+      "scripts/bench/lib/project-fixture-stubs.sh": "# no external writers\n",
+      "scripts/bench/lib/project-fixture-stubs-canary.sh": "# no canary writers\n",
+      "scripts/ci/project-compile-guard.sh": [
+        "write_demo_config() {",
+        "  tsz_write_demo_globals \"$FIXTURE_ROOT/demo/globals.d.ts\"",
+        "  tsz_write_demo_config \"$FIXTURE_ROOT/demo/tsconfig.json\"",
+        "}",
+        "run_project_row() {",
+        "  case \"$name\" in",
+        "    demo-project)",
+        "      write_demo_config",
+        "      ;;",
+        "  esac",
+        "}",
+      ].join("\n"),
+    };
+    for (const [relative, contents] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(tmp, relative)), { recursive: true });
+      fs.writeFileSync(path.join(tmp, relative), contents);
+    }
+    const evidence = fixtureStubEvidenceFor(tmp, "demo-project");
+    assert.equal(evidence.stubbedModules, 0);
+    assert.equal(evidence.stubbedAnyMembers, 0);
+    assert.deepEqual(evidence.stubInventoryOwners, ["tsz_write_demo_globals"]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("row inventory fails closed when its source model is unavailable", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stub-inventory-miss-"));
+  try {
+    assert.throws(
+      () => computeFixtureStubInventory(tmp),
+      /fixture stub inventory source missing/,
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("committed baseline file exists and is well-formed", () => {
   assert.ok(fs.existsSync(BASELINE_PATH), "baseline JSON is committed");

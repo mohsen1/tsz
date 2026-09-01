@@ -2,12 +2,11 @@
 //!
 //! Orchestrates parallel test execution using tokio and compares results.
 
-use crate::batch_pool::{BatchOutcome, ProcessPool};
-use crate::cache::{self, load_cache};
-use crate::cli::{Args, RunMode};
-use crate::server_pool::{ServerOutcome, ServerPool};
+use crate::cache::{self, load_cache, load_domain};
+use crate::cli::Args;
 use crate::test_parser::{
-    parse_test_file, select_ts7_oracle_configurations, should_skip_test_at_path, TestDirectives,
+    parse_test_file, select_ts7_oracle_configurations, test_disposition_at_path, TestDirectives,
+    TestDisposition,
 };
 use crate::text_decode::{decode_source_text, DecodedSourceText};
 use crate::tsc_results::{
@@ -16,7 +15,7 @@ use crate::tsc_results::{
 use crate::tsz_wrapper;
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -38,22 +37,54 @@ struct ProblemTests {
     fingerprint_only: std::sync::Mutex<Vec<String>>,
 }
 
+enum FreshTextOutcome {
+    Complete(tsz_wrapper::CompilationResult),
+    Terminal(TestResult),
+}
+
 fn directive_non_runnable_result(path: &Path, directives: &TestDirectives) -> Option<TestResult> {
-    let reason = should_skip_test_at_path(path, directives)?;
-    if reason == "unsupported by TypeScript 7" {
-        Some(TestResult::Unsupported(
-            UnsupportedReason::TypeScript7Configuration,
-        ))
-    } else {
-        Some(TestResult::Skipped(reason))
+    match test_disposition_at_path(path, directives) {
+        TestDisposition::Runnable => None,
+        TestDisposition::Unsupported(reason) => Some(TestResult::Unsupported(reason)),
+        TestDisposition::Skipped(reason) => Some(TestResult::Skipped(reason)),
     }
+}
+
+fn semantic_non_runnable_result(result: &tsz_wrapper::CompilationResult) -> Option<TestResult> {
+    (!result.semantic_completion.is_complete()).then_some(TestResult::Unsupported(
+        UnsupportedReason::SemanticIncomplete,
+    ))
+}
+
+fn oracle_diagnostic_evidence_non_runnable(
+    result: &crate::tsc_results::TscResult,
+) -> Option<TestResult> {
+    (!result.diagnostic_blocks_complete
+        || result.ordinary_exit_statuses.is_empty()
+        || result
+            .ordinary_exit_statuses
+            .iter()
+            .any(|status| *status > 2))
+    .then_some(TestResult::Unsupported(
+        UnsupportedReason::OracleDiagnosticEvidenceIncomplete,
+    ))
+}
+
+fn validate_candidate_source_bytes(key: &str, bytes: &[u8], expected: &str) -> anyhow::Result<()> {
+    let observed = crate::integrity::sha256_bytes(bytes);
+    if observed != expected {
+        anyhow::bail!("candidate bytes changed after domain validation: {key}");
+    }
+    Ok(())
 }
 
 /// Test runner
 pub struct Runner {
     args: Args,
     tsz_binary: String,
+    typescript_lib_dir: PathBuf,
     cache: Arc<crate::cache::TscCache>,
+    domain: Arc<crate::cache::ConformanceDomain>,
     stats: Arc<TestStats>,
     error_freq: Arc<ErrorFrequency>,
     problems: Arc<ProblemTests>,
@@ -90,6 +121,96 @@ impl Runner {
         configured.to_string()
     }
 
+    /// Execute every TS7-selected configuration in selector order. UTF-8 and
+    /// UTF-16 inputs share this exact path so decoding cannot change compiler
+    /// options or process multiplicity.
+    async fn compile_text_variants(
+        content: &str,
+        directives: &TestDirectives,
+        original_ext: Option<&str>,
+        ts_tests_lib_dir: &Path,
+        typescript_lib_dir: &Path,
+        tsz_binary: &str,
+        timeout_secs: u64,
+    ) -> anyhow::Result<FreshTextOutcome> {
+        let option_variants = select_ts7_oracle_configurations(directives)
+            .expect("TS7 selector succeeded during skip check");
+        let options = option_variants
+            .first()
+            .expect("TS7 selector returned at least one configuration")
+            .clone();
+        let mut all_codes = Vec::new();
+        let mut all_fingerprints = Vec::new();
+        let mut all_exit_statuses = Vec::new();
+
+        for variant in option_variants {
+            let content = content.to_string();
+            let filenames = directives.filenames.clone();
+            let key_order = directives.option_order.clone();
+            let original_ext = original_ext.map(str::to_string);
+            let ts_tests_lib_dir = ts_tests_lib_dir.to_path_buf();
+            let prepared = tokio::task::spawn_blocking(move || {
+                tsz_wrapper::prepare_test_dir_with_lib_dir(
+                    &content,
+                    &filenames,
+                    &variant,
+                    original_ext.as_deref(),
+                    &key_order,
+                    Some(&ts_tests_lib_dir),
+                )
+                .map(|prepared| (prepared, variant))
+            })
+            .await??;
+            let (prepared, variant) = prepared;
+
+            let child = tokio::process::Command::new(tsz_binary)
+                .arg("--project")
+                .arg(&prepared.project_dir)
+                .arg("--noEmit")
+                .arg("--pretty")
+                .arg("false")
+                .env("TSZ_LIB_DIR", typescript_lib_dir)
+                .current_dir(&prepared.project_dir)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?;
+            let output = if timeout_secs > 0 {
+                match tokio::time::timeout(
+                    Duration::from_secs(timeout_secs),
+                    child.wait_with_output(),
+                )
+                .await
+                {
+                    Ok(result) => result?,
+                    Err(_) => return Ok(FreshTextOutcome::Terminal(TestResult::Timeout)),
+                }
+            } else {
+                child.wait_with_output().await?
+            };
+            let compile_result =
+                tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), variant);
+            if compile_result.crashed {
+                return Ok(FreshTextOutcome::Terminal(TestResult::Crashed));
+            }
+            if let Some(result) = semantic_non_runnable_result(&compile_result) {
+                return Ok(FreshTextOutcome::Terminal(result));
+            }
+            all_codes.extend(compile_result.error_codes);
+            all_fingerprints.extend(compile_result.diagnostic_fingerprints);
+            all_exit_statuses.extend(compile_result.ordinary_exit_statuses);
+        }
+
+        Ok(FreshTextOutcome::Complete(tsz_wrapper::CompilationResult {
+            error_codes: all_codes,
+            diagnostic_fingerprints: all_fingerprints,
+            crashed: false,
+            semantic_completion: tsz_wrapper::SemanticCompletion::Complete,
+            ordinary_exit_statuses: all_exit_statuses,
+            options,
+        }))
+    }
+
     /// Create a new runner
     pub fn new(args: Args) -> anyhow::Result<Self> {
         // Load cache
@@ -98,9 +219,32 @@ impl Runner {
             load_cache(cache_path)
                 .with_context(|| format!("Failed to load cache from {}", args.cache_file))?
         } else {
-            warn!("Cache file not found, starting with empty cache");
-            HashMap::new()
+            anyhow::bail!("TSC cache file not found: {}", args.cache_file)
         };
+        cache::validate_runnable_evidence(&cache)?;
+
+        let domain = load_domain(Path::new(&args.domain_file))
+            .with_context(|| format!("Failed to load domain from {}", args.domain_file))?;
+
+        let repo_root = crate::corpus::repository_root_from_current_dir()?;
+        let corpus = crate::corpus::verify_pinned_corpus(&repo_root, Path::new(&args.test_dir))?;
+        if domain.schema_version != 2
+            || domain.corpus_commit != corpus.commit
+            || domain.corpus_tree != corpus.tree
+        {
+            anyhow::bail!("cache/domain corpus identity does not match the pinned pristine corpus");
+        }
+        let local_oracle = crate::oracle::resolve_verified_oracle(&repo_root)?;
+        crate::oracle::validate_runtime_evidence(&repo_root, &domain.oracle, &local_oracle)?;
+        if local_oracle.version()? != domain.typescript_version {
+            anyhow::bail!("cache/domain TypeScript version differs from verified native oracle");
+        }
+        let typescript_lib_dir = local_oracle
+            .binary_path
+            .parent()
+            .context("verified native oracle executable has no library directory")?
+            .canonicalize()
+            .context("cannot canonicalize verified native oracle library directory")?;
 
         info!("Loaded {} cached TSC results", cache.len());
 
@@ -109,7 +253,9 @@ impl Runner {
         Ok(Self {
             args,
             tsz_binary,
+            typescript_lib_dir,
             cache: Arc::new(cache),
+            domain: Arc::new(domain),
             stats: Arc::new(TestStats::default()),
             error_freq: Arc::new(ErrorFrequency::default()),
             problems: Arc::new(ProblemTests::default()),
@@ -118,12 +264,20 @@ impl Runner {
 
     /// Run all tests
     pub async fn run(&self) -> anyhow::Result<TestStats> {
+        let source_hashes = Arc::new(plan::validate_live_domain(
+            &self.args,
+            &self.cache,
+            &self.domain,
+        )?);
         let test_files = plan::discover_tests(&self.args)?;
 
         if test_files.is_empty() {
-            warn!("No test files found!");
-            return Ok(TestStats::default());
+            anyhow::bail!("conformance selection is empty");
         }
+
+        self.stats
+            .selected
+            .store(test_files.len(), Ordering::SeqCst);
 
         info!("Found {} test files", test_files.len());
 
@@ -131,75 +285,7 @@ impl Runner {
         let concurrency_limit = self.args.workers;
         let semaphore = Arc::new(Semaphore::new(concurrency_limit));
 
-        // Server mode does NOT own every test: tests whose directives match
-        // has_unsupported_server_options (jsx, moduleResolution, paths,
-        // baseUrl, types, typeRoots — see options_convert.rs) set
-        // use_server = false in run_test() and fall through to the CLI path.
-        // If we skip the batch pool, those tests degrade to per-test
-        // subprocess spawning, which is much slower than the batch pool they
-        // would have used otherwise.
-        //
-        // So always create the batch pool unless --no-batch is set. When
-        // server mode is also active, the two pools coexist: server-eligible
-        // tests use the server pool, server-incompatible tests use the batch
-        // pool. The cost (idle batch processes when most tests run on the
-        // server) is small compared to the subprocess-per-test cost it
-        // avoids.
-        let pool: Option<Arc<ProcessPool>> = if self.args.no_batch {
-            info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
-            None
-        } else {
-            info!(
-                "Creating batch process pool with {} workers",
-                concurrency_limit
-            );
-            match ProcessPool::new(
-                &self.tsz_binary,
-                concurrency_limit,
-                self.args.max_compilations_per_worker,
-                self.args.max_worker_rss_mb * 1024 * 1024,
-            )
-            .await
-            {
-                Ok(pool) => Some(Arc::new(pool)),
-                Err(e) => {
-                    warn!(
-                        "Failed to create batch pool: {}. Falling back to subprocess mode.",
-                        e
-                    );
-                    None
-                }
-            }
-        };
-
-        // Server pool is additive: it handles tests whose options are all
-        // server-compatible. The batch pool created above stays available
-        // for tests with unsupported server options.
-        let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
-            let server_bin = self.args.resolved_server_binary();
-            match ServerPool::new(
-                &server_bin,
-                concurrency_limit,
-                self.args.max_compilations_per_worker,
-                self.args.max_worker_rss_mb * 1024 * 1024,
-            )
-            .await
-            {
-                Ok(sp) => {
-                    info!(
-                        "Server pool ready: {} workers using {}",
-                        concurrency_limit, server_bin
-                    );
-                    Some(Arc::new(sp))
-                }
-                Err(e) => {
-                    warn!("Failed to create server pool: {e}. CLI batch pool handles all tests.");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        info!("Canonical fresh-process mode captures stdout, stderr, and exact exit status");
 
         // Process tests in parallel
         let start = Instant::now();
@@ -214,17 +300,18 @@ impl Runner {
         let diff_artifacts_dir = PathBuf::from(&self.args.diff_artifacts_dir);
         let test_dir: PathBuf = PathBuf::from(&self.args.test_dir);
         let timed_tests = Arc::new(std::sync::Mutex::new(Vec::<TimedTest>::new()));
+        let fatal_errors = Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
 
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
                 let permit = std::sync::Arc::clone(&semaphore);
                 let cache = std::sync::Arc::clone(&self.cache);
+                let source_hashes = Arc::clone(&source_hashes);
                 let stats = std::sync::Arc::clone(&self.stats);
                 let error_freq = std::sync::Arc::clone(&self.error_freq);
                 let problems = std::sync::Arc::clone(&self.problems);
                 let tsz_binary = self.tsz_binary.clone();
-                let pool = pool.clone();
-                let server_pool = server_pool.clone();
+                let typescript_lib_dir = self.typescript_lib_dir.clone();
                 let verbose = self.args.is_verbose();
                 let print_test = self.args.print_test;
                 let print_test_files = self.args.print_test_files;
@@ -232,6 +319,7 @@ impl Runner {
                 let test_dir = test_dir.clone();
                 let diff_artifacts_dir = diff_artifacts_dir.clone();
                 let timed_tests = Arc::clone(&timed_tests);
+                let fatal_errors = Arc::clone(&fatal_errors);
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
@@ -242,9 +330,9 @@ impl Runner {
                         &path,
                         &test_dir,
                         cache,
+                        source_hashes,
                         tsz_binary,
-                        pool,
-                        server_pool,
+                        typescript_lib_dir,
                         print_test_files,
                         timeout_secs,
                     )
@@ -266,7 +354,7 @@ impl Runner {
                             match result {
                                 TestResult::Pass => {
                                     stats.passed.fetch_add(1, Ordering::SeqCst);
-                                    if print_test && !verbose {
+                                    if print_test {
                                         writeln!(buf, "PASS {}", rel_path).ok();
                                     }
                                 }
@@ -280,6 +368,8 @@ impl Runner {
                                         extra_fingerprints,
                                         expected_fingerprints,
                                         actual_fingerprints,
+                                        expected_exit_statuses,
+                                        actual_exit_statuses,
                                         options,
                                         known_failure,
                                     } = *fail;
@@ -400,6 +490,8 @@ impl Runner {
                                                 .iter()
                                                 .map(super::tsc_results::DiagnosticFingerprint::display_key)
                                                 .collect::<Vec<_>>(),
+                                            "expected_exit_statuses": expected_exit_statuses,
+                                            "actual_exit_statuses": actual_exit_statuses,
                                             "options": options,
                                         });
                                         let _ = std::fs::write(
@@ -444,24 +536,77 @@ impl Runner {
                             }
                         }
                         Err(e) => {
-                            timed_tests.lock().unwrap().push(TimedTest {
-                                file: rel_path.replace('\\', "/"),
-                                elapsed_ms: test_start.elapsed().as_millis(),
-                            });
-                            stats.total.fetch_add(1, Ordering::SeqCst);
-                            stats.failed.fetch_add(1, Ordering::SeqCst);
-                            println!("FAIL {} (ERROR: {})", rel_path, e);
+                            fatal_errors
+                                .lock()
+                                .unwrap()
+                                .push((rel_path.replace('\\', "/"), format!("{e:#}")));
                         }
                     }
                 }
             })
             .await;
 
+        let fatal_errors = fatal_errors.lock().unwrap();
+        if let Some((path, error)) = fatal_errors.first() {
+            anyhow::bail!(
+                "conformance infrastructure failed for {path}: {error} ({} fatal worker errors)",
+                fatal_errors.len()
+            );
+        }
+        drop(fatal_errors);
+
         let elapsed = start.elapsed();
 
         // Print summary
         let stats = &self.stats;
         let error_freq = &self.error_freq;
+        let summary = TestStats {
+            selected: AtomicUsize::new(stats.selected.load(Ordering::SeqCst)),
+            total: AtomicUsize::new(stats.total.load(Ordering::SeqCst)),
+            passed: AtomicUsize::new(stats.passed.load(Ordering::SeqCst)),
+            failed: AtomicUsize::new(stats.failed.load(Ordering::SeqCst)),
+            skipped: AtomicUsize::new(stats.skipped.load(Ordering::SeqCst)),
+            unsupported: AtomicUsize::new(stats.unsupported.load(Ordering::SeqCst)),
+            crashed: AtomicUsize::new(stats.crashed.load(Ordering::SeqCst)),
+            timeout: AtomicUsize::new(stats.timeout.load(Ordering::SeqCst)),
+            known_failures: AtomicUsize::new(stats.known_failures.load(Ordering::SeqCst)),
+            fingerprint_only: AtomicUsize::new(stats.fingerprint_only.load(Ordering::SeqCst)),
+        };
+        if !summary.has_result_bijection() {
+            anyhow::bail!(
+                "conformance result accounting is not a bijection: selected={} results={}",
+                summary.selected.load(Ordering::SeqCst),
+                summary.total.load(Ordering::SeqCst)
+            );
+        }
+
+        // Complete every fallible output before exposing the canonical final
+        // summary. A timings error or result-accounting gap therefore cannot
+        // leave a parseable-but-incomplete observation behind.
+        if let Some(path) = &self.args.timings_file {
+            let mut results = timed_tests.lock().unwrap().clone();
+            results.sort_by(|a, b| a.file.cmp(&b.file));
+            let payload = serde_json::json!({
+                "summary": {
+                    "total": results.len(),
+                    "elapsed_ms": elapsed.as_millis(),
+                },
+                "results": results
+                    .iter()
+                    .map(|result| serde_json::json!({
+                        "file": &result.file,
+                        "elapsed_ms": result.elapsed_ms,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            if let Some(parent) = Path::new(path).parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create timings directory {}", parent.display())
+                })?;
+            }
+            std::fs::write(path, serde_json::to_string(&payload)?)
+                .with_context(|| format!("failed to write timings file {path}"))?;
+        }
 
         // Re-print crashed and timed-out tests for easy visibility
         let crashed_tests = self.problems.crashed.lock().unwrap();
@@ -557,43 +702,7 @@ impl Runner {
 
         println!("{}", "=".repeat(60));
 
-        if let Some(path) = &self.args.timings_file {
-            let mut results = timed_tests.lock().unwrap().clone();
-            results.sort_by(|a, b| a.file.cmp(&b.file));
-            let payload = serde_json::json!({
-                "summary": {
-                    "total": results.len(),
-                    "elapsed_ms": elapsed.as_millis(),
-                },
-                "results": results
-                    .iter()
-                    .map(|result| serde_json::json!({
-                        "file": &result.file,
-                        "elapsed_ms": result.elapsed_ms,
-                    }))
-                    .collect::<Vec<_>>(),
-            });
-            if let Some(parent) = Path::new(path).parent() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!("failed to create timings directory {}", parent.display())
-                })?;
-            }
-            std::fs::write(path, serde_json::to_string(&payload)?)
-                .with_context(|| format!("failed to write timings file {path}"))?;
-        }
-
-        // Return a summary (note: this is before the final stats are cloned)
-        Ok(TestStats {
-            total: AtomicUsize::new(stats.total.load(Ordering::SeqCst)),
-            passed: AtomicUsize::new(stats.passed.load(Ordering::SeqCst)),
-            failed: AtomicUsize::new(stats.failed.load(Ordering::SeqCst)),
-            skipped: AtomicUsize::new(stats.skipped.load(Ordering::SeqCst)),
-            unsupported: AtomicUsize::new(stats.unsupported.load(Ordering::SeqCst)),
-            crashed: AtomicUsize::new(stats.crashed.load(Ordering::SeqCst)),
-            timeout: AtomicUsize::new(stats.timeout.load(Ordering::SeqCst)),
-            known_failures: AtomicUsize::new(stats.known_failures.load(Ordering::SeqCst)),
-            fingerprint_only: AtomicUsize::new(stats.fingerprint_only.load(Ordering::SeqCst)),
-        })
+        Ok(summary)
     }
 
     /// Run a single test.
@@ -603,9 +712,9 @@ impl Runner {
         path: &Path,
         test_dir: &Path,
         cache: Arc<crate::cache::TscCache>,
+        source_hashes: Arc<BTreeMap<String, String>>,
         tsz_binary: String,
-        pool: Option<Arc<ProcessPool>>,
-        server_pool: Option<Arc<ServerPool>>,
+        typescript_lib_dir: PathBuf,
         print_test_files: bool,
         timeout_secs: u64,
     ) -> anyhow::Result<(TestResult, Option<String>)> {
@@ -613,6 +722,11 @@ impl Runner {
         let bytes = tokio::fs::read(path).await?;
         let key =
             cache::cache_key(path, test_dir).unwrap_or_else(|| path.to_string_lossy().to_string());
+        let expected_source_sha256 = source_hashes
+            .get(&key)
+            .with_context(|| format!("candidate has no preflight source identity: {key}"))?;
+        validate_candidate_source_bytes(&key, &bytes, expected_source_sha256)?;
+        let cached_result = cache::lookup(&cache, &key);
         let ts_tests_lib_dir = tsz_wrapper::tests_lib_dir_for_cases_dir(test_dir);
 
         // Build file preview if requested (printed atomically by caller)
@@ -639,325 +753,38 @@ impl Runner {
                     return Ok((result, file_preview.take()));
                 }
 
-                if let Some(tsc_result) = cache::lookup(&cache, &key) {
+                if let Some(tsc_result) = cached_result {
                     debug!("Cache hit for {}", path.display());
-
-                    // Cache generation and execution share one TS7-supported
-                    // configuration for each source test. `should_skip_test`
-                    // above already rejected tests with no supported variant.
-                    let option_variants = select_ts7_oracle_configurations(&parsed.directives)
-                        .expect("TS7 selector succeeded during skip check");
-                    let options = option_variants
-                        .first()
-                        .expect("TS7 selector returned at least one configuration")
-                        .clone();
-
-                    let mut all_codes = std::collections::HashSet::new();
-                    let mut all_fingerprints = std::collections::HashSet::new();
-                    let original_ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(std::string::ToString::to_string);
-
-                    // Determine if we should use server mode for this test
-                    let use_server = server_pool.is_some()
-                        && option_variants.len() == 1
-                        && !crate::options_convert::has_unsupported_server_options(&options);
-
-                    if use_server {
-                        // SERVER MODE: send files + options as JSON, no temp dir.
-                        // This skips temp directory creation and filesystem I/O entirely.
-                        let server = server_pool.as_ref().unwrap();
-                        let mut files = HashMap::new();
-                        if parsed.directives.filenames.is_empty() {
-                            // Single-file test
-                            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
-                            let name = format!("test.{ext}");
-                            let clean = tsz_wrapper::strip_directive_comments(&content);
-                            files.insert(name, clean);
-                        } else {
-                            // Multi-file test
-                            for (filename, file_content) in &parsed.directives.filenames {
-                                files.insert(filename.clone(), file_content.clone());
-                            }
-                        }
-
-                        let timeout = if timeout_secs > 0 {
-                            Duration::from_secs(timeout_secs)
-                        } else {
-                            Duration::ZERO
-                        };
-
-                        // Run first variant only (matching CLI behavior for comparison)
-                        let first_variant = option_variants.first().unwrap_or(&options);
-                        let outcome = server.check(files, first_variant, timeout).await?;
-
-                        match outcome {
-                            ServerOutcome::Done(codes) => {
-                                all_codes.extend(codes);
-                            }
-                            ServerOutcome::Crashed => {
-                                return Ok((TestResult::Crashed, file_preview.take()));
-                            }
-                            ServerOutcome::Timeout => {
-                                return Ok((TestResult::Timeout, file_preview.take()));
-                            }
-                            ServerOutcome::Error(e) => {
-                                warn!("Server error for {}: {e}", path.display());
-                                return Ok((TestResult::Crashed, file_preview.take()));
-                            }
-                        }
-                    } else {
-                        // Run every TS7 harness configuration and compare the
-                        // union with the cache generator's matching union.
-                        for variant in &option_variants {
-                            let content_clone = content.clone();
-                            let filenames = parsed.directives.filenames.clone();
-                            let variant_clone = variant.clone();
-                            let ext_clone = original_ext.clone();
-                            let key_order = parsed.directives.option_order.clone();
-                            let expected_error_codes = tsc_result.error_codes.clone();
-                            let ts_tests_lib_dir = ts_tests_lib_dir.clone();
-
-                            let prepared = tokio::task::spawn_blocking(move || {
-                                tsz_wrapper::prepare_test_dir_with_lib_dir(
-                                    &content_clone,
-                                    &filenames,
-                                    &variant_clone,
-                                    ext_clone.as_deref(),
-                                    &key_order,
-                                    Some(&expected_error_codes),
-                                    Some(&ts_tests_lib_dir),
-                                )
-                            })
-                            .await??;
-
-                            let compile_result = if let Some(ref pool) = pool {
-                                // Use batch pool — send project dir, read output
-                                let timeout_dur = if timeout_secs > 0 {
-                                    Duration::from_secs(timeout_secs)
-                                } else {
-                                    Duration::ZERO
-                                };
-                                match pool.compile(&prepared.project_dir, timeout_dur).await? {
-                                    BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
-                                        &output,
-                                        prepared.temp_dir.path(),
-                                        variant.clone(),
-                                    ),
-                                    BatchOutcome::Crashed => {
-                                        return Ok((TestResult::Crashed, file_preview.take()));
-                                    }
-                                    BatchOutcome::Timeout => {
-                                        match Self::compile_with_subprocess(
-                                            &tsz_binary,
-                                            &prepared.project_dir,
-                                            prepared.temp_dir.path(),
-                                            variant.clone(),
-                                            timeout_secs.saturating_mul(2).max(60),
-                                        )
-                                        .await?
-                                        {
-                                            Some(result) => result,
-                                            None => {
-                                                return Ok((
-                                                    TestResult::Timeout,
-                                                    file_preview.take(),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                // Subprocess fallback — spawn fresh tsz per compilation
-                                // Set cwd to project dir so diagnostic file paths are
-                                // relative to project root (matching cache generator behavior)
-                                let child = tokio::process::Command::new(&tsz_binary)
-                                    .arg("--project")
-                                    .arg(&prepared.project_dir)
-                                    .arg("--noEmit")
-                                    .arg("--pretty")
-                                    .arg("false")
-                                    .current_dir(&prepared.project_dir)
-                                    .stdout(std::process::Stdio::piped())
-                                    .stderr(std::process::Stdio::piped())
-                                    .kill_on_drop(true)
-                                    .spawn()?;
-
-                                let output = if timeout_secs > 0 {
-                                    match tokio::time::timeout(
-                                        Duration::from_secs(timeout_secs),
-                                        child.wait_with_output(),
-                                    )
-                                    .await
-                                    {
-                                        Ok(result) => result?,
-                                        Err(_) => {
-                                            return Ok((TestResult::Timeout, file_preview.take()));
-                                        }
-                                    }
-                                } else {
-                                    child.wait_with_output().await?
-                                };
-
-                                tsz_wrapper::parse_tsz_output(
-                                    &output,
-                                    prepared.temp_dir.path(),
-                                    variant.clone(),
-                                )
-                            };
-                            if compile_result.crashed {
-                                return Ok((TestResult::Crashed, file_preview.take()));
-                            }
-
-                            all_codes.extend(compile_result.error_codes);
-                            all_fingerprints.extend(compile_result.diagnostic_fingerprints);
-                        }
+                    if let Some(result) = oracle_diagnostic_evidence_non_runnable(tsc_result) {
+                        return Ok((result, file_preview.take()));
                     }
 
-                    // Filter out all error codes for JS files when checkJs is not enabled.
-                    // In tsc, JS files are only type-checked when checkJs is true;
-                    // without it, tsc produces no semantic errors for JS files.
-                    let is_js_file = {
-                        let p = path.to_string_lossy().to_lowercase();
-                        p.ends_with(".js")
-                            || p.ends_with(".jsx")
-                            || p.ends_with(".mjs")
-                            || p.ends_with(".cjs")
+                    let original_ext = path.extension().and_then(|extension| extension.to_str());
+                    let compile_result = match Self::compile_text_variants(
+                        &content,
+                        &parsed.directives,
+                        original_ext,
+                        &ts_tests_lib_dir,
+                        &typescript_lib_dir,
+                        &tsz_binary,
+                        timeout_secs,
+                    )
+                    .await?
+                    {
+                        FreshTextOutcome::Complete(result) => result,
+                        FreshTextOutcome::Terminal(result) => {
+                            return Ok((result, file_preview.take()));
+                        }
                     };
-                    let check_js = options
-                        .get("checkJs")
-                        .or_else(|| options.get("checkjs"))
-                        .is_some_and(|v| v == "true");
-                    let allow_js = options
-                        .get("allowJs")
-                        .or_else(|| options.get("allowjs"))
-                        .is_some_and(|v| v == "true");
-                    if is_js_file && !check_js && !allow_js {
-                        // Preserve TS18003 (no inputs found) since it's a config-level
-                        // diagnostic that tsc emits regardless of JS checking mode.
-                        let had_18003 = all_codes.contains(&18003);
-                        let fps_18003: Vec<_> = all_fingerprints
-                            .iter()
-                            .filter(|fp| fp.code == 18003)
-                            .cloned()
-                            .collect();
-                        all_codes.clear();
-                        all_fingerprints.clear();
-                        if had_18003 {
-                            all_codes.insert(18003);
-                            all_fingerprints.extend(fps_18003);
-                        }
-                    }
-
-                    // Some multi-file conformance tests provide a tsconfig with allowJs and only JS inputs.
-                    // In that setup, TS18003 may be a harness artifact (tsz emits it but tsc doesn't).
-                    // Only strip TS18003 when tsc does NOT expect it.
-                    let tsc_expects_18003 = tsc_result.error_codes.contains(&18003);
-                    let has_tsconfig = parsed
-                        .directives
-                        .filenames
-                        .iter()
-                        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
-                    let has_js_input_file = parsed.directives.filenames.iter().any(|(name, _)| {
-                        let lower = name.to_lowercase();
-                        lower.ends_with(".js")
-                            || lower.ends_with(".jsx")
-                            || lower.ends_with(".mjs")
-                            || lower.ends_with(".cjs")
-                    });
-                    if has_tsconfig && has_js_input_file && !tsc_expects_18003 {
-                        all_codes.remove(&18003);
-                        all_fingerprints.retain(|fp| fp.code != 18003);
-                    }
-                    let compile_result = tsz_wrapper::CompilationResult {
-                        error_codes: all_codes.into_iter().collect(),
-                        diagnostic_fingerprints: all_fingerprints.into_iter().collect(),
-                        crashed: false,
-                        options: options.clone(),
-                    };
-                    // Filter .lib/ diagnostics (see filter functions for explanation)
-                    let mut compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
-                    compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
-                        compile_result,
-                        &tsc_fps,
-                    );
-
-                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
-                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
-                    // config-level deprecation warnings. These should not be compared as they are
-                    // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
-                    // stores in fingerprints but not in error_codes.
-                    tsc_error_codes.retain(|c| !is_project_config_diagnostic_code(*c));
-                    let tsc_fps: Vec<_> = tsc_fps
-                        .into_iter()
-                        .filter(|fp| !is_project_config_diagnostic_code(fp.code))
-                        .collect();
-                    compile_result
-                        .error_codes
-                        .retain(|c| !is_project_config_diagnostic_code(*c));
-                    compile_result
-                        .diagnostic_fingerprints
-                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
-
-                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
-                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
-                    // config-level deprecation warnings. These should not be compared as they are
-                    // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
-                    // stores in fingerprints but not in error_codes.
-                    let tsc_error_codes: Vec<u32> = tsc_error_codes
-                        .into_iter()
-                        .filter(|c| !is_project_config_diagnostic_code(*c))
-                        .collect();
-                    compile_result
-                        .error_codes
-                        .retain(|c| !is_project_config_diagnostic_code(*c));
-                    compile_result
-                        .diagnostic_fingerprints
-                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
-                    // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
-                    // and suppresses downstream errors caused by missing lib types.
-                    // tsz doesn't yet suppress these, so filter extra codes/fingerprints
-                    // that cascade from missing global types.
-                    let is_nolib = options
-                        .get("noLib")
-                        .or_else(|| options.get("nolib"))
-                        .is_some_and(|v| v == "true");
-                    let tsc_has_2318 =
-                        tsc_error_codes.contains(&2318) || tsc_fps.iter().any(|fp| fp.code == 2318);
-                    if is_nolib && tsc_has_2318 {
-                        // Under @noLib, tsc suppresses cascaded errors from missing
-                        // global types. Mirror that by restricting tsz's output to
-                        // codes tsc reports, plus TS2318 itself so fingerprint
-                        // comparison sees our "Cannot find global type" diagnostics.
-                        // (The tsc cache sometimes stores TS2318 only in fingerprints,
-                        // with an empty error_codes list — keep TS2318 in both cases.)
-                        let tsc_code_set: std::collections::HashSet<u32> =
-                            tsc_error_codes.iter().cloned().collect();
-                        compile_result
-                            .error_codes
-                            .retain(|c| tsc_code_set.contains(c) || *c == 2318);
-                        compile_result
-                            .diagnostic_fingerprints
-                            .retain(|fp| tsc_code_set.contains(&fp.code) || fp.code == 2318);
-                    }
-
-                    // If TSC expects only TS5024, tsz may emit extra diagnostics
-                    // from semantic checks that run after the invalid option failure.
-                    // Restrict comparison to TS5024 in this case.
-                    suppress_tsz_semantic_diagnostics_after_tsc_option_error(
-                        &tsc_error_codes,
-                        &mut compile_result,
-                    );
+                    let (tsc_error_codes, tsc_fps, tsc_exits) =
+                        canonical_tsc_diagnostics(tsc_result);
 
                     let options_for_fail = compile_result.options.clone();
                     let outcome = compare_diagnostics(
                         &compile_result,
                         &tsc_error_codes,
                         &tsc_fps,
+                        &tsc_exits,
                         options_for_fail,
                     );
                     Ok((outcome, file_preview.take()))
@@ -982,122 +809,38 @@ impl Runner {
                     return Ok((result, file_preview.take()));
                 }
 
-                if let Some(tsc_result) = cache::lookup(&cache, &key) {
-                    // Parse directives from the decoded text so we get the correct
-                    // compiler options (target, strict, etc.) for the tsconfig.
-                    // Previously this was `HashMap::new()` which meant UTF-16 tests
-                    // ran with default (empty) options, missing deprecated-option
-                    // diagnostics like TS5107 for `target: es5`.
-                    let options = parsed_directives.directives.options;
-                    let original_ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(std::string::ToString::to_string);
-                    // Use the decoded text through the normal prepare_test_dir path
-                    // (which strips directive comments) instead of writing raw UTF-16
-                    // bytes. This ensures line numbers match tsc's expectations.
-                    let filenames = parsed_directives.directives.filenames;
-                    let key_order = parsed_directives.directives.option_order;
-                    let expected_error_codes = tsc_result.error_codes.clone();
-                    let prepared = tokio::task::spawn_blocking({
-                        let text = decoded_text.clone();
-                        let options = options.clone();
-                        let ext = original_ext.clone();
-                        let key_order = key_order.clone();
-                        let ts_tests_lib_dir = ts_tests_lib_dir.clone();
-                        move || {
-                            tsz_wrapper::prepare_test_dir_with_lib_dir(
-                                &text,
-                                &filenames,
-                                &options,
-                                ext.as_deref(),
-                                &key_order,
-                                Some(&expected_error_codes),
-                                Some(&ts_tests_lib_dir),
-                            )
+                if let Some(tsc_result) = cached_result {
+                    if let Some(result) = oracle_diagnostic_evidence_non_runnable(tsc_result) {
+                        return Ok((result, file_preview.take()));
+                    }
+                    let original_ext = path.extension().and_then(|extension| extension.to_str());
+                    let compile_result = match Self::compile_text_variants(
+                        &decoded_text,
+                        &parsed_directives.directives,
+                        original_ext,
+                        &ts_tests_lib_dir,
+                        &typescript_lib_dir,
+                        &tsz_binary,
+                        timeout_secs,
+                    )
+                    .await?
+                    {
+                        FreshTextOutcome::Complete(result) => result,
+                        FreshTextOutcome::Terminal(result) => {
+                            return Ok((result, file_preview.take()));
                         }
-                    })
-                    .await??;
-
-                    let compile_result = if let Some(ref pool) = pool {
-                        let timeout_dur = if timeout_secs > 0 {
-                            Duration::from_secs(timeout_secs)
-                        } else {
-                            Duration::ZERO
-                        };
-                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
-                            BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
-                                &output,
-                                prepared.temp_dir.path(),
-                                options,
-                            ),
-                            BatchOutcome::Crashed => {
-                                return Ok((TestResult::Crashed, file_preview.take()));
-                            }
-                            BatchOutcome::Timeout => {
-                                match Self::compile_with_subprocess(
-                                    &tsz_binary,
-                                    &prepared.project_dir,
-                                    prepared.temp_dir.path(),
-                                    options,
-                                    timeout_secs.saturating_mul(2).max(60),
-                                )
-                                .await?
-                                {
-                                    Some(result) => result,
-                                    None => return Ok((TestResult::Timeout, file_preview.take())),
-                                }
-                            }
-                        }
-                    } else {
-                        let child = tokio::process::Command::new(&tsz_binary)
-                            .arg("--project")
-                            .arg(&prepared.project_dir)
-                            .arg("--noEmit")
-                            .arg("--pretty")
-                            .arg("false")
-                            .current_dir(&prepared.project_dir)
-                            .stdout(std::process::Stdio::piped())
-                            .stderr(std::process::Stdio::piped())
-                            .kill_on_drop(true)
-                            .spawn()?;
-
-                        let output = if timeout_secs > 0 {
-                            match tokio::time::timeout(
-                                Duration::from_secs(timeout_secs),
-                                child.wait_with_output(),
-                            )
-                            .await
-                            {
-                                Ok(result) => result?,
-                                Err(_) => return Ok((TestResult::Timeout, file_preview.take())),
-                            }
-                        } else {
-                            child.wait_with_output().await?
-                        };
-
-                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options)
                     };
 
-                    if compile_result.crashed {
-                        return Ok((TestResult::Crashed, file_preview.take()));
-                    }
+                    let (tsc_error_codes, tsc_fps, tsc_exits) =
+                        canonical_tsc_diagnostics(tsc_result);
 
-                    // Filter .lib/ diagnostics (see variant path for explanation)
-                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
-                    let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
-                        compile_result,
-                        &tsc_fps,
-                    );
-
-                    // UTF-16 path historically drops the resolved options from the
-                    // failure record — preserve that behavior by passing an empty map.
+                    let options_for_fail = compile_result.options.clone();
                     let outcome = compare_diagnostics(
                         &compile_result,
                         &tsc_error_codes,
                         &tsc_fps,
-                        HashMap::new(),
+                        &tsc_exits,
+                        options_for_fail,
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1114,7 +857,10 @@ impl Runner {
                     ));
                 }
 
-                if let Some(tsc_result) = cache::lookup(&cache, &key) {
+                if let Some(tsc_result) = cached_result {
+                    if let Some(result) = oracle_diagnostic_evidence_non_runnable(tsc_result) {
+                        return Ok((result, file_preview.take()));
+                    }
                     let options: HashMap<String, String> = HashMap::new();
                     let ext = path
                         .extension()
@@ -1129,82 +875,51 @@ impl Runner {
                     })
                     .await??;
 
-                    let compile_result = if let Some(ref pool) = pool {
-                        let timeout_dur = if timeout_secs > 0 {
-                            Duration::from_secs(timeout_secs)
-                        } else {
-                            Duration::ZERO
-                        };
-                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
-                            BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
-                                &output,
-                                prepared.temp_dir.path(),
-                                options,
-                            ),
-                            BatchOutcome::Crashed => {
-                                return Ok((TestResult::Crashed, file_preview.take()));
-                            }
-                            BatchOutcome::Timeout => {
-                                match Self::compile_with_subprocess(
-                                    &tsz_binary,
-                                    &prepared.project_dir,
-                                    prepared.temp_dir.path(),
-                                    options,
-                                    timeout_secs.saturating_mul(2).max(60),
-                                )
-                                .await?
-                                {
-                                    Some(result) => result,
-                                    None => return Ok((TestResult::Timeout, file_preview.take())),
-                                }
-                            }
+                    let child = tokio::process::Command::new(&tsz_binary)
+                        .arg("--project")
+                        .arg(&prepared.project_dir)
+                        .arg("--noEmit")
+                        .arg("--pretty")
+                        .arg("false")
+                        .env("TSZ_LIB_DIR", &typescript_lib_dir)
+                        .current_dir(&prepared.project_dir)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .kill_on_drop(true)
+                        .spawn()?;
+
+                    let output = if timeout_secs > 0 {
+                        match tokio::time::timeout(
+                            Duration::from_secs(timeout_secs),
+                            child.wait_with_output(),
+                        )
+                        .await
+                        {
+                            Ok(result) => result?,
+                            Err(_) => return Ok((TestResult::Timeout, file_preview.take())),
                         }
                     } else {
-                        let child = tokio::process::Command::new(&tsz_binary)
-                            .arg("--project")
-                            .arg(&prepared.project_dir)
-                            .arg("--noEmit")
-                            .arg("--pretty")
-                            .arg("false")
-                            .current_dir(&prepared.project_dir)
-                            .stdout(std::process::Stdio::piped())
-                            .stderr(std::process::Stdio::piped())
-                            .kill_on_drop(true)
-                            .spawn()?;
-
-                        let output = if timeout_secs > 0 {
-                            match tokio::time::timeout(
-                                Duration::from_secs(timeout_secs),
-                                child.wait_with_output(),
-                            )
-                            .await
-                            {
-                                Ok(result) => result?,
-                                Err(_) => return Ok((TestResult::Timeout, file_preview.take())),
-                            }
-                        } else {
-                            child.wait_with_output().await?
-                        };
-
-                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options)
+                        child.wait_with_output().await?
                     };
+
+                    let compile_result =
+                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options);
                     if compile_result.crashed {
                         return Ok((TestResult::Crashed, file_preview.take()));
                     }
+                    if let Some(result) = semantic_non_runnable_result(&compile_result) {
+                        return Ok((result, file_preview.take()));
+                    }
 
-                    // Filter .lib/ diagnostics (see variant path for explanation)
-                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
-                    let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
-                        compile_result,
-                        &tsc_fps,
-                    );
+                    let (tsc_error_codes, tsc_fps, tsc_exits) =
+                        canonical_tsc_diagnostics(tsc_result);
 
                     let options_for_fail = compile_result.options.clone();
                     let outcome = compare_diagnostics(
                         &compile_result,
                         &tsc_error_codes,
                         &tsc_fps,
+                        &tsc_exits,
                         options_for_fail,
                     );
                     Ok((outcome, file_preview.take()))
@@ -1214,41 +929,6 @@ impl Runner {
                 }
             }
         }
-    }
-
-    async fn compile_with_subprocess(
-        tsz_binary: &str,
-        project_dir: &Path,
-        temp_dir: &Path,
-        options: HashMap<String, String>,
-        timeout_secs: u64,
-    ) -> anyhow::Result<Option<tsz_wrapper::CompilationResult>> {
-        let child = tokio::process::Command::new(tsz_binary)
-            .arg("--project")
-            .arg(project_dir)
-            .arg("--noEmit")
-            .arg("--pretty")
-            .arg("false")
-            .current_dir(project_dir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
-
-        let output = if timeout_secs > 0 {
-            match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
-                .await
-            {
-                Ok(result) => result?,
-                Err(_) => return Ok(None),
-            }
-        } else {
-            child.wait_with_output().await?
-        };
-
-        Ok(Some(tsz_wrapper::parse_tsz_output(
-            &output, temp_dir, options,
-        )))
     }
 }
 
@@ -1265,28 +945,40 @@ mod tests {
             line: 1,
             column: 1,
             message_key: msg.to_string(),
+            continuations: Vec::new(),
         }
     }
 
-    async fn run_test_with_empty_cache(source: &[u8]) -> anyhow::Result<TestResult> {
+    async fn run_test_with_empty_cache_and_identity(
+        source: &[u8],
+        expected_source: &[u8],
+    ) -> anyhow::Result<TestResult> {
         let temp = tempfile::tempdir().expect("tempdir");
         let test_dir = temp.path().join("cases");
         let path = test_dir.join("compiler/case.ts");
         std::fs::create_dir_all(path.parent().expect("test parent")).expect("create test dir");
         std::fs::write(&path, source).expect("write test source");
+        let source_hashes = BTreeMap::from([(
+            "compiler/case.ts".to_string(),
+            crate::integrity::sha256_bytes(expected_source),
+        )]);
 
         let (result, _preview) = Runner::run_test(
             &path,
             &test_dir,
             Arc::new(HashMap::new()),
+            Arc::new(source_hashes),
             "unused-tsz-binary".to_string(),
-            None,
-            None,
+            temp.path().to_path_buf(),
             false,
             0,
         )
         .await?;
         Ok(result)
+    }
+
+    async fn run_test_with_empty_cache(source: &[u8]) -> anyhow::Result<TestResult> {
+        run_test_with_empty_cache_and_identity(source, source).await
     }
 
     #[tokio::test]
@@ -1301,6 +993,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_test_classifies_trace_products_before_cache_lookup() {
+        for source in [
+            b"// @traceResolution: true\nlet value = 1;\n".as_slice(),
+            b"// @filename: tsconfig.json\n{\"compilerOptions\":{\"traceResolution\":true}}\n// @filename: input.ts\nimport 'pkg';\n"
+                .as_slice(),
+        ] {
+            let result = run_test_with_empty_cache(source)
+                .await
+                .expect("trace product should not require a diagnostic cache row");
+            assert_eq!(
+                result,
+                TestResult::Unsupported(
+                    UnsupportedReason::TraceResolutionOutputNotCompared
+                )
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn run_test_fails_when_runnable_cache_entry_is_missing() {
         let error = run_test_with_empty_cache(b"let value = 1;\n")
             .await
@@ -1311,6 +1022,67 @@ mod tests {
                 .contains("missing TSC cache entry for compiler/case.ts"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn run_test_rechecks_nonrunnable_bytes_at_the_point_of_use() {
+        for source in [
+            b"// @skip: tracked\nlet value = 1;\n".as_slice(),
+            b"// @target: es5\nlet value = 1;\n".as_slice(),
+        ] {
+            let error = run_test_with_empty_cache_and_identity(source, b"preflight bytes\n")
+                .await
+                .expect_err("changed nonrunnable source must fail before classification");
+            assert!(error
+                .to_string()
+                .contains("changed after domain validation"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shared_text_executor_spawns_every_selected_variant_fresh() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let counter = temp.path().join("invocations.txt");
+        let compiler = temp.path().join("fake-tsz.sh");
+        std::fs::write(
+            &compiler,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$TSZ_LIB_DIR\" >> '{}'\nexit 0\n",
+                counter.display()
+            ),
+        )
+        .expect("fake compiler");
+        let mut permissions = std::fs::metadata(&compiler)
+            .expect("compiler metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&compiler, permissions).expect("executable compiler");
+        let directives = TestDirectives {
+            options: HashMap::from([("module".to_string(), "node16, esnext".to_string())]),
+            option_order: vec!["module".to_string()],
+            filenames: Vec::new(),
+        };
+
+        let outcome = Runner::compile_text_variants(
+            "let value = 1;\n",
+            &directives,
+            Some("ts"),
+            temp.path(),
+            temp.path(),
+            compiler.to_str().expect("utf8 compiler path"),
+            5,
+        )
+        .await
+        .expect("variant execution");
+        assert!(matches!(outcome, FreshTextOutcome::Complete(_)));
+        let invocations = std::fs::read_to_string(counter).expect("invocation counter");
+        assert_eq!(invocations.lines().count(), 2);
+        assert!(invocations
+            .lines()
+            .all(|line| line == temp.path().to_string_lossy()));
     }
 
     fn cwd_lock() -> &'static Mutex<()> {
@@ -1387,255 +1159,106 @@ mod tests {
     }
 
     #[test]
-    fn use_fingerprint_compare_requires_both_sides_non_empty() {
-        let tsc: std::collections::HashSet<DiagnosticFingerprint> =
-            [fp(2322, "a.ts", "mismatch")].into_iter().collect();
-        let tsz_empty: std::collections::HashSet<DiagnosticFingerprint> =
-            std::collections::HashSet::new();
-        let tsz_populated: std::collections::HashSet<DiagnosticFingerprint> =
-            [fp(2322, "a.ts", "mismatch")].into_iter().collect();
-
-        // Server mode: TSC has fingerprints, tsz doesn't — must NOT compare,
-        // otherwise every test would spuriously fail with all tsc
-        // fingerprints reported as missing.
-        assert!(!use_fingerprint_compare(&tsc, &tsz_empty));
-        // Symmetric: tsz has fingerprints, TSC doesn't (cache missed them) —
-        // also fall back to code-only.
-        assert!(!use_fingerprint_compare(
-            &std::collections::HashSet::new(),
-            &tsz_populated
-        ));
-        // Both empty: no fingerprint data anywhere, compare by codes only.
-        assert!(!use_fingerprint_compare(
-            &std::collections::HashSet::new(),
-            &std::collections::HashSet::new()
-        ));
-        // CLI mode: both sides populated — enable fingerprint compare.
-        assert!(use_fingerprint_compare(&tsc, &tsz_populated));
-    }
-
-    #[test]
-    fn project_config_diagnostics_include_removed_compiler_options() {
-        assert!(is_project_config_diagnostic_code(5102));
-        assert!(!is_project_config_diagnostic_code(2322));
-    }
-
-    #[test]
-    fn is_lib_diagnostic_detects_lib_files() {
-        assert!(is_lib_diagnostic(&fp(
-            2430,
-            ".lib/react16.d.ts",
-            "Interface 'X' incorrectly extends 'Y'."
-        )));
-        assert!(is_lib_diagnostic(&fp(
-            6053,
-            "test.tsx",
-            "File '/.lib/react.d.ts' not found."
-        )));
-        assert!(!is_lib_diagnostic(&fp(
-            2344,
-            "scripts/node_modules/typescript/lib/lib.dom.d.ts",
-            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'."
-        )));
-        assert!(!is_lib_diagnostic(&fp(
-            2344,
-            "TypeScript/lib/lib.dom.d.ts",
-            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'."
-        )));
-        assert!(!is_lib_diagnostic(&fp(
-            2322,
-            "test.ts",
-            "Type 'A' is not assignable to type 'B'."
-        )));
-    }
-
-    #[test]
-    fn typescript_builtin_lib_path_recognizes_native_platform_packages() {
-        assert!(is_typescript_builtin_lib_path(
-            "scripts/node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts"
-        ));
-        assert!(is_typescript_builtin_lib_path(
-            r"C:\repo\scripts\node_modules\@typescript\typescript-win32-x64\lib\lib.es5.d.ts"
-        ));
-        assert!(is_typescript_builtin_lib_path(
-            "typescript-go/built/npm/typescript-linux-x64/lib/lib.es2025.d.ts"
-        ));
-        assert!(!is_typescript_builtin_lib_path(
-            "node_modules/@typescript/typescript6/lib/typescript.d.ts"
-        ));
-        assert!(!is_typescript_builtin_lib_path(
-            "node_modules/example/lib/lib.es5.d.ts"
-        ));
-    }
-
-    #[test]
-    fn filter_tsz_removes_lib_only_codes() {
-        let result = tsz_wrapper::CompilationResult {
-            error_codes: vec![2430, 2322],
-            diagnostic_fingerprints: vec![
-                fp(2430, ".lib/react16.d.ts", "Interface error"),
-                fp(2322, "test.ts", "Type mismatch"),
-            ],
-            crashed: false,
-            options: Default::default(),
-        };
-        let filtered = filter_lib_diagnostics_tsz(result);
-        assert_eq!(filtered.error_codes, vec![2322]);
-        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
-        assert_eq!(filtered.diagnostic_fingerprints[0].code, 2322);
-    }
-
-    #[test]
-    fn filter_tsz_preserves_builtin_lib_only_codes_for_later_comparison_filter() {
-        let result = tsz_wrapper::CompilationResult {
-            error_codes: vec![2344, 2304],
-            diagnostic_fingerprints: vec![
-                fp(
-                    2344,
-                    "TypeScript/lib/lib.dom.d.ts",
-                    "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
-                ),
-                fp(2304, "test.ts", "Cannot find name 'missing'."),
-            ],
-            crashed: false,
-            options: Default::default(),
-        };
-        let filtered = filter_lib_diagnostics_tsz(result);
-        assert_eq!(filtered.error_codes, vec![2344, 2304]);
-        assert_eq!(filtered.diagnostic_fingerprints.len(), 2);
-    }
-
-    #[test]
-    fn filter_tsz_removes_extra_builtin_lib_only_codes() {
-        let result = tsz_wrapper::CompilationResult {
-            error_codes: vec![2344, 2304],
-            diagnostic_fingerprints: vec![
-                fp(
-                    2344,
-                    "TypeScript/lib/lib.dom.d.ts",
-                    "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
-                ),
-                fp(2304, "test.ts", "Cannot find name 'missing'."),
-            ],
-            crashed: false,
-            options: Default::default(),
-        };
-        let filtered = filter_extra_typescript_builtin_lib_diagnostics_tsz(result, &[]);
-        assert_eq!(filtered.error_codes, vec![2304]);
-        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
-        assert_eq!(filtered.diagnostic_fingerprints[0].code, 2304);
-    }
-
-    #[test]
-    fn filter_tsz_preserves_builtin_lib_code_expected_by_tsc() {
-        let result = tsz_wrapper::CompilationResult {
-            error_codes: vec![2344],
-            diagnostic_fingerprints: vec![fp(
-                2344,
-                "TypeScript/lib/lib.dom.d.ts",
-                "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
-            )],
-            crashed: false,
-            options: Default::default(),
-        };
-        let tsc_fps = vec![fp(
-            2344,
-            "lib.dom.d.ts",
-            "Type 'HTMLElementTagNameMap[K]' does not satisfy the constraint 'Element'.",
-        )];
-        let filtered = filter_extra_typescript_builtin_lib_diagnostics_tsz(result, &tsc_fps);
-        assert_eq!(filtered.error_codes, vec![2344]);
-        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
-    }
-
-    #[test]
-    fn filter_tsz_preserves_code_appearing_in_both_lib_and_non_lib() {
-        let result = tsz_wrapper::CompilationResult {
-            error_codes: vec![2430],
-            diagnostic_fingerprints: vec![
-                fp(2430, ".lib/react16.d.ts", "Interface error in lib"),
-                fp(2430, "test.ts", "Interface error in user code"),
-            ],
-            crashed: false,
-            options: Default::default(),
-        };
-        let filtered = filter_lib_diagnostics_tsz(result);
-        assert_eq!(filtered.error_codes, vec![2430]);
-        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
-        assert_eq!(filtered.diagnostic_fingerprints[0].file, "test.ts");
-    }
-
-    #[test]
-    fn filter_tsz_noop_when_no_lib_diagnostics() {
-        let result = tsz_wrapper::CompilationResult {
-            error_codes: vec![2322, 2345],
-            diagnostic_fingerprints: vec![
-                fp(2322, "test.ts", "Type mismatch"),
-                fp(2345, "test.ts", "Arg type error"),
-            ],
-            crashed: false,
-            options: Default::default(),
-        };
-        let filtered = filter_lib_diagnostics_tsz(result);
-        assert_eq!(filtered.error_codes, vec![2322, 2345]);
-        assert_eq!(filtered.diagnostic_fingerprints.len(), 2);
-    }
-
-    #[test]
-    fn filter_tsc_removes_lib_6053() {
+    fn canonical_tsc_diagnostics_preserves_lib_and_orphan_facts() {
         let tsc_result = TscResult {
             metadata: FileMetadata {
                 mtime_ms: 0,
                 size: 0,
                 typescript_version: None,
-            },
-            error_codes: vec![6053, 2322],
-            diagnostic_fingerprints: vec![
-                fp(6053, "test.tsx", "File '/.lib/react16.d.ts' not found."),
-                fp(2322, "test.ts", "Type mismatch"),
-            ],
-        };
-        let (codes, fps) = filter_lib_diagnostics_tsc(&tsc_result);
-        assert_eq!(codes, vec![2322]);
-        assert_eq!(fps.len(), 1);
-        assert_eq!(fps[0].code, 2322);
-    }
-
-    #[test]
-    fn filter_tsc_preserves_6053_from_non_lib() {
-        let tsc_result = TscResult {
-            metadata: FileMetadata {
-                mtime_ms: 0,
-                size: 0,
-                typescript_version: None,
+                source_sha256: "00".repeat(32),
             },
             error_codes: vec![6053],
             diagnostic_fingerprints: vec![
                 fp(6053, "test.tsx", "File '/.lib/react16.d.ts' not found."),
-                fp(6053, "test.ts", "File 'missing.d.ts' not found."),
+                fp(9999, ".lib/helper.d.ts", "Oracle-only fingerprint."),
             ],
+            diagnostic_blocks_complete: true,
+            ordinary_exit_statuses: vec![1],
         };
-        let (codes, fps) = filter_lib_diagnostics_tsc(&tsc_result);
+        let (codes, fps, exits) = canonical_tsc_diagnostics(&tsc_result);
         assert_eq!(codes, vec![6053]);
-        assert_eq!(fps.len(), 1);
-        assert_eq!(fps[0].message_key, "File 'missing.d.ts' not found.");
+        assert_eq!(fps.len(), 2);
+        assert_eq!(
+            fps.iter().map(|fp| fp.code).collect::<Vec<_>>(),
+            [6053, 9999]
+        );
+        assert_eq!(fps[0].file, "test.tsx");
+        assert_eq!(fps[1].file, ".lib/helper.d.ts");
+        assert_eq!(exits, vec![1]);
     }
 
     #[test]
-    fn filter_tsz_removes_6053_with_lib_in_message() {
-        let result = tsz_wrapper::CompilationResult {
-            error_codes: vec![6053],
-            diagnostic_fingerprints: vec![fp(
-                6053,
-                "test.tsx",
-                "File '/.lib/react.d.ts' not found.",
-            )],
-            crashed: false,
-            options: Default::default(),
+    fn diagnostic_cache_without_grouped_blocks_is_an_explicit_nonclaim() {
+        let tsc_result = TscResult {
+            metadata: FileMetadata {
+                mtime_ms: 0,
+                size: 0,
+                typescript_version: Some("7.0.2".to_string()),
+                source_sha256: "00".repeat(32),
+            },
+            error_codes: vec![2322],
+            diagnostic_fingerprints: vec![fp(2322, "test.ts", "Mismatch.")],
+            diagnostic_blocks_complete: false,
+            ordinary_exit_statuses: vec![1],
         };
-        let filtered = filter_lib_diagnostics_tsz(result);
-        assert!(filtered.error_codes.is_empty());
-        assert!(filtered.diagnostic_fingerprints.is_empty());
+
+        assert_eq!(
+            oracle_diagnostic_evidence_non_runnable(&tsc_result),
+            Some(TestResult::Unsupported(
+                UnsupportedReason::OracleDiagnosticEvidenceIncomplete
+            ))
+        );
+    }
+
+    #[test]
+    fn runnable_bytes_are_rechecked_at_the_point_of_use() {
+        let source = b"let value = 1;\n";
+        let tsc_result = TscResult {
+            metadata: FileMetadata {
+                mtime_ms: 0,
+                size: source.len() as u64,
+                typescript_version: Some("7.0.2".to_string()),
+                source_sha256: crate::integrity::sha256_bytes(source),
+            },
+            error_codes: Vec::new(),
+            diagnostic_fingerprints: Vec::new(),
+            diagnostic_blocks_complete: true,
+            ordinary_exit_statuses: vec![0],
+        };
+        validate_candidate_source_bytes(
+            "compiler/case.ts",
+            source,
+            &tsc_result.metadata.source_sha256,
+        )
+        .expect("exact cached bytes");
+        assert!(validate_candidate_source_bytes(
+            "compiler/case.ts",
+            b"let value = 2;\n",
+            &tsc_result.metadata.source_sha256
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn copied_lib_input_divergence_is_an_explicit_mismatch() {
+        let expected = fp(6053, "test.ts", "File '/.lib/react.d.ts' not found.");
+        let actual = fp(2430, ".lib/react.d.ts", "Interface mismatch.");
+        let result = compare_diagnostics(
+            &compilation(&[2430], vec![actual]),
+            &[6053],
+            &[expected],
+            HashMap::new(),
+        );
+
+        match result {
+            TestResult::Fail(fail) => {
+                assert_eq!(fail.missing, vec![6053]);
+                assert_eq!(fail.extra, vec![2430]);
+                assert_eq!(fail.missing_fingerprints.len(), 1);
+                assert_eq!(fail.extra_fingerprints.len(), 1);
+            }
+            other => panic!("divergent lib inputs must not pass: {other:?}"),
+        }
     }
 
     #[test]
@@ -1703,12 +1326,51 @@ mod tests {
         codes: &[u32],
         fps: Vec<DiagnosticFingerprint>,
     ) -> tsz_wrapper::CompilationResult {
+        let ordinary_exit = if codes.is_empty() && fps.is_empty() {
+            0
+        } else {
+            1
+        };
         tsz_wrapper::CompilationResult {
             error_codes: codes.to_vec(),
             diagnostic_fingerprints: fps,
             crashed: false,
+            semantic_completion: tsz_wrapper::SemanticCompletion::Complete,
+            ordinary_exit_statuses: vec![ordinary_exit],
             options: HashMap::new(),
         }
+    }
+
+    fn compare_diagnostics(
+        compile: &tsz_wrapper::CompilationResult,
+        tsc_codes: &[u32],
+        tsc_fps: &[DiagnosticFingerprint],
+        options: HashMap<String, String>,
+    ) -> TestResult {
+        let expected_exit = [if tsc_codes.is_empty() && tsc_fps.is_empty() {
+            0
+        } else {
+            1
+        }];
+        super::compare_diagnostics(compile, tsc_codes, tsc_fps, &expected_exit, options)
+    }
+
+    #[test]
+    fn batch_semantic_marker_is_unsupported_not_pass_or_crash() {
+        let result = tsz_wrapper::parse_batch_output(
+            "---TSZ-SEMANTIC-COMPLETION:deferred---\n",
+            Path::new("/tmp/tsz-semantic-nonclaim"),
+            HashMap::new(),
+        );
+
+        assert!(!result.crashed);
+        assert!(result.error_codes.is_empty());
+        assert_eq!(
+            semantic_non_runnable_result(&result),
+            Some(TestResult::Unsupported(
+                UnsupportedReason::SemanticIncomplete
+            ))
+        );
     }
 
     fn assert_fail_codes(
@@ -1748,6 +1410,40 @@ mod tests {
     }
 
     #[test]
+    fn compare_diagnostics_rejects_top_level_order_election() {
+        let first = fp(2304, "a.ts", "first");
+        let second = fp(2322, "b.ts", "second");
+        let compile = compilation(&[2322, 2304], vec![second.clone(), first.clone()]);
+        let result = super::compare_diagnostics(
+            &compile,
+            &[2304, 2322],
+            &[first, second],
+            &[1],
+            HashMap::new(),
+        );
+        let TestResult::Fail(fail) = result else {
+            panic!("a diagnostic order mismatch must fail");
+        };
+        assert!(fail.missing.is_empty() && fail.extra.is_empty());
+        assert!(fail.missing_fingerprints.is_empty());
+        assert!(fail.extra_fingerprints.is_empty());
+    }
+
+    #[test]
+    fn compare_diagnostics_rejects_wrong_ordinary_exit() {
+        let diagnostic = fp(2304, "a.ts", "Cannot find name 'x'.");
+        let mut compile = compilation(&[2304], vec![diagnostic.clone()]);
+        compile.ordinary_exit_statuses = vec![2];
+        let result =
+            super::compare_diagnostics(&compile, &[2304], &[diagnostic], &[1], HashMap::new());
+        let TestResult::Fail(fail) = result else {
+            panic!("wrong compiler exit must fail");
+        };
+        assert_eq!(fail.expected_exit_statuses, vec![1]);
+        assert_eq!(fail.actual_exit_statuses, vec![2]);
+    }
+
+    #[test]
     fn compare_diagnostics_detects_missing_code() {
         let tsc_codes = vec![2304, 2322];
         let tsc_fps: Vec<DiagnosticFingerprint> = vec![];
@@ -1768,17 +1464,112 @@ mod tests {
     }
 
     #[test]
-    fn compare_diagnostics_skips_fingerprints_when_tsc_has_none() {
-        // When the tsc cache carries no fingerprints, code-level parity is the
-        // only thing that matters. Extra tsz fingerprints must not fail the run.
+    fn compare_diagnostics_rejects_a_code_only_server_result() {
         let tsc_codes = vec![2304];
-        let compile = compilation(
+        let tsc_fps = vec![fp(2304, "a.ts", "Cannot find name 'foo'.")];
+        let compile = compilation(&[2304], vec![]);
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        match result {
+            TestResult::Fail(fail) => {
+                assert_eq!(fail.missing_fingerprints, tsc_fps);
+                assert!(fail.extra_fingerprints.is_empty());
+            }
+            other => panic!("code-only server output must not pass: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_rejects_code_only_results_on_both_sides() {
+        let result =
+            compare_diagnostics(&compilation(&[2304], vec![]), &[2304], &[], HashMap::new());
+
+        assert!(matches!(result, TestResult::Fail(_)));
+    }
+
+    #[test]
+    fn compare_diagnostics_preserves_duplicate_code_multiplicity() {
+        let diagnostic = fp(2304, "a.ts", "Cannot find name 'missing'.");
+        let result = compare_diagnostics(
+            &compilation(&[2304, 2304], vec![diagnostic.clone(), diagnostic.clone()]),
             &[2304],
-            vec![fp(2304, "a.ts", "Cannot find name 'foo' on line 1.")],
+            std::slice::from_ref(&diagnostic),
+            HashMap::new(),
         );
 
-        let result = compare_diagnostics(&compile, &tsc_codes, &[], HashMap::new());
-        assert_eq!(result, TestResult::Pass);
+        match result {
+            TestResult::Fail(fail) => {
+                assert_eq!(fail.extra, vec![2304]);
+                assert_eq!(fail.extra_fingerprints, vec![diagnostic]);
+            }
+            other => panic!("duplicate TSZ code must not pass: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_rejects_wrong_message_and_span() {
+        let expected = fp(
+            2322,
+            "a.ts",
+            "Type 'string' is not assignable to type 'number'.",
+        );
+        let mut actual = fp(2322, "a.ts", "A different message.");
+        actual.line = 9;
+        actual.column = 4;
+        let result = compare_diagnostics(
+            &compilation(&[2322], vec![actual.clone()]),
+            &[2322],
+            std::slice::from_ref(&expected),
+            HashMap::new(),
+        );
+        match result {
+            TestResult::Fail(fail) => {
+                assert_eq!(fail.missing_fingerprints, vec![expected]);
+                assert_eq!(fail.extra_fingerprints, vec![actual]);
+            }
+            other => panic!("wrong message/span must not pass: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_preserves_duplicate_multiplicity() {
+        let diagnostic = fp(2304, "a.ts", "Cannot find name 'missing'.");
+        let result = compare_diagnostics(
+            &compilation(&[2304], vec![diagnostic.clone(), diagnostic.clone()]),
+            &[2304],
+            std::slice::from_ref(&diagnostic),
+            HashMap::new(),
+        );
+        match result {
+            TestResult::Fail(fail) => {
+                assert!(fail.missing_fingerprints.is_empty());
+                assert_eq!(fail.extra_fingerprints, vec![diagnostic]);
+                assert_eq!(fail.actual_fingerprints.len(), 2);
+            }
+            other => panic!("duplicate TSZ diagnostic must not pass: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_does_not_condition_tsz_output_on_tsc_codes() {
+        let option_error = fp(5024, "", "Compiler option has an invalid value.");
+        let semantic_error = fp(2322, "a.ts", "Type mismatch.");
+        let result = compare_diagnostics(
+            &compilation(
+                &[5024, 2322],
+                vec![option_error.clone(), semantic_error.clone()],
+            ),
+            &[5024],
+            std::slice::from_ref(&option_error),
+            HashMap::new(),
+        );
+        match result {
+            TestResult::Fail(fail) => {
+                assert_eq!(fail.extra, vec![2322]);
+                assert_eq!(fail.extra_fingerprints, vec![semantic_error]);
+            }
+            other => panic!("oracle-conditioned TSZ removal returned: {other:?}"),
+        }
     }
 
     #[test]
@@ -1810,9 +1601,7 @@ mod tests {
     }
 
     #[test]
-    fn compare_diagnostics_sorts_expected_and_actual() {
-        // Callers rely on sorted `expected` and `actual` for stable failure
-        // rendering and snapshot stability.
+    fn compare_diagnostics_preserves_expected_and_actual_order() {
         let tsc_codes = vec![2345, 2304];
         let tsc_fps: Vec<DiagnosticFingerprint> = vec![];
         let compile = compilation(&[7027, 2304], vec![]);
@@ -1820,18 +1609,15 @@ mod tests {
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
             TestResult::Fail(fail) => {
-                assert_eq!(fail.expected, vec![2304, 2345]);
-                assert_eq!(fail.actual, vec![2304, 7027]);
+                assert_eq!(fail.expected, vec![2345, 2304]);
+                assert_eq!(fail.actual, vec![7027, 2304]);
             }
             other => panic!("expected Fail, got {other:?}"),
         }
     }
 
     #[test]
-    fn compare_diagnostics_sorts_fingerprint_diffs() {
-        // Fingerprint lists must be deterministic so failure output is stable.
-        // tsz must carry at least one fingerprint to activate the fingerprint
-        // comparison path (server-mode parity guard in `use_fingerprint_compare`).
+    fn compare_diagnostics_preserves_fingerprint_diff_order() {
         let tsc_codes = vec![2322, 2304];
         let tsc_fps = vec![
             fp(2322, "b.ts", "Type mismatch."),
@@ -1842,13 +1628,12 @@ mod tests {
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
             TestResult::Fail(fail) => {
-                // Sort key is (code, file, line, column, message_key).
                 assert_eq!(
                     fail.missing_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.clone()))
                         .collect::<Vec<_>>(),
-                    vec![(2304, "a.ts".into()), (2322, "b.ts".into())],
+                    vec![(2322, "b.ts".into()), (2304, "a.ts".into())],
                 );
             }
             other => panic!("expected Fail, got {other:?}"),
@@ -1878,14 +1663,14 @@ mod tests {
                         .iter()
                         .map(|f| (f.code, f.file.as_str()))
                         .collect::<Vec<_>>(),
-                    vec![(2304, "a.ts"), (2322, "b.ts")],
+                    vec![(2322, "b.ts"), (2304, "a.ts")],
                 );
                 assert_eq!(
                     fail.actual_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.as_str()))
                         .collect::<Vec<_>>(),
-                    vec![(2304, "a.ts"), (2322, "actual.ts")],
+                    vec![(2322, "actual.ts"), (2304, "a.ts")],
                 );
             }
             other => panic!("expected Fail, got {other:?}"),

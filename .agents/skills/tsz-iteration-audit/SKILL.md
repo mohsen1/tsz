@@ -17,13 +17,14 @@ gh pr list --state open --limit 100 --json number,title,isDraft,headRefName,base
 gh pr list --state merged --limit 30 --json number,title,headRefName,mergedAt,url
 gh issue list --state open --limit 100 --json number,title,labels,updatedAt,url
 scripts/agents/llm-context-audit.py
-find .agents/skills .claude/skills scripts/agents scripts/ci scripts/arch scripts/bench scripts/conformance scripts/emit -maxdepth 3 -type f | sort
+python3 scripts/arch/rewrite_architecture_metrics.py --check
+find .agents/skills scripts/agents scripts/ci scripts/bench scripts/conformance scripts/emit -maxdepth 3 -type f | sort
 ```
 
 Use targeted searches only when needed:
 
 ```bash
-rg -n "source_text\\.contains|rewrite_.*fingerprints|format_type_diagnostic|TypeData|CompatChecker|is_assignable_to" crates scripts
+rg -n "source_text\\.contains|format.*diagnostic|TypeId|force_|materialize|cache|memo" crates scripts
 rg -n "WIP|stale|drift|queue|worktree|disk|allowlist|fingerprint|context" docs scripts .agents .claude .codex
 ```
 
@@ -35,15 +36,23 @@ rg -n "WIP|stale|drift|queue|worktree|disk|allowlist|fingerprint|context" docs s
 - `duplication`: policy repeated across scripts/docs/skills.
 - `behavior debt`: compiler bug; route to owner skill/issue.
 - `context debt`: startup hooks/settings/prompts waste tokens.
+- `architecture debt`: one fact is mirrored across phases, a local gap suppresses
+  unrelated work, a lexical nonclaim fabricates absence in a dependent consumer,
+  or a consumer creates a new forcing/cache identity owner.
+- `artifact debt`: a status/count-only gate ignores diagnostic or product
+  payload churn; add a stable-key content comparison instead of prose review.
 
 ## Choose Smallest Fix
 
 - Refine a skill for repeatable procedure.
 - Add/update a script/test for deterministic enforcement.
+- Lower an architecture metric by deleting mirrors; never raise the ratchet to
+  make an ordinary feature fit.
 - Update docs only when they change future behavior.
 - File an issue if the real fix is outside the PR.
 
-For prior evidence, read `references/2026-05-26-findings.md` only when it helps.
+Use the measured reset evidence in `docs/plan/ROADMAP.md`; do not revive
+retired checker/solver guardrails as historical ceremony.
 
 ## PR Shape
 

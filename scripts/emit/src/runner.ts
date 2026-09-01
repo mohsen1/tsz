@@ -2,7 +2,7 @@
 /**
  * TSZ Emit Test Runner
  *
- * Compares tsz JavaScript/Declaration emit output against TypeScript's baselines.
+ * Compares TSZ products with a fresh pinned TypeScript 7 process observation.
  * Runs tests in parallel with configurable concurrency and timeout.
  */
 
@@ -10,54 +10,66 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createHash } from 'node:crypto';
-import { execFile as execFileCb, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'url';
-import { promisify } from 'node:util';
 import pc from 'picocolors';
 import pLimit from 'p-limit';
-import { parse as parseJsonc } from 'jsonc-parser';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 import { CliTranspiler, type LinkInput } from './cli-transpiler.js';
 import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
-import { parseDirectiveLine, parseFlagDirectiveLine, firstListValue, splitListValues } from './directives.js';
 import { BaselineBlobReader } from './baseline-blob-reader.js';
 import { buildBlob, isBlobFresh } from './build-baseline-blob.js';
+import {
+  authoredOptionFailureReasons,
+  extractAuthoredVariantFromFilename,
+  optionBoolean,
+  optionLibList,
+  optionString,
+  parseEmbeddedCompilerOptions,
+  resolveAuthoredOptions,
+} from './authored-options.js';
+import {
+  compareCanonicalProductSets,
+  type ProductSetComparison,
+} from './canonical-products.js';
+import { resolvePinnedOracle } from './oracle.js';
+import {
+  canonicalUnsupportedReasons,
+  hasEmitSidecar,
+  retainCanonicalInventory,
+} from './canonical-support.js';
+import {
+  artifactCandidateTotal,
+  artifactHasNonPass,
+  artifactSurfaceObservation,
+  artifactStatus,
+  compareArtifactOutcomes as compareCompilerOutcomes,
+  compilerArtifactState,
+  emptyArtifactProductCounts,
+  emptyArtifactStatusCounts,
+  ensureMeasuredArtifact,
+  recordArtifactProduct,
+  recordArtifactStatus,
+  selectArtifactSurfaces,
+  type ArtifactProductCounts,
+  type ArtifactState,
+  type ArtifactStatus,
+  type ArtifactStatusCounts,
+} from './artifact-state.js';
+import {
+  parseSourceTest,
+  readTypeScriptTestFile,
+  selectHarnessRootFiles,
+  type ParsedSourceTest,
+} from './source-test.js';
 
-const execFile = promisify(execFileCb);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
 const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 const DTS_DISCOVERY_CACHE = path.join(CACHE_DIR, 'dts-baseline-index.json');
-// Bumped to 3 for the TS7 baseline overlay: the cache is keyed on the bare
-// baseline filename plus mtime/size, so a pre-overlay entry would otherwise
-// answer `hasDts` from the submodule copy of an overlaid name.
-const DTS_DISCOVERY_CACHE_VERSION = 3;
-
-// ============================================================================
-// TypeScript 7 baseline overlay
-// ============================================================================
-//
-// The baselines checked into the TypeScript submodule are TS 6.0-era, while
-// the conformance oracle (scripts/conformance/tsc-cache-full.json) is TS 7.0.2.
-// Baselines regenerated against 7.0.2 live here instead, because the submodule
-// is read-only — scripts/githooks/pre-commit rejects any commit that touches
-// it. Names are identical to the submodule's, including option suffixes like
-// "foo(target=es2015).js", and the submodule remains the fallback for every
-// baseline not yet regenerated, so the migration is incremental.
-const OVERLAY_DIR = process.env.TSZ_EMIT_BASELINES_OVERLAY
-  ?? path.join(__dirname, '../baselines-ts7');
-
-const overlayNames: Set<string> = fs.existsSync(OVERLAY_DIR)
-  ? new Set(fs.readdirSync(OVERLAY_DIR).filter(e => e.endsWith('.js')))
-  : new Set();
-
-function resolveBaselinePath(name: string): string {
-  return overlayNames.has(name)
-    ? path.join(OVERLAY_DIR, name)
-    : path.join(BASELINES_DIR, name);
-}
+const DTS_DISCOVERY_CACHE_VERSION = 4;
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -82,60 +94,81 @@ interface TestCase {
   testPath: string | null;
   sourceFileName: string | null;
   sourceFiles: Array<{ name: string; content: string }>;
+  rootFileNames: string[];
   links: LinkInput[];
   source: string;
-  expectedJs: string | null;
-  expectedJsFileName: string | null;
-  expectedDts: string | null;
-  expectedDtsFileName: string | null;
-  target: number;
-  module: number;
+  /** Baseline names define only the invocation's product domain, never bytes. */
+  jsProductDomain: string[];
+  dtsProductDomain: string[];
+  target?: number;
+  module?: number;
   lib?: string[];
-  alwaysStrict: boolean;
-  sourceMap: boolean;
-  inlineSourceMap: boolean;
-  downlevelIteration: boolean;
-  noEmitHelpers: boolean;
-  noEmitOnError: boolean;
-  noEmitExpected: boolean;
-  noJsEmitExpected: boolean;
-  noDtsEmitExpected: boolean;
-  importHelpers: boolean;
-  esModuleInterop: boolean;
+  alwaysStrict?: boolean;
+  sourceMap?: boolean;
+  inlineSourceMap?: boolean;
+  downlevelIteration?: boolean;
+  noEmitHelpers?: boolean;
+  noEmitOnError?: boolean;
+  noCheck?: boolean;
+  noLib?: boolean;
+  noEmit?: boolean;
+  declaration?: boolean;
+  importHelpers?: boolean;
+  esModuleInterop?: boolean;
   useDefineForClassFields?: boolean;
-  experimentalDecorators: boolean;
-  emitDecoratorMetadata: boolean;
+  experimentalDecorators?: boolean;
+  emitDecoratorMetadata?: boolean;
+  strict?: boolean;
   strictNullChecks?: boolean;
   exactOptionalPropertyTypes?: boolean;
   jsx?: string;
   jsxFactory?: string;
   jsxFragmentFactory?: string;
   jsxImportSource?: string;
+  moduleResolution?: string;
   moduleDetection?: string;
-  preserveConstEnums: boolean;
-  verbatimModuleSyntax: boolean;
-  rewriteRelativeImportExtensions: boolean;
-  isolatedModules: boolean;
+  preserveConstEnums?: boolean;
+  verbatimModuleSyntax?: boolean;
+  rewriteRelativeImportExtensions?: boolean;
+  isolatedModules?: boolean;
   importsNotUsedAsValues?: string;
-  preserveValueImports: boolean;
-  removeComments: boolean;
-  stripInternal: boolean;
+  preserveValueImports?: boolean;
+  removeComments?: boolean;
+  stripInternal?: boolean;
+  allowJs?: boolean;
+  allowUnreachableCode?: boolean;
+  checkJs?: boolean;
+  noImplicitAny?: boolean;
+  noUnusedLocals?: boolean;
+  noUnusedParameters?: boolean;
+  skipLibCheck?: boolean;
+  strictPropertyInitialization?: boolean;
   baseUrl?: string;
   outFile?: string;
   outDir?: string;
   declarationDir?: string;
   rootDir?: string;
-  emitDeclarationOnly: boolean;
-  declarationMap: boolean;
+  emitDeclarationOnly?: boolean;
+  declarationMap?: boolean;
+  unsupportedReason?: string;
 }
 
 interface TestResult {
   name: string;
   testPath: string | null;
+  jsSelected: boolean;
+  dtsSelected: boolean;
+  outcomeMatch: boolean | null;
   jsMatch: boolean | null;
   dtsMatch: boolean | null;
+  jsProductMatch: boolean | null;
+  dtsProductMatch: boolean | null;
+  artifactState: ArtifactState;
+  outcomeError?: string;
   jsError?: string;
   dtsError?: string;
+  jsProductError?: string;
+  dtsProductError?: string;
   elapsed?: number;
   skipped?: boolean;
   timeout?: boolean;
@@ -152,12 +185,6 @@ function summarizeErrorMessage(message: string): string {
   return lines[0];
 }
 
-interface CacheEntry {
-  hash: string;
-  jsOutput: string;
-  dtsOutput: string | null;
-}
-
 interface DtsDiscoveryEntry {
   version: number;
   mtimeMs: number;
@@ -168,7 +195,7 @@ interface DtsDiscoveryEntry {
 type DtsDiscoveryCache = Record<string, DtsDiscoveryEntry>;
 
 // ============================================================================
-// Cache Management
+// Result Fingerprinting
 // ============================================================================
 
 // SHA-256 hex digest. Collision-free in practice; use for cache identity where
@@ -178,24 +205,27 @@ function hashString(str: string): string {
   return createHash('sha256').update(str).digest('hex');
 }
 
-// Stable JSON serialization: object keys sorted alphabetically so adding a new
-// option in the future doesn't silently re-key every cache entry. Only used
-// for cache key construction, never for I/O.
-function stableStringify(value: Record<string, unknown>): string {
-  const keys = Object.keys(value).sort();
-  const obj: Record<string, unknown> = {};
-  for (const k of keys) obj[k] = value[k];
-  return JSON.stringify(obj);
-}
-
 function detailRowsFingerprint(results: Array<Record<string, unknown>>): string {
   const rows = results.map(result => ({
+    // Keep keys in lexical order so this byte stream agrees with Python's
+    // json.dumps(..., sort_keys=True) in query-emit.py.
+    artifactState: result.artifactState ?? null,
     baselineFile: result.baselineFile ?? null,
     dtsError: result.dtsError ?? null,
+    dtsMatch: result.dtsMatch ?? null,
+    dtsProductError: result.dtsProductError ?? null,
+    dtsProductMatch: result.dtsProductMatch ?? null,
+    dtsSelected: result.dtsSelected ?? null,
     dtsStatus: result.dtsStatus ?? null,
     jsError: result.jsError ?? null,
+    jsMatch: result.jsMatch ?? null,
+    jsProductError: result.jsProductError ?? null,
+    jsProductMatch: result.jsProductMatch ?? null,
+    jsSelected: result.jsSelected ?? null,
     jsStatus: result.jsStatus ?? null,
     name: result.name ?? null,
+    outcomeError: result.outcomeError ?? null,
+    outcomeMatch: result.outcomeMatch ?? null,
     testPath: result.testPath ?? null,
   })).sort((left, right) => {
     const leftKey = `${left.name ?? ''}\0${left.baselineFile ?? ''}\0${left.testPath ?? ''}`;
@@ -207,331 +237,9 @@ function detailRowsFingerprint(results: Array<Record<string, unknown>>): string 
   return `sha256:${hashString(JSON.stringify(rows))}`;
 }
 
-function getCacheKey(
-  sourceKey: string,
-  target: number,
-  module: number,
-  lib: string = '',
-  alwaysStrict: boolean,
-  declaration: boolean,
-  sourceMap: boolean = false,
-  inlineSourceMap: boolean = false,
-  downlevelIteration: boolean = false,
-  noEmitHelpers: boolean = false,
-  noEmitOnError: boolean = false,
-  importHelpers: boolean = false,
-  esModuleInterop: boolean = false,
-  useDefineForClassFields: string = '',
-  experimentalDecorators: boolean = false,
-  emitDecoratorMetadata: boolean = false,
-  strictNullChecks: string = '',
-  exactOptionalPropertyTypes: string = '',
-  jsx: string = '',
-  jsxFactory: string = '',
-  jsxFragmentFactory: string = '',
-  jsxImportSource: string = '',
-  moduleDetection: string = '',
-  preserveConstEnums: boolean = false,
-  verbatimModuleSyntax: boolean = false,
-  rewriteRelativeImportExtensions: boolean = false,
-  isolatedModules: boolean = false,
-  importsNotUsedAsValues: string = '',
-  preserveValueImports: boolean = false,
-  removeComments: boolean = false,
-  stripInternal: boolean = false,
-  baseUrl: string = '',
-  outFile: string = '',
-  outDir: string = '',
-  declarationDir: string = '',
-  rootDir: string = '',
-  declarationMap: boolean = false,
-): string {
-  const tszBin = process.env.TSZ_BIN;
-  let engineSalt = '';
-  if (tszBin) {
-    try {
-      const st = fs.statSync(tszBin);
-      engineSalt = `${tszBin}:${st.size}:${st.mtimeMs}`;
-    } catch {
-      engineSalt = tszBin;
-    }
-  }
-  let runnerSalt = '';
-  try {
-    const runnerStat = fs.statSync(fileURLToPath(import.meta.url));
-    runnerSalt = `${runnerStat.size}:${runnerStat.mtimeMs}`;
-  } catch {
-    runnerSalt = 'runner-unknown';
-  }
-  return hashString(stableStringify({
-    sourceKey,
-    target,
-    module,
-    lib,
-    alwaysStrict,
-    declaration,
-    sourceMap,
-    inlineSourceMap,
-    downlevelIteration,
-    noEmitHelpers,
-    noEmitOnError,
-    importHelpers,
-    esModuleInterop,
-    useDefineForClassFields,
-    experimentalDecorators,
-    emitDecoratorMetadata,
-    strictNullChecks,
-    exactOptionalPropertyTypes,
-    jsx,
-    jsxFactory,
-    jsxFragmentFactory,
-    jsxImportSource,
-    moduleDetection,
-    preserveConstEnums,
-    verbatimModuleSyntax,
-    rewriteRelativeImportExtensions,
-    isolatedModules,
-    importsNotUsedAsValues,
-    preserveValueImports,
-    removeComments,
-    stripInternal,
-    baseUrl,
-    outFile,
-    outDir,
-    declarationDir,
-    rootDir,
-    declarationMap,
-    engineSalt,
-    runnerSalt,
-  }));
-}
-
-let cache: Map<string, CacheEntry> = new Map();
-let cacheLoaded = false;
-
-function loadCache(): void {
-  if (cacheLoaded) return;
-  cacheLoaded = true;
-
-  const cachePath = path.join(CACHE_DIR, 'emit-cache.json');
-  if (fs.existsSync(cachePath)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
-      cache = new Map(Object.entries(data));
-    } catch {
-      cache = new Map();
-    }
-  }
-}
-
-function buildSourceKey(sourceFiles: Array<{ name: string; content: string }>): string {
-  return sourceFiles.map(f => `${f.name}\n${f.content}`).join('\n////\n');
-}
-
-function readBooleanOption(
-  options: Record<string, unknown>,
-  name: string,
-): boolean | undefined {
-  const value = options[name];
-  return typeof value === 'boolean' ? value : undefined;
-}
-
-function optionHasToken(value: unknown, token: string): boolean {
-  if (typeof value !== 'string') return false;
-  const expected = token.toLowerCase();
-  return value.split(',').some(part => part.trim().toLowerCase() === expected);
-}
-
-function saveCache(): void {
-  if (!fs.existsSync(CACHE_DIR)) {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
-  }
-  const cachePath = path.join(CACHE_DIR, 'emit-cache.json');
-  const obj: Record<string, CacheEntry> = {};
-  for (const [k, v] of cache) {
-    obj[k] = v;
-  }
-  fs.writeFileSync(cachePath, JSON.stringify(obj));
-}
-
 // ============================================================================
 // Test Discovery
 // ============================================================================
-
-function extractVariantFromFilename(
-  filename: string,
-): { base: string } & Record<string, string | undefined> {
-  const match = filename.match(/^(.+?)\(([^)]+)\)\.js$/);
-  if (!match) {
-    return { base: filename.replace('.js', '') };
-  }
-
-  const base = match[1];
-  const variants = match[2].split(',').map(v => v.trim());
-  const result: { base: string } & Record<string, string | undefined> = { base };
-
-  for (const variant of variants) {
-    const [key, value] = variant.split('=');
-    result[key] = value;
-  }
-
-  return result;
-}
-
-interface ParsedSourceTest {
-  options: Record<string, unknown>;
-  source: string | null;
-  sourceFileName: string | null;
-  sourceFiles: Array<{ name: string; content: string }>;
-  links: LinkInput[];
-}
-
-function parseSourceTest(content: string, defaultSourceFileName?: string): ParsedSourceTest {
-  const options: Record<string, unknown> = {};
-  const sourceFiles: Array<{ name: string; content: string }> = [];
-  const links: LinkInput[] = [];
-  const stripped = content.replace(/^\uFEFF/, '');
-  const lines = stripped.split(/\r\n|\r|\n/);
-  let currentFileName: string | null = null;
-  let currentContent: string[] = [];
-
-  const flushCurrentFile = () => {
-    if (!currentFileName) return;
-    sourceFiles.push({
-      name: currentFileName,
-      content: currentContent.join('\n'),
-    });
-    currentFileName = null;
-    currentContent = [];
-  };
-
-  for (const line of lines) {
-    const directive = parseDirectiveLine(line);
-    if (directive) {
-      const { key: lowKey, value } = directive;
-      if (lowKey === 'filename') {
-        flushCurrentFile();
-        currentFileName = value;
-        continue;
-      }
-      if (lowKey === 'link') {
-        const [target, link] = value.split('->').map(part => part.trim());
-        if (target && link) {
-          links.push({ target, link });
-        }
-        continue;
-      }
-      if (value.toLowerCase() === 'true') options[lowKey] = true;
-      else if (value.toLowerCase() === 'false') options[lowKey] = false;
-      else options[lowKey] = value;
-      continue;
-    }
-
-    const flagDirective = parseFlagDirectiveLine(line);
-    if (flagDirective) {
-      const lowKey = flagDirective.toLowerCase();
-      if (lowKey === 'ts-check') {
-        options.checkjs = true;
-        // @ts-check inside a @filename block is real source content (a comment
-        // that tsc preserves in JS output), not a test-runner directive.
-        if (currentFileName) {
-          currentContent.push(line);
-        }
-      } else if (lowKey === 'ts-nocheck') {
-        options.checkjs = false;
-        if (currentFileName) {
-          currentContent.push(line);
-        }
-      } else if (currentFileName) {
-        currentContent.push(line);
-      }
-      continue;
-    }
-
-    if (currentFileName) {
-      currentContent.push(line);
-    }
-  }
-
-  flushCurrentFile();
-
-  if (sourceFiles.length === 0 && defaultSourceFileName) {
-    // The first contiguous block of `// @directive` lines at the very top of
-    // the file is the test-harness header. Once any non-directive, non-empty
-    // line appears, subsequent `// @directive`-shaped comments are real source
-    // code (e.g. `// @internal` JSDoc-style annotations) and must be preserved
-    // verbatim. Without this, in-source `// @internal` comments get silently
-    // stripped and tests like `declarationEmitWorkWithInlineComments` see a
-    // different source than tsc did.
-    //
-    // This shape test is deliberately broader than the canonical grammar in
-    // directives.ts: it covers the key/value and flag forms in one regex
-    // because it only decides which header lines to drop from the
-    // synthesized single-file source (a baseline-anchored policy), not what
-    // counts as a directive.
-    const directiveRegex = /^\/\/\s*@[\w-]+(?:\s*:\s*[^\r\n]*)?$/i;
-    const singleFileContent: string[] = [];
-    let inHeader = true;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (inHeader) {
-        if (
-          directiveRegex.test(trimmed)
-          && !/^\/\/\s*@internal\s*$/i.test(trimmed)
-        ) {
-          continue;
-        }
-        if (trimmed === '') {
-          // Blank lines inside the header zone are part of the header until
-          // the first real content line.
-          singleFileContent.push(line);
-          continue;
-        }
-        inHeader = false;
-      }
-      singleFileContent.push(line);
-    }
-    sourceFiles.push({
-      name: defaultSourceFileName,
-      content: singleFileContent.join('\n').trim(),
-    });
-  }
-
-  const isEntryCandidate = (file: { name: string; content: string }) => {
-    return (
-      file.content.length > 0 &&
-      !file.name.endsWith('.d.ts') &&
-      !file.name.endsWith('package.json') &&
-      !file.name.endsWith('tsconfig.json')
-    );
-  };
-  const preferTsEntry = options.noimplicitreferences === true;
-  const entrySourceFile =
-    (preferTsEntry ? sourceFiles.find(file => isEntryCandidate(file) && /\.(ts|tsx|mts|cts)$/.test(file.name)) : undefined) ??
-    sourceFiles.find(isEntryCandidate);
-
-  return {
-    options,
-    source: entrySourceFile?.content ?? null,
-    sourceFileName: entrySourceFile?.name ?? null,
-    sourceFiles,
-    links,
-  };
-}
-
-function parseLibList(value: unknown): string[] | undefined {
-  if (Array.isArray(value)) {
-    const libs = value.map(String).map(s => s.trim()).filter(Boolean);
-    return libs.length > 0 ? libs : undefined;
-  }
-  if (typeof value === 'string') {
-    // `@lib` is a list option: every comma-separated entry is active,
-    // unlike variant-valued scalar options which take the first value.
-    const libs = splitListValues(value);
-    return libs.length > 0 ? libs : undefined;
-  }
-  return undefined;
-}
 
 function loadDtsDiscoveryCache(): DtsDiscoveryCache {
   if (!fs.existsSync(DTS_DISCOVERY_CACHE)) return {};
@@ -556,7 +264,7 @@ async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
   const readLimit = pLimit(64);
 
   const checks = await Promise.all(jsFiles.map(file => statLimit(async () => {
-    const fullPath = resolveBaselinePath(file);
+    const fullPath = path.join(BASELINES_DIR, file);
     const stat = await fs.promises.stat(fullPath);
     const entry = cached[file];
     if (entry && entry.version === DTS_DISCOVERY_CACHE_VERSION && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
@@ -564,7 +272,7 @@ async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
     }
 
     const content = await readLimit(() => fs.promises.readFile(fullPath, 'utf-8'));
-    const hasDts = parseBaseline(content).dts !== null;
+    const hasDts = parseBaseline(content).dtsOutputs.length > 0;
     updated[file] = { version: DTS_DISCOVERY_CACHE_VERSION, mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
     return { file, hasDts };
   })));
@@ -607,12 +315,6 @@ async function readBaselineFile(
   blob: BaselineBlobReader | null,
   name: string,
 ): Promise<string> {
-  // The overlay must win before the blob: the blob is baked from the submodule
-  // directory, so consulting it first would silently serve TS6 bytes for an
-  // overlaid name whenever TSZ_EMIT_BLOB is set.
-  if (overlayNames.has(name)) {
-    return await fs.promises.readFile(path.join(OVERLAY_DIR, name), 'utf-8');
-  }
   if (blob && blob.has(name)) {
     const buf = await blob.readBaseline(name);
     if (buf) return buf.toString('utf-8');
@@ -633,19 +335,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
   }
 
   const submoduleEntries = fs.readdirSync(BASELINES_DIR);
-  // An overlay baseline replaces a submodule one; it must never introduce a new
-  // test. A new name would grow jsTotal/dtsTotal and re-slice every emit shard
-  // (the shards are --max/--offset windows over this sorted list), which would
-  // make before/after pass counts incomparable. Fail loudly instead.
   const submoduleNames = new Set(submoduleEntries);
-  const orphanOverlays = [...overlayNames].filter(n => !submoduleNames.has(n));
-  if (orphanOverlays.length > 0) {
-    console.error(
-      `Overlay baselines with no submodule counterpart: ${orphanOverlays.join(', ')}\n` +
-      `The overlay replaces baselines name-for-name; it must not add tests.`,
-    );
-    process.exit(1);
-  }
   const entries = submoduleEntries;
   let jsFiles = entries.filter(e => e.endsWith('.js')).sort();
 
@@ -660,31 +350,30 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     jsFiles = await filterToDtsBaselines(jsFiles);
   }
 
-  // Cap to maxTests before reading (we may discard some after parsing, so read a bit extra)
-  if (maxTests < Infinity) {
-    jsFiles = jsFiles.slice(0, Math.min(jsFiles.length, maxTests * 2));
-  }
+  // Capability/parser outcomes never change inventory membership. Apply the
+  // requested cap once, before reading, and retain every selected candidate.
+  jsFiles = retainCanonicalInventory(jsFiles, maxTests);
 
   // Read and parse baseline files in parallel
   const readLimit = pLimit(64);
   const parsedSourceCache = new Map<string, ParsedSourceTest>();
+  const sourceReadFailures = new Set<string>();
   const results = await Promise.all(jsFiles.map(baselineFile => readLimit(async () => {
     const baselineContent = await readBaselineFile(blob, baselineFile);
     const baseline = parseBaseline(baselineContent);
 
-    if (!baseline.source || !baseline.js) return null;
-    if (dtsOnly && !baseline.dts) return null;
-
-    const variant = extractVariantFromFilename(baselineFile);
+    const variant = extractAuthoredVariantFromFilename(baselineFile);
 
     let directives: Record<string, unknown> = {};
     let sourceFiles = baseline.sourceFiles;
     let source = baseline.source;
     let sourceFileName = baseline.sourceFileName;
     let links: LinkInput[] = [];
+    let sourceReadFailed = false;
     if (baseline.testPath) {
       const cached = parsedSourceCache.get(baseline.testPath);
       if (cached) {
+        sourceReadFailed = sourceReadFailures.has(baseline.testPath);
         directives = cached.options;
         links = cached.links;
         if (cached.sourceFiles.length > 0) {
@@ -694,7 +383,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
         }
       } else {
         try {
-          const testFileContent = await readTypeScriptTestFile(baseline.testPath);
+          const testFileContent = await readTypeScriptTestFile(TS_DIR, baseline.testPath);
           const parsedSource = parseSourceTest(testFileContent, path.basename(baseline.testPath));
           directives = parsedSource.options;
           if (parsedSource.sourceFiles.length > 0) {
@@ -705,6 +394,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
           links = parsedSource.links;
           parsedSourceCache.set(baseline.testPath, parsedSource);
         } catch {
+          sourceReadFailed = true;
+          sourceReadFailures.add(baseline.testPath);
           parsedSourceCache.set(baseline.testPath, {
             options: directives,
             source: null,
@@ -716,221 +407,121 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       }
     }
 
-    // Multi-variant scalar directives (`@target: es2015,es5`) take the
-    // first variant, matching the conformance harness; the substring
-    // matching inside parseTarget must not see the raw comma list (it
-    // would resolve `es2015,es5` to es5 instead of es2015).
-    const target = variant.target ? parseTarget(variant.target)
-      : directives.target ? parseTarget(firstListValue(String(directives.target)))
-      : 12;  // TS7 default: ES2025 (LatestStandard)
-    // Also check tsconfig.json files embedded in sourceFiles for compiler options
-    const tsconfigOptions: Record<string, unknown> = {};
-    for (const sf of sourceFiles) {
-      if (sf.name.endsWith('tsconfig.json')) {
-        try {
-          const parsed = parseJsonc(sf.content);
-          if (parsed?.compilerOptions) {
-            Object.assign(tsconfigOptions, parsed.compilerOptions);
-          }
-        } catch { /* ignore parse errors */ }
-      }
-    }
-    const tsconfigModule = tsconfigOptions.module
-      ? parseModule(String(tsconfigOptions.module))
-      : undefined;
-    const hasEmbeddedTsconfig = Object.keys(tsconfigOptions).length > 0;
-    const moduleResolutionOption =
-      variant.moduleresolution ?? directives.moduleresolution ?? tsconfigOptions.moduleResolution;
-    const usesBundlerModuleResolution =
-      optionHasToken(moduleResolutionOption, 'bundler');
-    const module = variant.module ? parseModule(variant.module)
-      : directives.module ? parseModule(firstListValue(String(directives.module)))
-      : tsconfigModule !== undefined ? tsconfigModule
-      // Project-style tsconfig baselines inherit tsc's compiler-option default:
-      // unspecified `module` remains CommonJS, independent of `target`, except
-      // bundler resolution, whose emit baselines preserve ES module syntax.
-      : hasEmbeddedTsconfig && !usesBundlerModuleResolution ? parseModule('commonjs')
-      : inferDefaultModule(target);
-    const lib = parseLibList(directives.lib) ?? parseLibList(tsconfigOptions.lib);
-
-    // TypeScript 7 no longer runs emit configurations that use the removed
-    // TS6 option wave. Those configurations have no TS7 emit baseline.
-    const alwaysStrict = variant.alwaysstrict !== undefined
-      ? variant.alwaysstrict === 'true'
-      : directives.alwaysstrict !== false;
-    const normalizedModuleResolution = typeof moduleResolutionOption === 'string'
-      ? moduleResolutionOption.toLowerCase()
-      : '';
+    const embeddedConfig = parseEmbeddedCompilerOptions(sourceFiles);
+    const tsconfigOptions = embeddedConfig.compilerOptions;
+    const authoredOptions = resolveAuthoredOptions({
+      variant,
+      directives,
+      embeddedConfig: tsconfigOptions,
+    });
+    const targetText = optionString(authoredOptions, 'target');
+    const target = targetText === undefined ? undefined : parseTarget(targetText);
+    const effectiveTarget = target ?? 12;
+    const moduleText = optionString(authoredOptions, 'module');
+    const module = moduleText === undefined ? undefined : parseModule(moduleText);
+    const effectiveModule = module ?? inferDefaultModule(effectiveTarget);
+    const moduleResolution = optionString(authoredOptions, 'moduleResolution');
+    const normalizedModuleResolution = moduleResolution?.toLowerCase() ?? '';
+    const lib = optionLibList(authoredOptions);
+    const alwaysStrict = optionBoolean(authoredOptions, 'alwaysStrict');
+    const sourceMap = optionBoolean(authoredOptions, 'sourceMap');
+    const inlineSourceMap = optionBoolean(authoredOptions, 'inlineSourceMap');
+    const declarationMap = optionBoolean(authoredOptions, 'declarationMap');
+    const downlevelIteration = optionBoolean(authoredOptions, 'downlevelIteration');
+    const noEmitHelpers = optionBoolean(authoredOptions, 'noEmitHelpers');
+    const noEmitOnError = optionBoolean(authoredOptions, 'noEmitOnError');
+    const noCheck = optionBoolean(authoredOptions, 'noCheck');
+    const noLib = optionBoolean(authoredOptions, 'noLib');
+    const noEmit = optionBoolean(authoredOptions, 'noEmit');
+    const declaration = optionBoolean(authoredOptions, 'declaration');
+    const emitDeclarationOnly = optionBoolean(authoredOptions, 'emitDeclarationOnly');
+    const importHelpers = optionBoolean(authoredOptions, 'importHelpers');
+    const esModuleInterop = optionBoolean(authoredOptions, 'esModuleInterop');
+    const useDefineForClassFields = optionBoolean(authoredOptions, 'useDefineForClassFields');
+    const experimentalDecorators = optionBoolean(authoredOptions, 'experimentalDecorators');
+    const emitDecoratorMetadata = optionBoolean(authoredOptions, 'emitDecoratorMetadata');
+    const strict = optionBoolean(authoredOptions, 'strict');
+    // Strict is forwarded as one authored option. Never approximate it by
+    // synthesizing strictNullChecks or any other strict-family suboption.
+    const strictNullChecks = optionBoolean(authoredOptions, 'strictNullChecks');
+    const exactOptionalPropertyTypes = optionBoolean(authoredOptions, 'exactOptionalPropertyTypes');
+    const jsx = optionString(authoredOptions, 'jsx');
+    const jsxFactory = optionString(authoredOptions, 'jsxFactory');
+    const jsxFragmentFactory = optionString(authoredOptions, 'jsxFragmentFactory');
+    const jsxImportSource = optionString(authoredOptions, 'jsxImportSource');
+    const moduleDetection = optionString(authoredOptions, 'moduleDetection');
+    const preserveConstEnums = optionBoolean(authoredOptions, 'preserveConstEnums');
+    const verbatimModuleSyntax = optionBoolean(authoredOptions, 'verbatimModuleSyntax');
+    const rewriteRelativeImportExtensions = optionBoolean(authoredOptions, 'rewriteRelativeImportExtensions');
+    const isolatedModules = optionBoolean(authoredOptions, 'isolatedModules');
+    const importsNotUsedAsValues = optionString(authoredOptions, 'importsNotUsedAsValues');
+    const preserveValueImports = optionBoolean(authoredOptions, 'preserveValueImports');
+    const removeComments = optionBoolean(authoredOptions, 'removeComments');
+    const stripInternal = optionBoolean(authoredOptions, 'stripInternal');
+    const allowJs = optionBoolean(authoredOptions, 'allowJs');
+    const allowUnreachableCode = optionBoolean(authoredOptions, 'allowUnreachableCode');
+    const checkJs = optionBoolean(authoredOptions, 'checkJs');
+    const noImplicitAny = optionBoolean(authoredOptions, 'noImplicitAny');
+    const noUnusedLocals = optionBoolean(authoredOptions, 'noUnusedLocals');
+    const noUnusedParameters = optionBoolean(authoredOptions, 'noUnusedParameters');
+    const skipLibCheck = optionBoolean(authoredOptions, 'skipLibCheck');
+    const strictPropertyInitialization = optionBoolean(authoredOptions, 'strictPropertyInitialization');
+    const noImplicitReferences = optionBoolean(authoredOptions, 'noImplicitReferences');
+    const baseUrl = optionString(authoredOptions, 'baseUrl');
+    const outFile = optionString(authoredOptions, 'outFile');
+    const outDir = optionString(authoredOptions, 'outDir');
+    const declarationDir = optionString(authoredOptions, 'declarationDir');
+    const rootDir = optionString(authoredOptions, 'rootDir');
+    const hasMapOption = [
+      'sourcemap',
+      'inlinesourcemap',
+      'declarationmap',
+      'maproot',
+      'sourceroot',
+      'inlinesources',
+    ].some(key => authoredOptions.has(key));
+    const rootSelection = selectHarnessRootFiles(sourceFiles, noImplicitReferences);
+    const unsupportedReasons = canonicalUnsupportedReasons({
+      parserHasSource: sourceFiles.length > 0,
+      parserHasJs: baseline.jsOutputs.length > 0 || emitDeclarationOnly === true || noEmit === true,
+      parserHasDts: baseline.dtsOutputs.length > 0 || noEmit === true,
+      dtsOnly,
+      sourceReadFailed,
+      target: effectiveTarget,
+      module: effectiveModule,
+      moduleResolution: normalizedModuleResolution,
+      alwaysStrict,
+      hasDownlevelIterationOption: authoredOptions.has('downleveliteration'),
+      esModuleInteropDisabled: esModuleInterop === false,
+      hasOutFile: outFile !== undefined,
+      hasBaseUrl: baseUrl !== undefined,
+      hasMapOption,
+      hasBaselineSidecar: hasEmitSidecar(baselineFile, submoduleNames),
+    });
     if (
-      target <= 1 ||
-      [0, 2, 3, 4].includes(module) ||
-      ['classic', 'node', 'node10'].includes(normalizedModuleResolution) ||
-      !alwaysStrict ||
-      variant.downleveliteration !== undefined ||
-      directives.downleveliteration !== undefined ||
-      variant.esmoduleinterop === 'false' ||
-      directives.esmoduleinterop === false ||
-      typeof directives.outfile === 'string' ||
-      typeof tsconfigOptions.baseUrl === 'string'
+      baseline.dtsOutputs.length > 0 &&
+      declaration !== true &&
+      emitDeclarationOnly !== true &&
+      noEmit !== true
     ) {
-      return null;
+      unsupportedReasons.push('declaration-product-domain-without-authored-declaration');
     }
-    const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
-    const inlineSourceMap = directives.inlinesourcemap === true;
-    const downlevelIteration = variant.downleveliteration !== undefined
-      ? variant.downleveliteration === 'true'
-      : typeof directives.downleveliteration === 'boolean'
-        ? directives.downleveliteration
-        : readBooleanOption(tsconfigOptions, 'downlevelIteration') === true;
-    const noEmitHelpers = typeof directives.noemithelpers === 'boolean'
-      ? directives.noemithelpers
-      : readBooleanOption(tsconfigOptions, 'noEmitHelpers') === true;
-    const noEmitOnError = typeof directives.noemitonerror === 'boolean'
-      ? directives.noemitonerror
-      : readBooleanOption(tsconfigOptions, 'noEmitOnError') === true;
-    const importHelpers = variant.importhelpers !== undefined
-      ? variant.importhelpers === 'true'
-      : typeof directives.importhelpers === 'boolean'
-        ? directives.importhelpers
-        : readBooleanOption(tsconfigOptions, 'importHelpers') === true;
-    const esModuleInterop = variant.esmoduleinterop !== undefined
-      ? variant.esmoduleinterop === 'true'
-      : directives.esmoduleinterop !== false;
-    const useDefineForClassFields = variant.usedefineforclassfields !== undefined
-      ? variant.usedefineforclassfields === 'true'
-      : typeof directives.usedefineforclassfields === 'boolean'
-        ? directives.usedefineforclassfields
-        : undefined;
-    const experimentalDecorators = variant.experimentaldecorators !== undefined
-      ? variant.experimentaldecorators === 'true'
-      : directives.experimentaldecorators === true;
-    const emitDecoratorMetadata = directives.emitdecoratormetadata === true;
-    const strictNullChecks = variant.strictnullchecks !== undefined
-      ? variant.strictnullchecks === 'true'
-      : typeof directives.strictnullchecks === 'boolean'
-        ? directives.strictnullchecks
-        // When @strict: false, derive strictNullChecks as false (matches tsc)
-        : directives.strict === false
-          ? false
-          : undefined;
-    const exactOptionalPropertyTypes = variant.exactoptionalpropertytypes !== undefined
-      ? variant.exactoptionalpropertytypes === 'true'
-      : typeof directives.exactoptionalpropertytypes === 'boolean'
-        ? directives.exactoptionalpropertytypes
-        : typeof tsconfigOptions.exactOptionalPropertyTypes === 'boolean'
-          ? (tsconfigOptions.exactOptionalPropertyTypes as boolean)
-          : undefined;
-    const jsx = variant.jsx ?? (typeof directives.jsx === 'string' ? directives.jsx : undefined);
-    const moduleDetection =
-      variant.moduledetection ?? (typeof directives.moduledetection === 'string' ? directives.moduledetection : undefined);
-    // @reactNamespace: X maps to jsxFactory: X.createElement, jsxFragmentFactory: X.Fragment
-    const reactNamespace = typeof directives.reactnamespace === 'string' ? directives.reactnamespace : undefined;
-    const jsxFactory = typeof directives.jsxfactory === 'string' ? directives.jsxfactory
-      : reactNamespace ? `${reactNamespace}.createElement` : undefined;
-    const jsxFragmentFactory =
-      typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory
-      : reactNamespace ? `${reactNamespace}.Fragment` : undefined;
-    const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
-    const preserveConstEnums = variant.preserveconstenums !== undefined
-      ? variant.preserveconstenums === 'true'
-      : directives.preserveconstenums === true;
-    const verbatimModuleSyntax = variant.verbatimmodulesyntax !== undefined
-      ? variant.verbatimmodulesyntax === 'true'
-      : directives.verbatimmodulesyntax === true;
-    const rewriteRelativeImportExtensions = variant.rewriterelativeimportextensions !== undefined
-      ? variant.rewriterelativeimportextensions === 'true'
-      : directives.rewriterelativeimportextensions === true;
-    const isolatedModules = variant.isolatedmodules !== undefined
-      ? variant.isolatedmodules === 'true'
-      : directives.isolatedmodules === true
-        ? true
-        : typeof tsconfigOptions.isolatedModules === 'boolean'
-          ? (tsconfigOptions.isolatedModules as boolean)
-          : false;
-    const importsNotUsedAsValues = typeof directives.importsnotusedasvalues === 'string'
-      ? directives.importsnotusedasvalues : undefined;
-    const preserveValueImports = directives.preservevalueimports === true;
-    const removeComments = directives.removecomments === true;
-    const stripInternal = directives.stripinternal === true;
-    const emitDeclarationOnly = directives.emitdeclarationonly === true;
-    const declarationMap = directives.declarationmap === true;
-
-    // Fix up outFile baseline parsing: when @outFile is specified, the baseline
-    // may contain both JS input files and the bundled output file. The parser
-    // only handles `out.js` by default, so we fix up the expected output for
-    // custom outFile names (e.g., dummy.js, output.js).
-    const outFile = typeof directives.outfile === 'string' ? directives.outfile : undefined;
-    const normalizedOutFile = outFile?.replace(/^[/\\]+/, '');
-    const baseUrl = typeof tsconfigOptions.baseUrl === 'string' ? tsconfigOptions.baseUrl : undefined;
-    const outDir = typeof tsconfigOptions.outDir === 'string' ? tsconfigOptions.outDir : undefined;
-    const declarationDir = typeof tsconfigOptions.declarationDir === 'string' ? tsconfigOptions.declarationDir : undefined;
-    const rootDir = typeof tsconfigOptions.rootDir === 'string' ? tsconfigOptions.rootDir : undefined;
-    if (normalizedOutFile && normalizedOutFile !== 'out.js' && baseline.files.has(normalizedOutFile)) {
-      baseline.js = baseline.files.get(normalizedOutFile) ?? baseline.js;
-      baseline.jsFileName = normalizedOutFile;
+    unsupportedReasons.push(...embeddedConfig.reasons);
+    if (rootSelection.unsupportedReason) {
+      unsupportedReasons.push(rootSelection.unsupportedReason);
     }
-    const outDtsFile = normalizedOutFile?.replace(/\.js$/, '.d.ts');
-    if (outDtsFile && outDtsFile !== 'out.d.ts' && baseline.files.has(outDtsFile)) {
-      baseline.dts = baseline.files.get(outDtsFile) ?? baseline.dts;
-      baseline.dtsFileName = outDtsFile;
-    }
-    if (!outFile && directives.noimplicitreferences === true && sourceFileName) {
-      const sourceBase = path.basename(sourceFileName).replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
-      const sourceExt = sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
-      const expectedJsExt =
-        sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
-        sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
-        sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
-      const expectedJsName = `${sourceBase}.${expectedJsExt}`;
-      if (baseline.files.has(expectedJsName)) {
-        baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
-        baseline.jsFileName = expectedJsName;
-      }
-    }
-    if (!outFile && sourceFileName && baseline.jsFileName) {
-      const jsSourceBasenames = new Set(
-        sourceFiles
-          .filter(file => /\.(js|jsx|mjs|cjs)$/.test(file.name))
-          .map(file => path.basename(file.name)),
-      );
-      const expectedJsLooksLikeSourceInput =
-        /\.(js|jsx|mjs|cjs)$/.test(baseline.jsFileName) &&
-        jsSourceBasenames.has(baseline.jsFileName);
-      if (expectedJsLooksLikeSourceInput) {
-        const sourceBase = path.basename(sourceFileName).replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, '');
-        const sourceExt = sourceFileName.match(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/)?.[1] ?? 'ts';
-        const expectedJsExt =
-          sourceExt === 'tsx' || sourceExt === 'jsx' ? 'jsx' :
-          sourceExt === 'mts' || sourceExt === 'mjs' ? 'mjs' :
-          sourceExt === 'cts' || sourceExt === 'cjs' ? 'cjs' : 'js';
-        const expectedJsName = `${sourceBase}.${expectedJsExt}`;
-        if (baseline.files.has(expectedJsName) && !jsSourceBasenames.has(expectedJsName)) {
-          baseline.js = baseline.files.get(expectedJsName) ?? baseline.js;
-          baseline.jsFileName = expectedJsName;
-        } else {
-          for (const [name, fileContent] of baseline.files) {
-            if (!/\.(js|jsx|mjs|cjs)$/.test(name) || jsSourceBasenames.has(path.basename(name))) {
-              continue;
-            }
-            baseline.js = fileContent;
-            baseline.jsFileName = name;
-            break;
-          }
-        }
-      }
-    }
+    unsupportedReasons.push(...authoredOptionFailureReasons(authoredOptions));
 
     return {
       baselineFile,
       testPath: baseline.testPath,
       sourceFileName,
       sourceFiles,
+      rootFileNames: rootSelection.rootFileNames,
       links,
-      source: source ?? baseline.source!,
-      expectedJs: baseline.js,
-      expectedJsFileName: baseline.jsFileName,
-      expectedDts: baseline.dts,
-      expectedDtsFileName: baseline.dtsFileName,
+      source: source ?? baseline.source ?? '',
+      jsProductDomain: baseline.jsOutputs.map(product => product.name),
+      dtsProductDomain: baseline.dtsOutputs.map(product => product.name),
       target,
       module,
       lib,
@@ -940,20 +531,23 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       downlevelIteration,
       noEmitHelpers,
       noEmitOnError,
-      noEmitExpected: baseline.noEmitExpected,
-      noJsEmitExpected: baseline.noJsEmitExpected,
-      noDtsEmitExpected: baseline.noDtsEmitExpected,
+      noCheck,
+      noLib,
+      noEmit,
+      declaration,
       importHelpers,
       esModuleInterop,
       useDefineForClassFields,
       experimentalDecorators,
       emitDecoratorMetadata,
+      strict,
       strictNullChecks,
       exactOptionalPropertyTypes,
       jsx,
       jsxFactory,
       jsxFragmentFactory,
       jsxImportSource,
+      moduleResolution,
       moduleDetection,
       preserveConstEnums,
       verbatimModuleSyntax,
@@ -963,6 +557,14 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       preserveValueImports,
       removeComments,
       stripInternal,
+      allowJs,
+      allowUnreachableCode,
+      checkJs,
+      noImplicitAny,
+      noUnusedLocals,
+      noUnusedParameters,
+      skipLibCheck,
+      strictPropertyInitialization,
       baseUrl,
       outFile,
       outDir,
@@ -970,6 +572,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       rootDir,
       emitDeclarationOnly,
       declarationMap,
+      unsupportedReason: unsupportedReasons.length > 0 ? unsupportedReasons.join(', ') : undefined,
     } as TestCase;
   })));
 
@@ -977,314 +580,186 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
   // makes implicit FH-on-GC closure a hard error; we own the lifetime.
   if (blob) await blob.close();
 
-  // Filter nulls and cap to maxTests
-  return results.filter((r): r is TestCase => r !== null).slice(0, maxTests);
-}
-
-async function readTypeScriptTestFile(testPath: string): Promise<string> {
-  const testFilePath = path.join(TS_DIR, testPath);
-  try {
-    return decodeTypeScriptTestFile(await fs.promises.readFile(testFilePath));
-  } catch (readError) {
-    try {
-      const normalizedPath = testPath.replace(/\\/g, '/');
-      const { stdout } = await execFile(
-        'git',
-        ['-C', TS_DIR, 'show', `HEAD:${normalizedPath}`],
-        { encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 },
-      );
-      return decodeTypeScriptTestFile(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout));
-    } catch {
-      throw readError;
-    }
-  }
-}
-
-function decodeTypeScriptTestFile(bytes: Buffer): string {
-  if (bytes.length >= 2) {
-    if (bytes[0] === 0xff && bytes[1] === 0xfe) {
-      return bytes.subarray(2).toString('utf16le');
-    }
-    if (bytes[0] === 0xfe && bytes[1] === 0xff) {
-      let text = '';
-      for (let i = 2; i + 1 < bytes.length; i += 2) {
-        text += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
-      }
-      return text;
-    }
-  }
-
-  return bytes.toString('utf8');
-}
-
-// ============================================================================
-// Comment Normalization
-// ============================================================================
-
-/**
- * Normalize comments for comparison: strip inline/trailing comments, remove
- * comment-only and blank lines, collapse whitespace gaps left by removal.
- * This allows matching emit output that differs only in comment placement.
- */
-function normalizeComments(s: string): string {
-  return s.split('\n')
-    .map(l => {
-      // Strip trailing single-line comments (not triple-slash, sourcemap, or in strings)
-      let code = l.replace(/\s*\/\/(?![\/#])(?![^"]*"[^"]*$).*$/, '');
-      // Strip inline block comments (/* ... */) that don't span lines
-      code = code.replace(/\s*\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, (match, offset, str) => {
-        const before = str.substring(0, offset);
-        const after = str.substring(offset + match.length);
-        if (before.trim() === '' && after.trim() === '') return match; // comment-only line
-        return '';
-      });
-      // Collapse runs of multiple spaces to single space
-      code = code.replace(/  +/g, ' ');
-      return code;
-    })
-    // Remove lines that are ONLY comments or whitespace-only
-    .filter(l => {
-      const t = l.trim();
-      if (t === '') return false;
-      if (t.startsWith('//')) return false;
-      if (t.startsWith('/*') && t.endsWith('*/')) return false;
-      if (t.startsWith('*')) return false;
-      return true;
-    })
-    .join('\n')
-    .trim();
-}
-
-/**
- * Normalize whitespace for comparison: collapse all whitespace sequences to
- * single space, normalize line breaks. This catches tab-vs-space indentation
- * differences and minor formatting differences.
- */
-function normalizeWhitespace(s: string): string {
-  // Collapse all whitespace (including newlines) to single space, then compare.
-  // This catches tab-vs-space, line-break, and indentation differences.
-  return s.replace(/\s+/g, ' ').trim();
+  return results;
 }
 
 // ============================================================================
 // Test Execution
 // ============================================================================
 
-async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Config): Promise<TestResult> {
+function formatProductComparison(comparison: ProductSetComparison, verbose: boolean): string {
+  const first = comparison.mismatches[0];
+  if (!first) return '';
+  const suffix = comparison.mismatches.length > 1
+    ? ` (${comparison.mismatches.length} product mismatches total)`
+    : '';
+  if (first.kind === 'content' && first.expected !== undefined && first.actual !== undefined) {
+    const diff = verbose
+      ? getEmitDiff(first.expected, first.actual)
+      : getEmitDiffSummary(first.expected, first.actual);
+    return `Content mismatch at ${first.path}: ${diff}${suffix}`;
+  }
+  if (first.kind === 'missing') return `Missing emit product: ${first.path}${suffix}`;
+  if (first.kind === 'extra') return `Unexpected emit product: ${first.path}${suffix}`;
+  if (first.kind === 'duplicate-oracle') return `Duplicate TypeScript 7 product path: ${first.path}${suffix}`;
+  return `Duplicate TSZ product path: ${first.path}${suffix}`;
+}
+
+async function runTest(
+  oracleTranspiler: CliTranspiler,
+  tszTranspiler: CliTranspiler,
+  testCase: TestCase,
+  config: Config,
+): Promise<TestResult> {
   const start = Date.now();
   const testName = testCase.baselineFile.replace('.js', '');
+  const emitDeclarations = testCase.declaration === true || testCase.emitDeclarationOnly === true;
+  const selected = selectArtifactSurfaces(config, emitDeclarations);
 
   const result: TestResult = {
     name: testName,
     testPath: testCase.testPath,
+    jsSelected: selected.js,
+    dtsSelected: selected.dts,
+    outcomeMatch: null,
     jsMatch: null,
     dtsMatch: null,
+    jsProductMatch: null,
+    dtsProductMatch: null,
+    artifactState: 'incomplete',
   };
 
   try {
-    loadCache();
-    const emitDeclarations = !config.jsOnly && testCase.expectedDts !== null;
-    const sourceKey = `${buildSourceKey(testCase.sourceFiles)}\n//// links\n${testCase.links.map(link => `${link.target}->${link.link}`).join('\n')}`;
-    const cacheKey = getCacheKey(
-      sourceKey,
-      testCase.target,
-      testCase.module,
-      testCase.lib?.join(',') ?? '',
-      testCase.alwaysStrict,
-      emitDeclarations,
-      testCase.sourceMap,
-      testCase.inlineSourceMap,
-      testCase.downlevelIteration,
-      testCase.noEmitHelpers,
-      testCase.noEmitOnError,
-      testCase.importHelpers,
-      testCase.esModuleInterop,
-      testCase.useDefineForClassFields === undefined ? '' : String(testCase.useDefineForClassFields),
-      testCase.experimentalDecorators,
-      testCase.emitDecoratorMetadata,
-      testCase.strictNullChecks === undefined ? '' : String(testCase.strictNullChecks),
-      testCase.exactOptionalPropertyTypes === undefined ? '' : String(testCase.exactOptionalPropertyTypes),
-      testCase.jsx ?? '',
-      testCase.jsxFactory ?? '',
-      testCase.jsxFragmentFactory ?? '',
-      testCase.jsxImportSource ?? '',
-      testCase.moduleDetection ?? '',
-      testCase.preserveConstEnums,
-      testCase.verbatimModuleSyntax,
-      testCase.rewriteRelativeImportExtensions,
-      testCase.isolatedModules,
-      testCase.importsNotUsedAsValues ?? '',
-      testCase.preserveValueImports,
-      testCase.removeComments,
-      testCase.stripInternal,
-      testCase.baseUrl ?? '',
-      testCase.outFile ?? '',
-      testCase.outDir ?? '',
-      testCase.declarationDir ?? '',
-      testCase.rootDir ?? '',
-      testCase.declarationMap,
+    if (testCase.unsupportedReason) {
+      result.artifactState = 'unsupported';
+      const message = `UNSUPPORTED_CANONICAL_EMIT: ${testCase.unsupportedReason}`;
+      const jsObservation = artifactSurfaceObservation('unsupported', selected.js, null, null);
+      const dtsObservation = artifactSurfaceObservation('unsupported', selected.dts, null, null);
+      result.jsMatch = jsObservation.match;
+      result.dtsMatch = dtsObservation.match;
+      if (selected.js) {
+        result.jsError = message;
+      }
+      if (selected.dts) {
+        result.dtsError = message;
+      }
+      result.elapsed = Date.now() - start;
+      return result;
+    }
+
+    const transpileOptions = {
+      sourceFileName: testCase.sourceFileName ?? undefined,
+      declaration: testCase.declaration,
+      emitDeclarationOnly: testCase.emitDeclarationOnly,
+      noCheck: testCase.noCheck,
+      noLib: testCase.noLib,
+      noEmit: testCase.noEmit,
+      lib: testCase.lib,
+      alwaysStrict: testCase.alwaysStrict,
+      sourceMap: testCase.sourceMap,
+      inlineSourceMap: testCase.inlineSourceMap,
+      downlevelIteration: testCase.downlevelIteration,
+      noEmitHelpers: testCase.noEmitHelpers,
+      noEmitOnError: testCase.noEmitOnError,
+      strict: testCase.strict,
+      allowJs: testCase.allowJs,
+      allowUnreachableCode: testCase.allowUnreachableCode,
+      checkJs: testCase.checkJs,
+      noImplicitAny: testCase.noImplicitAny,
+      noUnusedLocals: testCase.noUnusedLocals,
+      noUnusedParameters: testCase.noUnusedParameters,
+      skipLibCheck: testCase.skipLibCheck,
+      strictPropertyInitialization: testCase.strictPropertyInitialization,
+      importHelpers: testCase.importHelpers,
+      esModuleInterop: testCase.esModuleInterop,
+      useDefineForClassFields: testCase.useDefineForClassFields,
+      experimentalDecorators: testCase.experimentalDecorators,
+      emitDecoratorMetadata: testCase.emitDecoratorMetadata,
+      strictNullChecks: testCase.strictNullChecks,
+      exactOptionalPropertyTypes: testCase.exactOptionalPropertyTypes,
+      jsx: testCase.jsx,
+      jsxFactory: testCase.jsxFactory,
+      jsxFragmentFactory: testCase.jsxFragmentFactory,
+      jsxImportSource: testCase.jsxImportSource,
+      moduleResolution: testCase.moduleResolution,
+      moduleDetection: testCase.moduleDetection,
+      preserveConstEnums: testCase.preserveConstEnums,
+      verbatimModuleSyntax: testCase.verbatimModuleSyntax,
+      rewriteRelativeImportExtensions: testCase.rewriteRelativeImportExtensions,
+      isolatedModules: testCase.isolatedModules,
+      importsNotUsedAsValues: testCase.importsNotUsedAsValues,
+      preserveValueImports: testCase.preserveValueImports,
+      removeComments: testCase.removeComments,
+      stripInternal: testCase.stripInternal,
+      baseUrl: testCase.baseUrl,
+      outFile: testCase.outFile,
+      outDir: testCase.outDir,
+      declarationDir: testCase.declarationDir,
+      rootDir: testCase.rootDir,
+      declarationMap: testCase.declarationMap,
+      sourceFiles: testCase.sourceFiles,
+      rootFileNames: testCase.rootFileNames,
+      links: testCase.links,
+    };
+
+    // The oracle result never feeds TSZ arguments or output selection. Both
+    // external processes receive the same authored options and independently
+    // staged source graph, then their complete product maps are compared.
+    const [oracleResult, tszResult] = await Promise.all([
+      oracleTranspiler.transpile(testCase.source, testCase.target, testCase.module, transpileOptions),
+      tszTranspiler.transpile(testCase.source, testCase.target, testCase.module, transpileOptions),
+    ]);
+
+    const outcomeComparison = compareCompilerOutcomes(oracleResult.outcome, tszResult.outcome);
+    result.artifactState = compilerArtifactState(oracleResult.outcome, tszResult.outcome);
+    result.outcomeMatch = outcomeComparison.match;
+    result.outcomeError = outcomeComparison.error;
+    const jsComparison = compareCanonicalProductSets(oracleResult.jsProducts, tszResult.jsProducts);
+    const dtsComparison = compareCanonicalProductSets(oracleResult.dtsProducts, tszResult.dtsProducts);
+    const jsObservation = artifactSurfaceObservation(
+      result.artifactState,
+      selected.js,
+      outcomeComparison.match,
+      jsComparison.match,
     );
-    let tszJs: string;
-    let tszDts: string | null = null;
+    const dtsObservation = artifactSurfaceObservation(
+      result.artifactState,
+      selected.dts,
+      outcomeComparison.match,
+      dtsComparison.match,
+    );
 
-    const cached = cache.get(cacheKey);
-    const sourceHash = hashString(sourceKey);
-
-    if (cached && cached.hash === sourceHash) {
-      tszJs = cached.jsOutput;
-      tszDts = cached.dtsOutput;
-    } else {
-      const transpileResult = await transpiler.transpile(testCase.source, testCase.target, testCase.module, {
-        sourceFileName: testCase.sourceFileName ?? undefined,
-        declaration: emitDeclarations,
-        lib: testCase.lib,
-        alwaysStrict: testCase.alwaysStrict,
-        sourceMap: testCase.sourceMap,
-        inlineSourceMap: testCase.inlineSourceMap,
-        downlevelIteration: testCase.downlevelIteration,
-        noEmitHelpers: testCase.noEmitHelpers,
-        noEmitOnError: testCase.noEmitOnError,
-        importHelpers: testCase.importHelpers,
-        esModuleInterop: testCase.esModuleInterop,
-        useDefineForClassFields: testCase.useDefineForClassFields,
-        experimentalDecorators: testCase.experimentalDecorators,
-        emitDecoratorMetadata: testCase.emitDecoratorMetadata,
-        strictNullChecks: testCase.strictNullChecks,
-        exactOptionalPropertyTypes: testCase.exactOptionalPropertyTypes,
-        jsx: testCase.jsx,
-        jsxFactory: testCase.jsxFactory,
-        jsxFragmentFactory: testCase.jsxFragmentFactory,
-        jsxImportSource: testCase.jsxImportSource,
-        moduleDetection: testCase.moduleDetection,
-        preserveConstEnums: testCase.preserveConstEnums,
-        verbatimModuleSyntax: testCase.verbatimModuleSyntax,
-        rewriteRelativeImportExtensions: testCase.rewriteRelativeImportExtensions,
-        isolatedModules: testCase.isolatedModules,
-        importsNotUsedAsValues: testCase.importsNotUsedAsValues,
-        preserveValueImports: testCase.preserveValueImports,
-        removeComments: testCase.removeComments,
-        stripInternal: testCase.stripInternal,
-        baseUrl: testCase.baseUrl,
-        outFile: testCase.outFile,
-        outDir: testCase.outDir,
-        declarationDir: testCase.declarationDir,
-        rootDir: testCase.rootDir,
-        declarationMap: testCase.declarationMap,
-        sourceFiles: testCase.sourceFiles,
-        links: testCase.links,
-        expectedJsFileName: testCase.expectedJsFileName ?? undefined,
-        expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
-        expectedJsContent: testCase.expectedJs,
-        expectedDtsContent: testCase.expectedDts,
-        noDtsEmitExpected: testCase.noDtsEmitExpected,
-      });
-      tszJs = transpileResult.js;
-      tszDts = transpileResult.dts || null;
-      cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: tszDts });
+    result.jsMatch = jsObservation.match;
+    result.dtsMatch = dtsObservation.match;
+    result.jsProductMatch = jsObservation.productMatch;
+    result.dtsProductMatch = dtsObservation.productMatch;
+    if (selected.js && !jsComparison.match) {
+      result.jsProductError = formatProductComparison(jsComparison, config.verbose);
     }
-
-    // When the baseline says "missing from original emit" for a JS-like file
-    // (noJsEmitExpected) and we ran with type checking (declaration mode), the
-    // compiler should produce no JS output (e.g., --noEmitOnError with type
-    // errors). Verify that tsz also produced no output. In JS-only mode
-    // (--noCheck), the noCheck emit content is the expected output, so we fall
-    // through to normal comparison. A DTS-only "missing" marker (e.g. a
-    // cross-file declaration merge that can't be serialized) does NOT suppress
-    // JS emit — tsc still writes the JS in that case.
-    if (!config.dtsOnly && testCase.noJsEmitExpected && emitDeclarations) {
-      const actualTrimmed = tszJs.replace(/\r\n/g, '\n').trim();
-      if (actualTrimmed === '') {
-        result.jsMatch = true; // Both sides agree: no output
-      } else {
-        result.jsMatch = false;
-        result.jsError = 'Expected no JS output (noEmitOnError), but tsz produced output';
-      }
-    } else if (!config.dtsOnly && testCase.expectedJs !== null && !testCase.emitDeclarationOnly) {
-      // Strip sourceMappingURL lines entirely: our CLI may append its own
-      // sourceMappingURL while tsc baselines use inline data URLs or different
-      // filenames, causing line-count mismatches. Since we test code emission
-      // correctness (not source-map generation), stripping is safe.
-      const stripSourceMapUrl = (s: string) =>
-        s.split('\n').filter(l => !l.trimStart().startsWith('//# sourceMappingURL=')).join('\n');
-      // Normalize duplicate "use strict" in preamble: tsc emits double "use strict"
-      // when the source already has one and alwaysStrict is enabled. Our emitter may
-      // emit only one. Normalize both sides to single "use strict" for comparison.
-      const dedupeUseStrict = (s: string): string => {
-        const lines = s.split('\n');
-        const out: string[] = [];
-        let seen = false;
-        let preambleDone = false;
-        for (const line of lines) {
-          const t = line.trim();
-          const isUS = t === '"use strict";' || t === "'use strict';";
-          if (!preambleDone && isUS) {
-            if (!seen) { out.push(line); seen = true; }
-            continue;
-          }
-          if (t !== '') preambleDone = true;
-          out.push(line);
-        }
-        return out.join('\n');
-      };
-      const expected = dedupeUseStrict(stripSourceMapUrl(testCase.expectedJs.replace(/\r\n/g, '\n').trim()));
-      const actual = dedupeUseStrict(stripSourceMapUrl(tszJs.replace(/\r\n/g, '\n').trim()));
-      result.jsMatch = expected === actual;
-
-      if (!result.jsMatch) {
-        // Fallback 1: normalize comments and compare again.
-        if (normalizeComments(expected) === normalizeComments(actual)) {
-          result.jsMatch = true; // comment-only difference
-        }
-        // Fallback 2: normalize comments + whitespace (tabs vs spaces, line breaks)
-        else if (normalizeWhitespace(normalizeComments(expected)) === normalizeWhitespace(normalizeComments(actual))) {
-          result.jsMatch = true; // whitespace-only difference
-        }
-        else {
-          result.jsError = config.verbose ? getEmitDiff(expected, actual) : getEmitDiffSummary(expected, actual);
-        }
-      }
+    if (selected.dts && !dtsComparison.match) {
+      result.dtsProductError = formatProductComparison(dtsComparison, config.verbose);
     }
-
-    // For noEmitExpected tests in declaration mode, also verify no DTS output.
-    if (!config.jsOnly && testCase.noDtsEmitExpected && emitDeclarations) {
-      const actualDtsTrimmed = (tszDts ?? '').replace(/\r\n/g, '\n').trim();
-      if (actualDtsTrimmed === '') {
-        result.dtsMatch = true; // Both sides agree: no declaration output
-      } else {
-        result.dtsMatch = false;
-        result.dtsError = 'Expected no DTS output (noEmitOnError), but tsz produced output';
-      }
-    } else if (!config.jsOnly && testCase.expectedDts !== null) {
-      if (tszDts !== null) {
-        const expected = testCase.expectedDts.replace(/\r\n/g, '\n').trim();
-        const actual = tszDts.replace(/\r\n/g, '\n').trim();
-        result.dtsMatch = expected === actual;
-
-        if (!result.dtsMatch) {
-          if (normalizeComments(expected) === normalizeComments(actual)) {
-            result.dtsMatch = true;
-          } else if (normalizeWhitespace(normalizeComments(expected)) === normalizeWhitespace(normalizeComments(actual))) {
-            result.dtsMatch = true;
-          } else {
-            result.dtsError = config.verbose ? getEmitDiff(expected, actual) : getEmitDiffSummary(expected, actual);
-          }
-        }
-      } else {
-        result.dtsMatch = null;
-      }
+    if (selected.js && !jsObservation.match) {
+      result.jsError = outcomeComparison.error ?? result.jsProductError;
+    }
+    if (selected.dts && !dtsObservation.match) {
+      result.dtsError = outcomeComparison.error ?? result.dtsProductError;
     }
 
     result.elapsed = Date.now() - start;
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e);
     const summarized = summarizeErrorMessage(errorMsg);
-    result.timeout = errorMsg === 'TIMEOUT';
-    if (!config.dtsOnly) {
-      result.jsMatch = false;
+    result.timeout = errorMsg.startsWith('TIMEOUT:');
+    result.artifactState = result.timeout ? 'timeout' : 'crash';
+    const jsObservation = artifactSurfaceObservation(result.artifactState, selected.js, null, null);
+    const dtsObservation = artifactSurfaceObservation(result.artifactState, selected.dts, null, null);
+    result.jsMatch = jsObservation.match;
+    result.dtsMatch = dtsObservation.match;
+    if (selected.js) {
       result.jsError = result.timeout ? 'TIMEOUT' : summarized;
     }
-    if (!config.jsOnly) {
-      result.dtsMatch = false;
+    if (selected.dts) {
       result.dtsError = result.timeout ? 'TIMEOUT' : summarized;
     }
     result.elapsed = Date.now() - start;
@@ -1297,21 +772,31 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
 // Display Helpers
 // ============================================================================
 
-function resultStatusIcon(result: TestResult, dtsOnly: boolean): string {
-  if (result.timeout) return pc.yellow('T');
+function resultStatusIcon(result: TestResult, config: Config): string {
   if (result.skipped) return pc.dim('S');
-  if (dtsOnly) {
-    if (result.dtsMatch === true) return pc.green('✓');
-    if (result.dtsMatch === false) return pc.red('✗');
-    return pc.dim('-');
+  const statuses = config.dtsOnly
+    ? [artifactStatus(result.artifactState, result.dtsMatch)]
+    : [
+        artifactStatus(result.artifactState, result.jsMatch),
+        ...(!config.jsOnly && result.dtsMatch !== null
+          ? [artifactStatus(result.artifactState, result.dtsMatch)]
+          : []),
+      ];
+  const status = (['fail', 'crash', 'timeout', 'incomplete', 'unsupported', 'pass', 'skip'] as const)
+    .find(candidate => statuses.includes(candidate)) ?? 'skip';
+  switch (status) {
+    case 'pass': return pc.green('✓');
+    case 'fail': return pc.red('✗');
+    case 'timeout': return pc.yellow('T');
+    case 'crash': return pc.red('C');
+    case 'incomplete': return pc.yellow('I');
+    case 'unsupported': return pc.yellow('U');
+    case 'skip': return pc.dim('-');
   }
-  if (result.jsMatch === false || result.dtsMatch === false) return pc.red('✗');
-  if (result.jsMatch === true || result.dtsMatch === true) return pc.green('✓');
-  return pc.dim('-');
 }
 
 function printVerboseResult(result: TestResult, config: Config) {
-  console.log(`  [${resultStatusIcon(result, config.dtsOnly)}] ${result.name} (${result.elapsed}ms)`);
+  console.log(`  [${resultStatusIcon(result, config)}] ${result.name} (${result.elapsed}ms)`);
   if (config.dtsOnly && result.dtsError && result.dtsMatch === false) {
     console.log(result.dtsError);
   } else if (result.jsError && result.jsMatch === false) {
@@ -1325,6 +810,26 @@ function progressBar(current: number, total: number, width: number = 30): string
   const empty = width - filled;
   const bar = pc.green('█'.repeat(filled)) + pc.dim('░'.repeat(empty));
   return `${bar} ${(pct * 100).toFixed(1)}% | ${current.toLocaleString()}/${total.toLocaleString()}`;
+}
+
+function printSurfaceSummary(
+  label: string,
+  counts: ArtifactStatusCounts,
+  products: ArtifactProductCounts,
+): void {
+  const total = artifactCandidateTotal(counts);
+  const pct = total > 0 ? (counts.pass / total * 100).toFixed(1) : '0.0';
+  console.log(pc.bold(`${label}:`));
+  console.log(`  ${pc.green(`Passed: ${counts.pass}`)}`);
+  console.log(`  ${pc.red(`Failed: ${total - counts.pass}`)}`);
+  console.log(`  ${pc.red(`Product mismatches: ${products.mismatch}`)}`);
+  console.log(`  ${pc.dim(`Product comparisons unavailable: ${products.unmeasured}`)}`);
+  console.log(`  ${pc.yellow(`Incomplete: ${counts.incomplete}`)}`);
+  console.log(`  ${pc.yellow(`Unsupported: ${counts.unsupported}`)}`);
+  console.log(`  ${pc.red(`Crashed: ${counts.crash}`)}`);
+  console.log(`  ${pc.yellow(`Timed out: ${counts.timeout}`)}`);
+  console.log(`  ${pc.dim(`Skipped: ${counts.skip}`)}`);
+  console.log(`  ${pc.yellow(`Pass Rate: ${pct}% (${counts.pass}/${total})`)}`);
 }
 
 // ============================================================================
@@ -1397,6 +902,9 @@ Options:
     }
   }
 
+  if (config.jsOnly && config.dtsOnly) {
+    throw new Error('--js-only and --dts-only are mutually exclusive');
+  }
   return config;
 }
 
@@ -1417,16 +925,12 @@ async function main() {
   if (config.filter) console.log(pc.dim(`  Filter: ${config.filter}`));
   console.log(pc.dim(`  Mode: ${config.jsOnly ? 'JS only' : config.dtsOnly ? 'DTS only' : 'JS + DTS'}`));
   console.log(pc.dim(`  Workers: ${config.concurrency} parallel`));
-  console.log(pc.dim(`  Engine: Native CLI (${config.jsOnly ? 'emit-only, --noCheck --noLib' : 'with type checking'})`));
+  console.log(pc.dim('  Engine: TSZ CLI against pinned TypeScript 7 external-process oracle'));
   console.log(sep);
   console.log('');
 
-  const transpiler = new CliTranspiler(config.timeoutMs);
-
-  // Ensure child processes are killed on unexpected exit
-  const cleanup = () => { transpiler.terminate(); };
-  process.on('SIGINT', () => { cleanup(); process.exit(130); });
-  process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+  const oracle = resolvePinnedOracle(ROOT_DIR);
+  console.log(pc.dim(`  Oracle: TypeScript ${oracle.provenance.version} (${oracle.provenance.fingerprint})`));
 
   console.log(pc.dim('Discovering test cases...'));
   // Discover more tests than needed when offset is used, then slice
@@ -1436,42 +940,52 @@ async function main() {
     testCases = testCases.slice(config.offset, config.offset + config.maxTests);
   }
   console.log(pc.dim(`Found ${testCases.length} test cases`));
+  if (testCases.length === 0) {
+    throw new Error(
+      `No canonical emit test cases selected (filter=${config.filter || '<none>'}, offset=${config.offset})`,
+    );
+  }
   console.log('');
 
-  // Counters
-  let jsPass = 0, jsFail = 0, jsSkip = 0, jsTimeout = 0;
-  let dtsPass = 0, dtsFail = 0, dtsSkip = 0;
+  const oracleTranspiler = new CliTranspiler(config.timeoutMs, {
+    binaryPath: oracle.binaryPath,
+    label: 'typescript-7-oracle',
+    diagnosticWitnessProvider: 'typescript-7-api',
+  });
+  const tszTranspiler = new CliTranspiler(config.timeoutMs);
+
+  // Ensure child processes are killed on unexpected exit.
+  const cleanup = () => {
+    oracleTranspiler.terminate();
+    tszTranspiler.terminate();
+  };
+  process.on('SIGINT', () => { cleanup(); process.exit(130); });
+  process.on('SIGTERM', () => { cleanup(); process.exit(143); });
+
+  // Per-status counters preserve the candidate domain without calling typed
+  // terminal observations product mismatches.
+  const jsCounts = emptyArtifactStatusCounts();
+  const dtsCounts = emptyArtifactStatusCounts();
+  const jsProducts = emptyArtifactProductCounts();
+  const dtsProducts = emptyArtifactProductCounts();
   const failures: TestResult[] = [];
   const allTestResults: TestResult[] = [];
   const startTime = Date.now();
   let completed = 0;
 
   function recordResult(result: TestResult) {
+    ensureMeasuredArtifact(result, { js: result.jsSelected, dts: result.dtsSelected });
     completed++;
     allTestResults.push(result);
-    if (result.skipped) {
-      jsSkip++;
-    } else if (result.timeout) {
-      jsTimeout++;
-      jsFail++;
+    const jsStatus = artifactStatus(result.artifactState, result.jsMatch);
+    const dtsStatus = artifactStatus(result.artifactState, result.dtsMatch);
+    recordArtifactStatus(jsCounts, jsStatus);
+    recordArtifactStatus(dtsCounts, dtsStatus);
+    recordArtifactProduct(jsProducts, result.jsSelected, result.jsProductMatch);
+    recordArtifactProduct(dtsProducts, result.dtsSelected, result.dtsProductMatch);
+    if (![jsStatus, dtsStatus].every(status => status === 'pass' || status === 'skip')) {
       failures.push(result);
-    } else if (result.jsMatch === true) {
-      jsPass++;
-    } else if (result.jsMatch === false) {
-      jsFail++;
-      failures.push(result);
-    } else {
-      jsSkip++;
     }
-
-    if (result.dtsMatch === true) dtsPass++;
-    else if (result.dtsMatch === false) {
-      dtsFail++;
-      if (result.jsMatch !== false && !result.timeout) {
-        failures.push(result);
-      }
-    }
-    else dtsSkip++;
   }
 
   // Progress bar (non-verbose)
@@ -1494,7 +1008,7 @@ async function main() {
     let printedUpTo = 0;
 
     await Promise.all(testCases.map((tc, i) => limit(async () => {
-      const result = await runTest(transpiler, tc, config);
+      const result = await runTest(oracleTranspiler, tszTranspiler, tc, config);
       results[i] = result;
       recordResult(result);
       // Flush contiguously completed results in order
@@ -1506,15 +1020,14 @@ async function main() {
   } else {
     // Non-verbose: parallel with progress bar
     await Promise.all(testCases.map(tc => limit(async () => {
-      const result = await runTest(transpiler, tc, config);
+      const result = await runTest(oracleTranspiler, tszTranspiler, tc, config);
       recordResult(result);
       printProgress();
     })));
   }
 
   // Cleanup
-  transpiler.terminate();
-  saveCache();
+  cleanup();
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -1525,23 +1038,11 @@ async function main() {
   console.log(sep);
 
   if (!config.dtsOnly) {
-    const jsTotal = jsPass + jsFail;
-    const jsPct = jsTotal > 0 ? (jsPass / jsTotal * 100).toFixed(1) : '0.0';
-    console.log(pc.bold('JavaScript Emit:'));
-    console.log(`  ${pc.green(`Passed: ${jsPass}`)}`);
-    console.log(`  ${pc.red(`Failed: ${jsFail}`)}${jsTimeout > 0 ? ` (${jsTimeout} timeouts)` : ''}`);
-    console.log(`  ${pc.dim(`Skipped: ${jsSkip}`)}`);
-    console.log(`  ${pc.yellow(`Pass Rate: ${jsPct}% (${jsPass}/${jsTotal})`)}`);
+    printSurfaceSummary('JavaScript Emit', jsCounts, jsProducts);
   }
 
-  if (!config.jsOnly && (dtsPass + dtsFail) > 0) {
-    const dtsTotal = dtsPass + dtsFail;
-    const dtsPct = dtsTotal > 0 ? (dtsPass / dtsTotal * 100).toFixed(1) : '0.0';
-    console.log(pc.bold('Declaration Emit:'));
-    console.log(`  ${pc.green(`Passed: ${dtsPass}`)}`);
-    console.log(`  ${pc.red(`Failed: ${dtsFail}`)}`);
-    console.log(`  ${pc.dim(`Skipped: ${dtsSkip}`)}`);
-    console.log(`  ${pc.yellow(`Pass Rate: ${dtsPct}% (${dtsPass}/${dtsTotal})`)}`);
+  if (!config.jsOnly && artifactCandidateTotal(dtsCounts) > 0) {
+    printSurfaceSummary('Declaration Emit', dtsCounts, dtsProducts);
   }
 
   const totalTests = testCases.length;
@@ -1549,10 +1050,10 @@ async function main() {
   console.log(pc.dim(`\nTime: ${elapsed}s (${rate} tests/sec)`));
   console.log(sep);
 
-  // Show first failures (excluding timeouts)
+  // Show first non-passes (excluding timeouts)
   const realFailures = failures.filter(f => !f.timeout);
   if (realFailures.length > 0 && !config.verbose) {
-    console.log(`\n${pc.bold('First failures:')}`);
+    console.log(`\n${pc.bold('First non-passes:')}`);
     for (const f of realFailures) {
       const diffInfo = f.jsError ? ` ${pc.dim(`(${f.jsError})`)}` : '';
       console.log(`  ${pc.red('✗')} ${f.name}${diffInfo}`);
@@ -1577,43 +1078,56 @@ async function main() {
       name: string;
       baselineFile: string;
       testPath: string | null;
-      jsStatus: 'pass' | 'fail' | 'skip' | 'timeout';
-      dtsStatus: 'pass' | 'fail' | 'skip' | 'timeout';
+      artifactState: ArtifactState;
+      jsSelected: boolean;
+      dtsSelected: boolean;
+      outcomeMatch: boolean | null;
+      jsMatch: boolean | null;
+      dtsMatch: boolean | null;
+      jsProductMatch: boolean | null;
+      dtsProductMatch: boolean | null;
+      jsStatus: ArtifactStatus;
+      dtsStatus: ArtifactStatus;
+      outcomeError?: string;
       jsError?: string;
       dtsError?: string;
+      jsProductError?: string;
+      dtsProductError?: string;
       elapsed?: number;
     }> = [];
 
     for (const r of allTestResults) {
-      let jsStatus: 'pass' | 'fail' | 'skip' | 'timeout' = 'skip';
-      if (r.timeout) jsStatus = 'timeout';
-      else if (r.jsMatch === true) jsStatus = 'pass';
-      else if (r.jsMatch === false) jsStatus = 'fail';
-
-      let dtsStatus: 'pass' | 'fail' | 'skip' | 'timeout' = 'skip';
-      if (r.timeout) dtsStatus = 'timeout';
-      else if (r.dtsMatch === true) dtsStatus = 'pass';
-      else if (r.dtsMatch === false) dtsStatus = 'fail';
+      const jsStatus = artifactStatus(r.artifactState, r.jsMatch);
+      const dtsStatus = artifactStatus(r.artifactState, r.dtsMatch);
 
       const record: any = {
         name: r.name,
         baselineFile: r.name + '.js',
         testPath: r.testPath,
+        artifactState: r.artifactState,
+        jsSelected: r.jsSelected,
+        dtsSelected: r.dtsSelected,
+        outcomeMatch: r.outcomeMatch,
+        jsMatch: r.jsMatch,
+        dtsMatch: r.dtsMatch,
+        jsProductMatch: r.jsProductMatch,
+        dtsProductMatch: r.dtsProductMatch,
         jsStatus,
         dtsStatus,
       };
+      if (r.outcomeError) record.outcomeError = r.outcomeError;
       if (r.jsError) record.jsError = r.jsError;
       if (r.dtsError) record.dtsError = r.dtsError;
+      if (r.jsProductError) record.jsProductError = r.jsProductError;
+      if (r.dtsProductError) record.dtsProductError = r.dtsProductError;
       if (r.elapsed !== undefined) record.elapsed = r.elapsed;
       allResults.push(record);
     }
 
-    const jsTotal = jsPass + jsFail;
-    const dtsTotal = dtsPass + dtsFail;
-    // Stamp the measured tree so refresh-readme.py can distinguish a current
-    // reading from a stale local artifact (zero-drift downward writes are
-    // legitimate). Degrades to undefined off a git checkout rather than failing
-    // the emit run.
+    const jsTotal = artifactCandidateTotal(jsCounts);
+    const dtsTotal = artifactCandidateTotal(dtsCounts);
+    // Stamp the measured tree so observational artifacts retain provenance.
+    // Degrades to undefined off a git checkout rather than failing the emit run.
     let gitSha: string | undefined;
     try {
       gitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -1624,22 +1138,39 @@ async function main() {
       gitSha = undefined;
     }
     const detail = {
+      detailSchemaVersion: 2,
       timestamp: new Date().toISOString(),
       ...(gitSha ? { git_sha: gitSha } : {}),
+      oracle: oracle.provenance,
       detailFingerprint: detailRowsFingerprint(allResults),
       detailResultCount: allResults.length,
       summary: {
         jsTotal,
-        jsPass,
-        jsFail,
-        jsSkip,
-        jsTimeout,
-        jsPassRate: jsTotal > 0 ? Math.round(jsPass / jsTotal * 1000) / 10 : 0,
+        jsPass: jsCounts.pass,
+        jsFail: jsTotal - jsCounts.pass,
+        jsSkip: jsCounts.skip,
+        jsCompleteMismatch: jsCounts.fail,
+        jsUnsupported: jsCounts.unsupported,
+        jsTimeout: jsCounts.timeout,
+        jsCrash: jsCounts.crash,
+        jsIncomplete: jsCounts.incomplete,
+        jsProductMatch: jsProducts.match,
+        jsProductMismatch: jsProducts.mismatch,
+        jsProductUnmeasured: jsProducts.unmeasured,
+        jsPassRate: jsTotal > 0 ? Math.round(jsCounts.pass / jsTotal * 1000) / 10 : 0,
         dtsTotal,
-        dtsPass,
-        dtsFail,
-        dtsSkip,
-        dtsPassRate: dtsTotal > 0 ? Math.round(dtsPass / dtsTotal * 1000) / 10 : 0,
+        dtsPass: dtsCounts.pass,
+        dtsFail: dtsTotal - dtsCounts.pass,
+        dtsSkip: dtsCounts.skip,
+        dtsCompleteMismatch: dtsCounts.fail,
+        dtsUnsupported: dtsCounts.unsupported,
+        dtsTimeout: dtsCounts.timeout,
+        dtsCrash: dtsCounts.crash,
+        dtsIncomplete: dtsCounts.incomplete,
+        dtsProductMatch: dtsProducts.match,
+        dtsProductMismatch: dtsProducts.mismatch,
+        dtsProductUnmeasured: dtsProducts.unmeasured,
+        dtsPassRate: dtsTotal > 0 ? Math.round(dtsCounts.pass / dtsTotal * 1000) / 10 : 0,
       },
       results: allResults,
     };
@@ -1650,7 +1181,7 @@ async function main() {
     console.log(pc.dim(`\nJSON results written to ${outPath}`));
   }
 
-  process.exit(jsFail > 0 || dtsFail > 0 ? 1 : 0);
+  process.exit(artifactHasNonPass(jsCounts) || artifactHasNonPass(dtsCounts) ? 1 : 0);
 }
 
 main().catch(err => {

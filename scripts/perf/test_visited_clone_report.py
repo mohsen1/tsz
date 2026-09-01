@@ -85,21 +85,9 @@ class VisitedCloneReportTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["total"], 1)
         self.assertEqual(payload["hits"][0]["name"], "visited_modules")
 
-    def test_solver_infer_pattern_avoids_branch_local_visited_clone(self):
-        candidates = self.module.scan(
-            [ROOT / "crates/tsz-solver/src/evaluation/evaluate_rules"]
-        )
-
-        infer_pattern_hits = [
-            candidate
-            for candidate in candidates
-            if candidate.path.endswith("infer_pattern.rs")
-        ]
-        self.assertEqual(infer_pattern_hits, [])
-
-    def test_lsp_completions_avoid_branch_local_visited_clone(self):
-        candidates = self.module.scan([ROOT / "crates/tsz-lsp/src/completions"])
-
+    def test_replacement_compiler_avoids_branch_local_visited_clone(self):
+        self.assertEqual(self.module.DEFAULT_ROOTS, ("crates/tsz-core/src",))
+        candidates = self.module.scan([ROOT / "crates/tsz-core/src"])
         self.assertEqual(candidates, [])
 
 

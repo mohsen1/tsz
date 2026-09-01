@@ -980,12 +980,6 @@ fn test_mutable_property_split_accessor_wider_write() {
     // string) }; const b: { get x(): string; set x(v: string | number) } = a`
     // is accepted by tsc.
     assert!(checker.is_subtype_of(obj_normal, obj_split));
-
-    // Sound Mode opts back into the contravariant write check.
-    let mut sound_checker = SubtypeChecker::new(&interner);
-    sound_checker.check_split_accessor_writes = true;
-    assert!(sound_checker.is_subtype_of(obj_split, obj_normal));
-    assert!(!sound_checker.is_subtype_of(obj_normal, obj_split));
 }
 
 #[test]

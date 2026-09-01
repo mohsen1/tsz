@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "pinned_typescript": "7.0.2",
+  "common_flags": [
+    "--strict",
+    "--target",
+    "es2022",
+    "--module",
+    "esnext",
+    "--pretty",
+    "false"
+  ],
+  "rust_span_length_test": "assignment_uses_structured_relation_failure",
+  "cases": [
+    {
+      "name": "declarations-literal-widening",
+      "family": "declarations and literal widening",
+      "mode": "diagnostics",
+      "source": "cases/declarations-literal-widening.ts"
+    },
+    {
+      "name": "annotations-assignment",
+      "family": "annotations and assignment",
+      "mode": "diagnostics",
+      "source": "cases/annotations-assignment.ts"
+    },
+    {
+      "name": "function-call",
+      "family": "function calls",
+      "mode": "diagnostics",
+      "source": "cases/function-call.ts"
+    },
+    {
+      "name": "function-return",
+      "family": "function returns",
+      "mode": "diagnostics",
+      "source": "cases/function-return.ts"
+    },
+    {
+      "name": "object-property",
+      "family": "object properties",
+      "mode": "diagnostics",
+      "source": "cases/object-property.ts"
+    },
+    {
+      "name": "union-success",
+      "family": "union success",
+      "mode": "diagnostics",
+      "source": "cases/union-success.ts"
+    },
+    {
+      "name": "javascript-emit",
+      "family": "JavaScript emit",
+      "mode": "emit",
+      "source": "cases/javascript-emit.ts",
+      "outputs": [
+        "case.js"
+      ]
+    }
+  ]
+}

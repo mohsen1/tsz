@@ -217,7 +217,29 @@ import {
     parseDiagnosticLine("src/a.ts:5:6 - error TS2322: bad."),
     { path: "src/a.ts", line: 5, column: 6, code: "TS2322" },
   );
+  assert.deepEqual(
+    parseDiagnosticLine("tsc: error TS18003: No inputs were found in config file."),
+    { path: null, line: null, column: null, code: "TS18003" },
+    "pathless global diagnostics must retain their code without inventing a location",
+  );
   assert.equal(parseDiagnosticLine("noise without a location"), null);
+}
+
+// Pathless config diagnostics are still structured aggregator input: they
+// retain source attribution, code/subsystem routing, and a null location.
+{
+  const agg = aggregateRowDeltas([
+    "tsc: error TS18003: No inputs were found in config file.",
+  ]);
+  assert.deepEqual(agg.codes, ["TS18003"]);
+  assert.deepEqual(agg.codesBySource.tsc, ["TS18003"]);
+  assert.deepEqual(agg.firstLocation, {
+    path: null,
+    line: null,
+    column: null,
+    code: "TS18003",
+  });
+  assert.equal(agg.reductionCandidates.length, 1);
 }
 
 // Linear scaling property: doubling the row count + diagnostic count must

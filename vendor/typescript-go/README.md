@@ -26,7 +26,7 @@ node scripts/setup/sync-typescript-diagnostics.mjs --check
 ```
 
 `--write` expands the exact vendored locale bytes into
-`crates/tsz-cli/src/locales/` and regenerates the merged Rust diagnostic
+`crates/tsz-core/data/locales/` and regenerates the merged Rust diagnostic
 catalog. `--check` verifies the pin metadata, every vendored hash, every
 expanded locale, and every generated diagnostic file without writing.
 

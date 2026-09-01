@@ -15,9 +15,7 @@ _TSZ_CI_FULL_SUITES=(
   node-harness-prep
   lint
   unit
-  checker-integration
   lsp-e2e
-  wasm-all
   conformance
   conformance-aggregate
   emit-shard
@@ -80,10 +78,7 @@ ci_suite_needs_group() {
       [[ "$suite" == "lint" ]]
       ;;
     unit)
-      [[ "$suite" == "unit" || "$suite" == "checker-integration" ]]
-      ;;
-    wasm)
-      [[ "$suite" == "wasm-all" ]]
+      [[ "$suite" == "unit" ]]
       ;;
     node)
       [[ "$suite" == "lint" || "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
@@ -99,7 +94,7 @@ ci_suite_needs_group() {
 
 ci_suite_needs_rust_compile() {
   case "$1" in
-    all|full|bench|lint|unit|checker-integration|wasm-all|dist-binaries)
+    all|full|bench|lint|unit|dist-binaries)
       return 0
       ;;
     *)
@@ -118,7 +113,6 @@ ci_suite_needs_rust_compile() {
 #   scripts-node-modules     - scripts/node_modules
 #   typescript-harness       - TypeScript/built/local
 #   typescript-node-modules  - TypeScript/node_modules
-#   wasm-pack-cache          - wasm-pack's wasm-bindgen CLI install cache
 #   dist-fast-commit         - commit-keyed dist-fast binary tarball
 #
 # Per-profile cargo target-dir caches (cargo-target-deps, etc.) are selected
@@ -133,9 +127,8 @@ ci_suite_caches() {
       # It does not read the TypeScript corpus or install npm packages.
       echo "cargo-home"
       ;;
-    unit|checker-integration)
-      # Full local build/unit flows may run tests that reference
-      # TypeScript/src/lib and tests/cases at runtime.
+    unit)
+      # Rewrite tests may read retained oracle assets at runtime.
       echo "cargo-home typescript-source"
       ;;
     dist-binaries)
@@ -147,10 +140,6 @@ ci_suite_caches() {
       # Bench builds an optimized tsz binary, reads the TypeScript corpus,
       # and uses npm's cache for pinned tsgo/tsc installs.
       echo "cargo-home typescript-source npm"
-      ;;
-    wasm-all)
-      # wasm-pack installs the matching wasm-bindgen CLI on demand.
-      echo "cargo-home typescript-source wasm-pack-cache"
       ;;
     lsp-e2e)
       # Reuses the dist-fast `tsz-lsp` binary artifact and a Node protocol
@@ -195,21 +184,18 @@ ci_suite_has_cache() {
 ci_suite_target_caches() {
   case "${1:-all}" in
     all|full)
-      echo "cargo-target-deps cargo-target-unit cargo-target-wasm"
+      echo "cargo-target-deps cargo-target-unit"
       ;;
     dist-binaries)
       echo "cargo-target-deps"
       ;;
-    unit|checker-integration)
+    unit)
       echo "cargo-target-unit"
       ;;
     lint)
       # The ci-lint target dir was more expensive to transfer than rebuild;
       # sccache handles cross-commit lint reuse.
       echo ""
-      ;;
-    wasm-all)
-      echo "cargo-target-wasm"
       ;;
     *)
       echo ""

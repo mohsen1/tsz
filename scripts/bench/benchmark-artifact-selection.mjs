@@ -6,6 +6,7 @@ import {
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
 import {
+  hasExactProjectEvidence,
   isGreen,
   isSpeedRatioEligible,
 } from "./row-utils.mjs";
@@ -50,7 +51,8 @@ function hasGreenCompatibilityEvidence(row) {
   const state = String(compatibility.state || "").toLowerCase();
   const exitClass = String(compatibility.exit_class || "").toLowerCase();
   const diagnosticStatus = String(compatibility.diagnostic_status || "").toLowerCase();
-  return state === "green"
+  return hasExactProjectEvidence(compatibility, row?.name)
+    && state === "green"
     && exitClass === "exit success"
     && (!diagnosticStatus || diagnosticStatus === "none");
 }

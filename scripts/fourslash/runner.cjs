@@ -47,13 +47,7 @@ const fs = require("fs");
 const os = require("os");
 const { fork } = require("child_process");
 const { patchSessionClient } = require("./runner-session-client.cjs");
-
-function isBaselineOnlyFailure(message) {
-    if (typeof message !== "string") return false;
-    return message.includes("New baseline created at tests/baselines/local/")
-        || message.includes("verifyIndentationAtCurrentPosition failed")
-        || message.includes("verifyCurrentLineContent");
-}
+const patchTestState = require("./test-worker-patch-test-state.cjs");
 
 // =============================================================================
 // Argument parsing
@@ -146,10 +140,6 @@ function parseArgs() {
 
 function discoverTests(testDir, filter) {
     const files = [];
-    const skipListFile = path.join(__dirname, "skip_if_failing.txt");
-    const skipList = fs.existsSync(skipListFile) 
-        ? new Set(fs.readFileSync(skipListFile, "utf-8").split("\n").filter(l => l.trim().length > 0)) 
-        : new Set();
 
     function walk(dir) {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -157,13 +147,10 @@ function discoverTests(testDir, filter) {
             const fullPath = path.join(dir, entry.name);
             if (entry.isDirectory()) {
                 walk(fullPath);
-            } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+            } else if (entry.isFile() && /\.tsx?$/.test(entry.name)) {
                 const relPath = fullPath.replace(/\\/g, "/");
-                const testName = path.basename(entry.name, ".ts");
                 if (!filter || relPath.includes(filter)) {
-                    if (!skipList.has(testName) && !skipList.has(relPath)) {
-                        files.push(relPath);
-                    }
+                    files.push(relPath);
                 }
             }
         }
@@ -306,13 +293,15 @@ function stringifyCompactSnapshot(snapshot) {
 // correctness pass. Only fail/timeout/unrun are non-passing; unrun additionally
 // means the run was incomplete.
 function summarizeResults(testResults) {
-    const counts = { passed: 0, slow: 0, failed: 0, xfailed: 0, timedOut: 0, unrun: 0 };
+    const counts = { passed: 0, slow: 0, failed: 0, timedOut: 0, unrun: 0 };
     for (const r of testResults || []) {
         switch (r.status) {
             case "pass": counts.passed++; break;
             case "slow": counts.slow++; break;
             case "fail": counts.failed++; break;
-            case "xfail": counts.xfailed++; break;
+            // Fail closed when reading an artifact produced by an older
+            // allowlist-capable runner. Canonical runs no longer emit xfail.
+            case "xfail": counts.failed++; break;
             case "timeout": counts.timedOut++; break;
             case "unrun": counts.unrun++; break;
             default: break;
@@ -328,7 +317,7 @@ function reportedPassCount(counts) {
 
 // Tests that produced a verdict (everything except the ones that never ran).
 function executedCount(counts) {
-    return counts.passed + counts.slow + counts.failed + counts.xfailed + counts.timedOut;
+    return counts.passed + counts.slow + counts.failed + counts.timedOut;
 }
 
 // A run is "bad" (non-zero exit) on any genuine failure, non-completion, or
@@ -336,6 +325,39 @@ function executedCount(counts) {
 // dependence in #17010.
 function runFailedCount(counts) {
     return counts.failed + counts.timedOut + counts.unrun;
+}
+
+const TERMINAL_RESULT_STATUSES = new Set(["pass", "slow", "fail", "xfail", "timeout", "unrun"]);
+
+function validateResultCoverage(selectedFiles, testResults) {
+    if (!Array.isArray(selectedFiles) || selectedFiles.length === 0) {
+        throw new Error("No fourslash tests were selected; refusing a vacuous result.");
+    }
+    if (!Array.isArray(testResults)) {
+        throw new Error("Fourslash runner produced no per-test results.");
+    }
+
+    const selected = new Set(selectedFiles);
+    if (selected.size !== selectedFiles.length) {
+        throw new Error("Fourslash selection contains duplicate test paths.");
+    }
+    const seen = new Set();
+    for (const result of testResults) {
+        if (!result || typeof result.file !== "string" || !selected.has(result.file)) {
+            throw new Error(`Fourslash result does not belong to the selection: ${result?.file || "<missing>"}`);
+        }
+        if (seen.has(result.file)) {
+            throw new Error(`Fourslash produced duplicate results for ${result.file}.`);
+        }
+        if (!TERMINAL_RESULT_STATUSES.has(result.status)) {
+            throw new Error(`Fourslash produced unknown status '${result.status}' for ${result.file}.`);
+        }
+        seen.add(result.file);
+    }
+    const missing = selectedFiles.filter(file => !seen.has(file));
+    if (missing.length > 0) {
+        throw new Error(`Fourslash produced no result for ${missing[0]}.`);
+    }
 }
 
 // Split per-test results into the compact snapshot buckets. `pass`/`slow` are
@@ -480,6 +502,14 @@ function slowestResults(testResults, limit = 10) {
 // Sequential runner (fallback)
 // =============================================================================
 
+function resetBridgeForNextTest(bridge, restartBridge) {
+    try {
+        bridge.resetSession();
+    } catch (error) {
+        return restartBridge(error);
+    }
+}
+
 async function runSequential(opts, testsToRun) {
     const tsDir = process.cwd();
     const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
@@ -487,18 +517,34 @@ async function runSequential(opts, testsToRun) {
     setupGlobals(tsDir);
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
 
-    const bridge = new TszServerBridge(opts.tszServerBinary);
+    let bridge = new TszServerBridge(opts.tszServerBinary);
     await bridge.start();
 
-    const TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+    let TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
     patchSessionClient(SessionClient, ts);
+
+    const restartBridge = async (reason) => {
+        const previousBridge = bridge;
+        const nextBridge = new TszServerBridge(opts.tszServerBinary);
+        try {
+            await nextBridge.start();
+        } catch (error) {
+            nextBridge.shutdown();
+            previousBridge.shutdown();
+            throw error;
+        }
+        bridge = nextBridge;
+        TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+        patchTestState(FourSlash, TszAdapter);
+        previousBridge.shutdown();
+        if (opts.verbose) console.log(`    restarted bridge after ${reason}`);
+    };
 
     const testType = 1; // FourSlashTestType.Server — tsz-server talks over stdio
     let passed = 0;
     let slow = 0;
     let failed = 0;
-    let xfailed = 0;
     const errors = [];
     const testResults = [];
 
@@ -512,7 +558,6 @@ async function runSequential(opts, testsToRun) {
         }
 
         try {
-            globalThis.__tszCurrentFourslashTestFile = testFile;
             const basePath = path.dirname(testFile);
             const content = Harness.IO.readFile(testFile);
             if (content == null) throw new Error(`Could not read test file: ${testFile}`);
@@ -535,23 +580,12 @@ async function runSequential(opts, testsToRun) {
                     console.log(`\x1b[32mPASS\x1b[0m (${elapsed}ms)`);
                 }
             }
-            if (!opts.verbose && (passed + slow + failed + xfailed) % 50 === 0) {
-                process.stdout.write(`\r  Progress: ${passed + slow + failed + xfailed}/${testsToRun.length} (${passed} passed, ${slow} slow, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
+            if (!opts.verbose && (passed + slow + failed) % 50 === 0) {
+                process.stdout.write(`\r  Progress: ${passed + slow + failed}/${testsToRun.length} (${passed} passed, ${slow} slow, ${failed} failed)`);
             }
         } catch (err) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
-            if (isBaselineOnlyFailure(errMsg)) {
-                passed++;
-                testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
-                if (opts.verbose) {
-                    console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
-                } else if ((passed + slow + failed + xfailed) % 50 === 0) {
-                    process.stdout.write(`\r  Progress: ${passed + slow + failed + xfailed}/${testsToRun.length} (${passed} passed, ${slow} slow, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
-                }
-                continue;
-            }
-
             // A did-not-complete timeout (bridge "Timeout") is its own outcome
             // ("timeout"); everything else is a genuine assertion failure
             // ("fail"). main re-derives the tally from testResults, so only the
@@ -566,6 +600,10 @@ async function runSequential(opts, testsToRun) {
                 console.log(`${tag} (${elapsed}ms)`);
                 console.log(`    ${errMsg.split("\n")[0]}`);
             }
+        } finally {
+            await resetBridgeForNextTest(bridge, resetError =>
+                restartBridge(`${testName} reset failed: ${resetError.message}`)
+            );
         }
     }
 
@@ -630,101 +668,6 @@ function loadHarnessModules(tsDir) {
     return { ts, Harness, FourSlash, HarnessLS, SessionClient: clientModule.SessionClient };
 }
 
-function patchTestState(FourSlash, TszAdapter) {
-    const TestState = FourSlash.TestState;
-    if (!TestState) throw new Error("Could not find TestState in FourSlash module");
-    TestState.prototype.getLanguageServiceAdapter = function(testType, cancellationToken, compilationOptions) {
-        const adapter = new TszAdapter(cancellationToken, compilationOptions);
-        // See the matching comment in test-worker-patch-test-state.cjs: this
-        // runner hardcodes testType=Server for every fixture (tsz-server only
-        // talks over stdio), so testType itself can't distinguish them here —
-        // use the file path the same way upstream's own FourSlashRunner does
-        // (non-recursive enumeration split by `tests/cases/fourslash` vs
-        // `tests/cases/fourslash/server`). A real tsserver Session defaults
-        // its project format options to `getDefaultFormatCodeSettings(this.host.newLine)`,
-        // and the harness's fake server host hardcodes that newLine to "\r\n"
-        // (harnessNewLine) regardless of OS — testType=Native gets "\n"
-        // directly via `ts.testFormatSettings` instead, which the wire
-        // protocol has no field to carry for testType=Server. Reproduce that
-        // one default only for `fourslash/server/` fixtures.
-        const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
-        if (currentTestFile.split(path.sep).join("/").includes("/fourslash/server/")) {
-            adapter.getLanguageService().setFormattingOptions({ newLineCharacter: "\r\n" });
-        }
-        return adapter;
-    };
-
-    // --- Patches for SourceFile/Program access ---
-    //
-    // Our adapter uses a SessionClient (server protocol); testType=Server is
-    // set at dispatch. We keep these stubs for callers that reach for
-    // getProgram()/getSourceFile()/getChecker() — with the real Program
-    // living in tsz-server (another process, Rust), the in-harness handles
-    // are not available. The checkPostEditInvariants implementation performs
-    // a protocol-level sanity check (getSyntacticDiagnostics round-trip) so
-    // that parse/incremental regressions in tsz-server still surface as
-    // fourslash failures.
-
-    TestState.prototype.checkPostEditInvariants = function() {
-        // Upstream invariants compare getSourceFile() / getNonBoundSourceFile()
-        // against a reparse of the file's current text. With tsz-server behind
-        // the wire protocol we have neither handle available, and the natural
-        // substitute — a getSyntacticDiagnostics round-trip after every edit —
-        // multiplies test time enough to time out multi-edit tests.
-        //
-        // Remaining post-edit protection: edit-batch-final responses that the
-        // test already issues (e.g. completions, diagnostics at the end) will
-        // still fail if tsz-server's incremental state is broken, so parse-
-        // corruption bugs still surface, just less eagerly. A proper
-        // tsz/postEditInvariants server endpoint is the right follow-up.
-    };
-
-    TestState.prototype.getChecker = function() {
-        const program = this.getProgram();
-        if (!program) return undefined;
-        const checker = program.getTypeChecker();
-        if (!checker) return undefined;
-        return this._checker || (this._checker = checker);
-    };
-
-    TestState.prototype.getSourceFile = function() {
-        const program = this.getProgram();
-        if (!program) return undefined;
-        const fileName = this.activeFile.fileName;
-        return program.getSourceFile(fileName);
-    };
-
-    const originalGetNode = TestState.prototype.getNode;
-    TestState.prototype.getNode = function() {
-        const sf = this.getSourceFile();
-        if (!sf) return undefined;
-        return originalGetNode.call(this);
-    };
-
-    const _origGetProgram = TestState.prototype.getProgram;
-    TestState.prototype.getProgram = function() {
-        if (!this._program) {
-            this._program = this.languageService.getProgram() || "missing";
-        }
-        if (this._program === "missing") {
-            if (!this._programStub) {
-                const compilationOptions = this.compilationOptions || {};
-                this._programStub = {
-                    getCompilerOptions: function() { return compilationOptions; },
-                    getTypeChecker: function() { return undefined; },
-                    getSourceFile: function() { return undefined; },
-                    getSourceFiles: function() { return []; },
-                    getCurrentDirectory: function() { return "/"; },
-                    getConfigFileParsingDiagnostics: function() { return []; },
-                };
-            }
-            return this._programStub;
-        }
-        return this._program;
-    };
-}
-
-
 // =============================================================================
 // Parallel runner
 // =============================================================================
@@ -752,7 +695,6 @@ async function runParallel(opts, testsToRun) {
     let passed = 0;
     let slow = 0;
     let failed = 0;
-    let xfailed = 0;
     let timedOut = 0;
     let unrun = 0;
     let completed = 0;
@@ -774,8 +716,8 @@ async function runParallel(opts, testsToRun) {
 
         function printProgress() {
             const total = testsToRun.length;
-            const done = passed + slow + failed + xfailed + timedOut + unrun;
-            const msg = `\r  Progress: ${done}/${total} (${passed} passed${slow > 0 ? `, ${slow} slow` : ""}, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""}${timedOut > 0 ? `, ${timedOut} timeout` : ""}${unrun > 0 ? `, ${unrun} unrun` : ""}) [${activeWorkers} workers]`;
+            const done = passed + slow + failed + timedOut + unrun;
+            const msg = `\r  Progress: ${done}/${total} (${passed} passed${slow > 0 ? `, ${slow} slow` : ""}, ${failed} failed${timedOut > 0 ? `, ${timedOut} timeout` : ""}${unrun > 0 ? `, ${unrun} unrun` : ""}) [${activeWorkers} workers]`;
             const padded = msg + " ".repeat(Math.max(0, lastProgressLen - msg.length));
             process.stdout.write(padded);
             lastProgressLen = msg.length;
@@ -846,23 +788,7 @@ async function runParallel(opts, testsToRun) {
                             passed++;
                             testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
                         }
-                    } else if (msg.xfailed) {
-                        xfailed++;
-                        testResults.push({ file: msg.testFile, status: "xfail", timedOut: false, error: msg.error || null, elapsed: msg.elapsed });
                     } else {
-                        if (isBaselineOnlyFailure(msg.error)) {
-                            passed++;
-                            testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
-                            completed++;
-
-                            const wp = workerProgress.get(msg.workerId);
-                            if (wp) wp.completed++;
-
-                            if (!opts.verbose && completed % 50 === 0) {
-                                printProgress();
-                            }
-                            return;
-                        }
                         // Disjoint: a did-not-complete timeout is counted as
                         // timedOut, an assertion failure as failed.
                         if (msg.timedOut) timedOut++; else failed++;
@@ -877,14 +803,12 @@ async function runParallel(opts, testsToRun) {
                     if (opts.verbose) {
                         const status = msg.passed
                             ? (msg.slow ? `\x1b[33mSLOW\x1b[0m` : `\x1b[32mPASS\x1b[0m`)
-                            : msg.xfailed
-                            ? `\x1b[36mXFAIL\x1b[0m`
                             : msg.timedOut
                             ? `\x1b[33mTIMEOUT\x1b[0m`
                             : `\x1b[31mFAIL\x1b[0m`;
                         const elapsed = msg.elapsed ? ` (${msg.elapsed}ms)` : "";
                         console.log(`  [W${msg.workerId}] ${msg.testName} ${status}${elapsed}`);
-                        if (!msg.passed && !msg.xfailed) {
+                        if (!msg.passed) {
                             if (process.env.FOURSLASH_FULL_ERROR) {
                                 console.log(msg.error);
                             } else {
@@ -1039,6 +963,8 @@ async function main() {
     if (opts.offset > 0) testsToRun = testsToRun.slice(opts.offset);
     if (opts.max > 0) testsToRun = testsToRun.slice(0, opts.max);
 
+    validateResultCoverage(testsToRun, testsToRun.map(file => ({ file, status: "unrun" })));
+
     const mode = opts.sequential ? "sequential" : `parallel (${Math.min(opts.workers, testsToRun.length)} workers)`;
     console.log("");
     console.log(`Found ${totalAvailable} test files in ${opts.testDir}`);
@@ -1056,10 +982,11 @@ async function main() {
     }
 
     const { errors } = results;
+    validateResultCoverage(testsToRun, results.testResults);
     // Derive the final tally from the per-test results — the single source of
     // truth — so the summary can never disagree with the recorded buckets.
     const counts = summarizeResults(results.testResults || []);
-    const { passed, slow, failed, xfailed, timedOut, unrun } = counts;
+    const { passed, slow, failed, timedOut, unrun } = counts;
     const reportedPassed = reportedPassCount(counts); // pass + slow
     const executed = executedCount(counts);           // excludes unrun
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1071,7 +998,6 @@ async function main() {
     const parts = [`${passed} passed`];
     if (slow > 0) parts.push(`${slow} slow`);
     parts.push(`${failed} failed`);
-    if (xfailed > 0) parts.push(`${xfailed} xfailed`);
     if (timedOut > 0) parts.push(`${timedOut} timed out`);
     if (unrun > 0) parts.push(`${unrun} did not run`);
     console.log(`Results: ${parts.join(", ")} out of ${testsToRun.length} (${elapsed}s)`);
@@ -1190,7 +1116,6 @@ async function main() {
             passed: reportedPassed,
             slow,
             failed,
-            xfailed,
             timedOut,
             unrun,
             shard: opts.shardTotal > 0 ? { index: opts.shardId, count: opts.shardTotal, strategy: opts.shardStrategy } : null,
@@ -1227,6 +1152,7 @@ async function main() {
 // Pure helpers are exported so unit tests exercise the real classification
 // code rather than a drifting mirror. Only run the suite when invoked directly.
 module.exports = {
+    discoverTests,
     resultRowsForWeights,
     loadHistoricalWeights,
     defaultUnknownWeight,
@@ -1237,6 +1163,8 @@ module.exports = {
     reportedPassCount,
     executedCount,
     runFailedCount,
+    validateResultCoverage,
+    resetBridgeForNextTest,
     TIMEOUT_WEIGHT_BIAS_MS,
 };
 

@@ -134,7 +134,7 @@ const SAMPLE_RESULTS = [
 
 test("summarizeResults tallies each outcome into its own disjoint bucket", () => {
     const c = runner.summarizeResults(SAMPLE_RESULTS);
-    assert.deepEqual(c, { passed: 2, slow: 2, failed: 1, xfailed: 1, timedOut: 1, unrun: 1 });
+    assert.deepEqual(c, { passed: 2, slow: 2, failed: 2, timedOut: 1, unrun: 1 });
 });
 
 test("reportedPassCount folds slow into passing (load-independent figure)", () => {
@@ -144,13 +144,13 @@ test("reportedPassCount folds slow into passing (load-independent figure)", () =
 
 test("executedCount excludes tests that never ran (unrun)", () => {
     const c = runner.summarizeResults(SAMPLE_RESULTS);
-    // 2 pass + 2 slow + 1 fail + 1 xfail + 1 timeout = 7; the 1 unrun is excluded.
+    // A legacy xfail is folded into fail: 2 pass + 2 slow + 2 fail + 1 timeout.
     assert.equal(runner.executedCount(c), 7);
 });
 
-test("runFailedCount trips on fail/timeout/unrun but never on slow", () => {
+test("runFailedCount folds legacy xfail into fail and never trips on slow", () => {
     const c = runner.summarizeResults(SAMPLE_RESULTS);
-    assert.equal(runner.runFailedCount(c), 3); // 1 fail + 1 timeout + 1 unrun
+    assert.equal(runner.runFailedCount(c), 4); // 2 fail + 1 timeout + 1 unrun
     // A run whose only blemish is slowness exits clean.
     const slowOnly = runner.summarizeResults([
         { status: "pass" }, { status: "slow" }, { status: "slow" },

@@ -654,14 +654,17 @@ withTempDir((dir) => {
   assert.ok(result.stderr.includes("usage:"), "should print usage on missing input");
 }
 
-// --- full-ci.sh wires up the test ---
+// --- the strict rewrite unit gate wires up the test ---
 
 {
-  const ciScript = fs.readFileSync(CI_SCRIPT, "utf8");
+  const ciScript = fs.readFileSync(
+    path.join(ROOT, "scripts", "ci", "check-unit-gate-contracts.sh"),
+    "utf8",
+  );
   assert.match(
     ciScript,
     /node scripts\/bench\/test-reduction-backlog\.mjs/,
-    "full-ci.sh must run test-reduction-backlog.mjs in run_lint",
+    "the strict rewrite unit gate must run test-reduction-backlog.mjs",
   );
 }
 

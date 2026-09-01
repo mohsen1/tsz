@@ -15,7 +15,9 @@ Use for PR checks, CI triage, ready state, queue evidence, and landing. Use
   high`).
 - The PR author lands their own PR; never idle-wait on CI between pushes.
 - Never merge draft/WIP PRs (`draft`, `WIP`, `[WIP]`, or body/branch says WIP).
-- Every open PR runs the full CI suite (draft or not); path-based content skips apply only to docs-only or tooling-only diffs.
+- PR-head CI gates the active rewrite with `clippy`, `arch-size`, and `CI Summary`.
+  Full conformance, emit, and fourslash jobs run nightly or by manual dispatch
+  as observations until roadmap families graduate into the monotonic floor.
 - Ready PRs land through GitHub's native merge queue.
 - If asked to land, verify `state: MERGED`; an armed queue request alone is not enough.
 
@@ -50,11 +52,12 @@ now.
 
 - `CI Summary`: umbrella PR-head status.
 - `merge_group` CI: native queued-merge summary validation.
-- `conformance-aggregate`: accepted-regression drift can fail aggregate even
-  when shards pass.
-- `unit-cloudbuild`: often exposes memory, linking, or architecture guard
-  failures.
-- Docs-only and bench-shell-only paths short-circuit most jobs.
+- `clippy`: formatting, active-workspace check, Clippy, rewrite nextest, and
+  CI contract checks share this retained required-check name.
+- `arch-size`: replacement-boundary, retired-source, Sound Mode, and file-size
+  guards.
+- `*-observation-*`: nightly/manual infrastructure failures are actionable;
+  behavior mismatches are retained in artifacts and continued inside the job.
 
 Comment shape: provenance line, root cause, files changed, verification/CI
 URL, remaining risk.

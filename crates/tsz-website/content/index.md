@@ -1,53 +1,25 @@
 # tsz
 
-<p class="subtitle"><code>tsz</code> is a complete TypeScript type checker and language service in Rust that aims to be faster than <code>tsgo</code>.</p>
+<p class="subtitle"><code>tsz</code> is a clean-slate experiment to match the pinned TypeScript 7 compiler exactly in Rust, then make correct projects faster.</p>
 
 <blockquote class="wip-warning">
-<p><strong>Work in progress.</strong> This project is not ready for general use yet. Many TypeScript features are still being implemented.</p>
+<p><strong>Foundation validation only.</strong> The retired compiler was deleted. Releases, npm packages, installers, and the WASM playground are intentionally unavailable while the replacement is being proved.</p>
 </blockquote>
 
-## Progress
+## What exists today
 
-tsz runs TypeScript's own test suite to prove it can serve as a drop-in replacement - comparing diagnostics, JavaScript emit, declaration emit, and language service behavior against `tsc`.
+The R0 rewrite is a small end-to-end validation slice: source text can pass through fresh scan, parse, bind, check, diagnostic, and JavaScript emit paths. Exact seed cases prove a narrow set of declarations, annotations, assignments, calls, returns, object properties, unions, and emit behavior against TypeScript 7.0.2.
 
-Currently targeting **TypeScript `{{ts_version}}`**
+That slice is not a general-purpose TypeScript compiler, language service, or drop-in replacement for `tsc`. Most grammar, project, module, library, declaration-emit, language-service, and ecosystem behavior remains unsupported.
 
-<div class="progress-row">
-  <span class="progress-label">Conformance</span>
-  <div class="progress-bar"><div class="progress-fill conformance" style="width: {{conformance_rate}}%"></div></div>
-  <span class="progress-stat">{{conformance_rate}}% - {{conformance_passed}}/{{conformance_total}}</span>
-</div>
+## How progress is reported
 
-<div class="progress-row">
-  <span class="progress-label">JS Emit</span>
-  <div class="progress-bar"><div class="progress-fill emit-js" style="width: {{emit_js_rate}}%"></div></div>
-  <span class="progress-stat">{{emit_js_rate}}% - {{emit_js_passed}}/{{emit_js_total}}</span>
-</div>
+The rewrite keeps three records separate:
 
-<div class="progress-row">
-  <span class="progress-label">Declaration Emit</span>
-  <div class="progress-bar"><div class="progress-fill emit-dts" style="width: {{emit_dts_rate}}%"></div></div>
-  <span class="progress-stat">{{emit_dts_rate}}% - {{emit_dts_passed}}/{{emit_dts_total}}</span>
-</div>
+1. the frozen legacy checkpoint, which describes the deleted compiler;
+2. exact capabilities proved by the rewrite's seed tests;
+3. full-corpus observations, including unsupported and failed cases.
 
-<div class="progress-row">
-  <span class="progress-label">Language Service</span>
-  <div class="progress-bar"><div class="progress-fill fourslash" style="width: {{fourslash_rate}}%"></div></div>
-  <span class="progress-stat">{{fourslash_rate}}% - {{fourslash_passed}}/{{fourslash_total}}</span>
-</div>
+Historical compatibility and performance numbers are evidence about the retired implementation. They are not current rewrite results. Speed comparisons count only after a project produces the same result as the pinned TypeScript 7 oracle.
 
-<p class="loc-stat">{{total_loc}} lines of Rust across {{num_crates}} crates <span class="loc-stat-split">({{source_loc}} source · {{test_loc}} test)</span></p>
-
-Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match `tsc` in error code, file, line, column, and message.
-
-## Experimental Sound Mode
-
-tsz also has an experimental **Sound Mode** for stricter, opt-in TypeScript checking.
-
-It is still in exploration, stays behind explicit flags, and is being rolled out in a deliberately narrow way:
-
-1. user-authored TypeScript source first
-2. migration flags before ecosystem-wide guarantees
-3. later declaration-boundary work behind separate pilots
-
-Read more on the [Sound Mode page](/sound-mode/) or try the [Playground](/playground/).
+Read the [clean-slate roadmap](https://github.com/tsz-org/tsz/blob/main/docs/plan/ROADMAP.md) for the milestones and conviction gates.

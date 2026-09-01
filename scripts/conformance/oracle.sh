@@ -9,26 +9,22 @@
 # generate-tsc-cache.rs always passes for TypeScript 7+ (see #16413). This
 # wrapper reproduces that exact invocation shape so the two never diverge.
 #
-# Uses a small dedicated scratch install (not scripts/node_modules) so a
-# cold container only fetches the `typescript` package itself, not every
-# unrelated dependency in scripts/package.json.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSIONS_FILE="$SCRIPT_DIR/typescript-versions.json"
-CACHE_DIR="${TSZ_ORACLE_CACHE_DIR:-${TMPDIR:-/tmp}/tsz-oracle}"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 usage() {
     cat <<'EOF'
 Usage: scripts/conformance/oracle.sh <file.ts> [extra tsc flags...]
 
-Runs the pinned typescript-go oracle (scripts/conformance/typescript-versions.json)
+Runs the manifest-verified pinned TypeScript 7 native oracle
 with the same --singleThreaded/--stableTypeOrdering flags the conformance cache
 generator uses for TypeScript 7+, so the result matches what
 compare-to-parent.sh / conformance.sh actually score.
 
-Installs the pinned TypeScript into a small scratch cache dir on first use
-(override with TSZ_ORACLE_CACHE_DIR), separate from scripts/node_modules.
+The shared emit resolver verifies the wrapper package, platform package tree,
+native executable, platform, integrity hashes, and exact compiler version.
 
 Example:
   scripts/conformance/oracle.sh case.ts --strict --lib es2022 --target es2022
@@ -53,8 +49,7 @@ for arg in "$@"; do
     case "$arg" in
         -*) continue ;;
         *.ts | *.tsx | *.mts | *.cts | *.js | *.jsx | *.mjs | *.cjs)
-            if [ -f "$arg" ]; then
-                cat >&2 <<EOF
+            cat >&2 <<EOF
 ERROR: oracle.sh accepts exactly one FILE positional, but also got: $arg
 
   FILE is appended LAST in the underlying tsc invocation, so a second source
@@ -63,52 +58,41 @@ ERROR: oracle.sh accepts exactly one FILE positional, but also got: $arg
 
   For multi-file cases invoke the pinned binary directly (order preserved):
 
-    scripts/node_modules/@typescript/typescript-darwin-arm64/lib/tsc \\
+    <verified-native-tsc> \\
       --noEmit --pretty false <flags> $FILE $arg
 
   It is a native binary; 'node <path>' fails on it.
 EOF
-                exit 2
-            fi
+            exit 2
             ;;
     esac
 done
 
-if [ ! -f "$VERSIONS_FILE" ]; then
-    echo "ERROR: Missing versions file: $VERSIONS_FILE" >&2
+# Package setup is transport/provenance work, never compiler output.  Keep its
+# human-readable status on stderr so callers can treat stdout as the exact
+# native compiler stream.
+if ! "$REPO_ROOT/scripts/setup/ensure-pinned-typescript.sh" "$REPO_ROOT/scripts" >&2; then
+    echo "ERROR: verified pinned TypeScript package is unavailable" >&2
     exit 1
 fi
 
-PINNED_VERSION="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const current = cfg.current || ''; const mapped = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapped || fallback || '');" "$VERSIONS_FILE")"
-
-if [ -z "$PINNED_VERSION" ]; then
-    echo "ERROR: Could not resolve pinned TypeScript version from $VERSIONS_FILE" >&2
+if ! ORACLE_JSON="$(node --experimental-strip-types \
+    "$REPO_ROOT/scripts/emit/resolve-oracle.mjs" --root "$REPO_ROOT")"; then
+    echo "ERROR: pinned native TypeScript oracle verification failed" >&2
+    exit 1
+fi
+TSC_BIN="$(python3 -c \
+    'import json,sys; print(json.loads(sys.argv[1])["binaryPath"])' \
+    "$ORACLE_JSON")" || exit 1
+PINNED_VERSION="$(python3 -c \
+    'import json,sys; print(json.loads(sys.argv[1])["provenance"]["version"])' \
+    "$ORACLE_JSON")" || exit 1
+if [ ! -x "$TSC_BIN" ] || [ "$PINNED_VERSION" != "7.0.2" ]; then
+    echo "ERROR: resolver did not return the executable pinned TypeScript 7.0.2 oracle" >&2
     exit 1
 fi
 
-mkdir -p "$CACHE_DIR"
-INSTALLED_VERSION=""
-PACKAGE_JSON="$CACHE_DIR/node_modules/typescript/package.json"
-if [ -f "$PACKAGE_JSON" ]; then
-    INSTALLED_VERSION="$(node -e "try { process.stdout.write(require(process.argv[1]).version); } catch {}" "$PACKAGE_JSON")"
-fi
-
-if [ "$INSTALLED_VERSION" != "$PINNED_VERSION" ]; then
-    echo "# installing pinned typescript@$PINNED_VERSION into $CACHE_DIR ..." >&2
-    (cd "$CACHE_DIR" && npm install --silent --no-audit --no-fund --no-save --no-package-lock "typescript@${PINNED_VERSION}" >&2)
-fi
-
-TSC_JS="$CACHE_DIR/node_modules/typescript/lib/tsc.js"
-if [ ! -f "$TSC_JS" ]; then
-    echo "ERROR: pinned tsc not found at $TSC_JS after install" >&2
-    exit 1
-fi
-
-TSC_MAJOR="${PINNED_VERSION%%.*}"
-EXTRA_FLAGS=()
-if [ "$TSC_MAJOR" -ge 7 ] 2>/dev/null; then
-    EXTRA_FLAGS+=(--singleThreaded --stableTypeOrdering true)
-fi
+EXTRA_FLAGS=(--singleThreaded --stableTypeOrdering true)
 
 echo "# oracle: typescript@$PINNED_VERSION ${EXTRA_FLAGS[*]:-}" >&2
-exec node "$TSC_JS" --noEmit --pretty false "${EXTRA_FLAGS[@]}" "$@" "$FILE"
+exec "$TSC_BIN" --noEmit --pretty false "${EXTRA_FLAGS[@]}" "$@" "$FILE"

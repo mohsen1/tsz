@@ -1,6 +1,8 @@
 # TypeScript Library Loading: Complete Reference
 
-This document explains exactly how the TypeScript compiler (`tsc`) handles library files, targets, and global type definitions. This is the canonical reference for `tsz` to match tsc's behavior.
+This document records how TypeScript handles library files, targets, and global
+type definitions. It is research input for the rewrite; the pinned TypeScript
+7.0.2 source and oracle remain authoritative wherever this older survey differs.
 
 **Semantic library behavior verified against:** TypeScript
 6.0.0-dev.20260116 (submodule commit `7f6a84673`). **npm package layout and
@@ -797,18 +799,20 @@ When `@target: es2017` is specified without `@lib`:
 
 ### TS 6.0 Implication for ES5 Tests
 
-In TS 6.0, even `--target es5` (with no `--lib`) provides ES2015 features through the DOM → ES2015 reference chain. This means:
+The historical TypeScript 6 observation was that even `--target es5` (with no
+`--lib`) provides ES2015 features through the DOM -> ES2015 reference chain.
+Every row must be reverified against the pinned TypeScript 7.0.2 oracle before
+it becomes a rewrite capability. The observed consequence was:
 - `Promise`, `Map`, `Set`, `Symbol`, `Array.find()` all work on ES5 target
 - Tests that use these features with ES5 target may pass in tsc but fail in tsz if tsz doesn't replicate this transitive loading
 
-### Current tsz Behavior
+### Rewrite status
 
-tsz loads only the core lib (`es2017.d.ts`) without DOM/ScriptHost. For many conformance tests this works because:
-1. Tests don't typically use DOM APIs
-2. Core libs include all ES features needed via the reference chain
-3. Tests that need DOM specify `@lib: dom` explicitly
-
-However, tests that rely on **implicit ES2015 features via DOM on ES5 target** will fail.
+Library selection, triple-slash library references, and global-library binding
+are not implemented in R0. The replacement retains the pinned library assets
+under `crates/tsz-core/data/lib`, but retaining data is not a compatibility
+claim. A project that needs globals such as `Record`, `Promise`, or DOM names is
+currently an honest unsupported observation.
 
 ### Edge Cases
 
@@ -830,55 +834,14 @@ To match tsc exactly, tsz must:
 4. **Reference resolution**: Follow `/// <reference lib="..." />` directives recursively, including DOM's transitive references to ES2015
 5. **Ordering**: Load libs in the correct order (affects overload resolution)
 
-### Current Gap
+### Porting requirement
 
-tsz currently loads **core libs only** (e.g., `es5.d.ts` instead of `lib.d.ts`). This means:
-- ❌ No DOM types by default
-- ❌ No ScriptHost types by default
-- ❌ No transitive ES2015 features on ES5 target (Promise, Map, Set, Array.find, etc.)
-- ❌ `console.log()` fails without explicit `@lib: dom`
-
-This was intentional for conformance testing but doesn't match tsc's actual behavior for real-world usage.
-
-From `crates/tsz-core/src/config/mod.rs`:
-```rust
-/// Returns the core lib name (without DOM) - matches tsc conformance test behavior.
-pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
-    match target {
-        ScriptTarget::ES5 => "es5",     // tsc uses "lib" (which is es5+dom+webworker+scripthost)
-        ScriptTarget::ES2015 => "es2015", // tsc uses "es6" (which is es2015+dom+dom.iterable+webworker+scripthost)
-        ScriptTarget::ES2016 => "es2016", // tsc uses "es2016.full"
-        // ...
-    }
-}
-```
-
-### Recommended Fix
-
-To match tsc behavior, change `default_lib_name_for_target()` in `crates/tsz-core/src/config/mod.rs`:
-
-| Target | Current (tsz) | Correct (tsc) |
-|--------|--------------|---------------|
-| ES5 | `"es5"` | `"lib"` |
-| ES2015 | `"es2015"` | `"es6"` |
-| ES2016+ | `"es20XX"` | `"es20XX.full"` |
-| ESNext | `"esnext"` | `"esnext.full"` |
-
-**Important**: The recursive reference resolution is already implemented in `resolve_lib_files()`. Changing the default lib names should automatically load all referenced libs (DOM, ScriptHost, etc.) via `/// <reference lib="..." />` directives.
-
-**Fallback Safety**: `resolve_default_lib_files()` has fallback logic that will use core libs if `.full` files don't exist:
-```rust
-if default_lib == "lib" {
-    fallbacks.push("es5");
-}
-```
-
-### Conformance Testing Consideration
-
-If the conformance cache was generated with core libs, changing to `.full` libs will require regenerating the cache with the same settings. Options:
-1. Regenerate cache with `.full` libs (recommended for parity)
-2. Keep a `--conformance-mode` flag that uses core libs for testing
-3. Accept that some tests may fail until cache is regenerated
+Implement this in the program/library-loading owner during R1, using the
+pinned TypeScript 7 algorithms and ordering rather than the retired TSZ code.
+The same option set must drive normal projects, seed cases, and conformance;
+there is no alternate conformance semantics. If an existing cache was produced
+under different library inputs, regenerate or version that cache instead of
+changing compiler behavior.
 
 ---
 

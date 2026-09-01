@@ -150,6 +150,18 @@ class MigrationCallsiteCountsTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["counts"]["with_parent_cache"], 1)
 
+    def test_default_run_is_explicitly_unavailable(self):
+        result = subprocess.run(
+            ["python3", str(SCRIPT), "--json"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unavailable for the clean-slate compiler", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
