@@ -9,8 +9,12 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-# This stdlib-only Python contract also rejects active ignore attributes in
-# both rewrite-test roots. Keep the gate independent of optional runner tools.
+# This stdlib-only Python contract guards every manifest-owned active test root.
+# Keep the gate independent of optional runner tools.
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/test_check_test_file_reachability.py
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/ci/check-test-file-reachability.py
+# Public conformance claims may not lead the committed detail artifact.
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/conformance/test_query_conformance.py
 python3 scripts/ci/test_unit_nextest.py
 python3 scripts/ci/test_full_ci_unit_gate.py
 python3 scripts/ci/test_suite_metadata.py

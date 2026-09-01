@@ -5,13 +5,11 @@ use crate::syntax::{
     TypeMemberModifierNode, TypeMemberModifiers, TypeMemberName, TypeMemberNameKind, TypeNode,
     TypeNodeKind,
 };
-
 #[derive(Debug, Clone, Copy)]
 enum SignatureMemberKind {
     Call,
     Construct,
 }
-
 macro_rules! type_member_modifiers {
     ($($token:ident => $modifier:ident, $field:ident;)*) => {
         const fn type_member_modifier(kind: TokenKind) -> Option<TypeMemberModifier> {
@@ -20,7 +18,6 @@ macro_rules! type_member_modifiers {
                 _ => None,
             }
         }
-
         const fn apply_modifier(modifiers: &mut TypeMemberModifiers, kind: TypeMemberModifier) {
             match kind {
                 $(TypeMemberModifier::$modifier => modifiers.$field = true,)*
@@ -28,7 +25,6 @@ macro_rules! type_member_modifiers {
         }
     };
 }
-
 type_member_modifiers! {
     Public => Public, public;
     Protected => Protected, protected;
@@ -46,7 +42,6 @@ type_member_modifiers! {
     Out => Out, out_variance;
     Override => Override, override_member;
 }
-
 impl Parser<'_> {
     pub(super) fn parse_tuple_type(&mut self) -> TypeNode {
         let left = self.bump().span;
@@ -94,7 +89,6 @@ impl Parser<'_> {
             kind: TypeNodeKind::Tuple(members),
         }
     }
-
     /// Parse TypeScript's single ordered `TypeElement` list.
     ///
     /// The branch order follows the pinned TypeScript parser: call signature,
@@ -127,7 +121,6 @@ impl Parser<'_> {
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
         members
     }
-
     pub(super) fn parse_type_member(&mut self) -> TypeMember {
         if self.at_any(&[TokenKind::LeftParen, TokenKind::LessThan]) {
             return self.parse_signature_member(SignatureMemberKind::Call);
@@ -140,7 +133,6 @@ impl Parser<'_> {
         {
             return self.parse_signature_member(SignatureMemberKind::Construct);
         }
-
         let start = self.current().span;
         let modifiers = self.parse_type_member_modifiers();
         if self.at(TokenKind::Get) && self.type_member_modifier_has_follower() {
@@ -154,7 +146,6 @@ impl Parser<'_> {
         }
         self.parse_property_or_method_signature(start, modifiers)
     }
-
     fn parse_accessor_signature(
         &mut self,
         start: Span,
@@ -184,7 +175,6 @@ impl Parser<'_> {
             },
         )
     }
-
     fn parse_signature_member(&mut self, kind: SignatureMemberKind) -> TypeMember {
         let start = self.current().span;
         if matches!(kind, SignatureMemberKind::Construct) {
@@ -211,7 +201,6 @@ impl Parser<'_> {
         };
         self.finish_type_member(start, TypeMemberModifiers::default(), kind)
     }
-
     fn parse_index_signature(&mut self, start: Span, modifiers: TypeMemberModifiers) -> TypeMember {
         self.expect(TokenKind::LeftBracket, "'[' expected.", 1005);
         let mut parameters = Vec::new();
@@ -233,7 +222,6 @@ impl Parser<'_> {
             },
         )
     }
-
     fn parse_property_or_method_signature(
         &mut self,
         start: Span,
@@ -257,7 +245,10 @@ impl Parser<'_> {
             let initializer_allowed =
                 ty.is_some() || optional || matches!(name.kind, TypeMemberNameKind::Computed(_));
             let initializer = initializer_allowed
-                .then(|| self.eat(TokenKind::Equals).then(|| self.parse_expression()))
+                .then(|| {
+                    self.eat(TokenKind::Equals)
+                        .then(|| self.parse_assignment_expression())
+                })
                 .flatten();
             TypeMemberKind::Property {
                 name,
@@ -269,7 +260,6 @@ impl Parser<'_> {
         self.parse_type_member_separator();
         self.finish_type_member(start, modifiers, kind)
     }
-
     fn finish_type_member(
         &mut self,
         start: Span,
@@ -285,15 +275,15 @@ impl Parser<'_> {
             kind,
         }
     }
-
     fn parse_type_annotation(&mut self) -> Option<TypeNode> {
         self.eat(TokenKind::Colon).then(|| self.parse_type())
     }
-
     fn parse_recovered_type_member(&mut self) -> TypeMember {
         let start = self.current().span;
         let name = self.parse_type_member_name();
-        let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
+        let initializer = self
+            .eat(TokenKind::Equals)
+            .then(|| self.parse_assignment_expression());
         let recovery_incomplete = !self.at(TokenKind::RightBrace);
         while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
             self.bump();
@@ -306,7 +296,7 @@ impl Parser<'_> {
             }
         }
         let span = start.merge(self.previous().span);
-        self.record_parser_recovery_for_analysis(ParserRecoveryKind::Type, start, span);
+        self.note_recovery(ParserRecoveryKind::Type, start, span);
         TypeMember {
             id: self.alloc_node(),
             span,
@@ -321,7 +311,6 @@ impl Parser<'_> {
             },
         }
     }
-
     fn is_type_member_start(&self) -> bool {
         if type_member_start_at(self, 0) {
             return true;
@@ -335,11 +324,9 @@ impl Parser<'_> {
         }
         false
     }
-
     fn parse_type_member_separator(&mut self) {
         let _ = self.eat(TokenKind::Comma) || self.eat(TokenKind::Semicolon);
     }
-
     fn parse_type_member_name(&mut self) -> TypeMemberName {
         let token = *self.current();
         self.observe_unmodeled_numeric_separator_if_current();
@@ -350,6 +337,7 @@ impl Parser<'_> {
                     span: token.span,
                     kind: TypeMemberNameKind::StringLiteral(
                         self.ordinary_string_literal_value(token),
+                        self.cooked_string_literal(token),
                     ),
                 }
             }
@@ -385,7 +373,6 @@ impl Parser<'_> {
             }
         }
     }
-
     fn parse_type_member_modifiers(&mut self) -> TypeMemberModifiers {
         let mut modifiers = TypeMemberModifiers::default();
         while let Some(kind) = type_member_modifier(self.kind()) {
@@ -398,7 +385,6 @@ impl Parser<'_> {
         }
         modifiers
     }
-
     fn type_member_modifier_has_follower(&self) -> bool {
         !matches!(
             self.peek_kind(1),
@@ -413,7 +399,6 @@ impl Parser<'_> {
                 | TokenKind::EndOfFile
         )
     }
-
     fn is_index_signature(&self) -> bool {
         if !self.at(TokenKind::LeftBracket) {
             return false;
@@ -423,7 +408,6 @@ impl Parser<'_> {
         if matches!(kind, TokenKind::DotDotDot | TokenKind::RightBracket) {
             return true;
         }
-
         if is_type_member_modifier(kind) {
             cursor += 1;
             kind = self.token_kind_at(cursor);
@@ -447,18 +431,15 @@ impl Parser<'_> {
             TokenKind::Colon | TokenKind::Comma | TokenKind::RightBracket
         )
     }
-
     pub(super) fn token_kind_at(&self, index: usize) -> TokenKind {
         self.tokens
             .get(index)
             .map_or(TokenKind::EndOfFile, |token| token.kind)
     }
 }
-
 const fn is_type_member_modifier(kind: TokenKind) -> bool {
     type_member_modifier(kind).is_some()
 }
-
 fn type_member_start_at(parser: &Parser<'_>, offset: usize) -> bool {
     let kind = parser.peek_kind(offset);
     if matches!(
@@ -496,7 +477,6 @@ fn type_member_start_at(parser: &Parser<'_>, offset: usize) -> bool {
                 | TokenKind::RightBrace
         )
 }
-
 const fn is_type_member_name_token(kind: TokenKind) -> bool {
     kind.is_identifier()
         || matches!(

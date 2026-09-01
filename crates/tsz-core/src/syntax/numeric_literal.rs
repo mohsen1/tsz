@@ -1,8 +1,6 @@
+use super::{Expression, ExpressionKind, Literal, Token, TokenKind};
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
-
-use super::{Expression, ExpressionKind, Literal, Token, TokenKind};
-
 macro_rules! string_field_accessors {
     ($($field:ident),+ $(,)?) => {$(
         #[must_use]
@@ -11,7 +9,6 @@ macro_rules! string_field_accessors {
         }
     )+};
 }
-
 /// Syntax-owned spelling for an ordinary or scanner-recovered number token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberLiteral {
@@ -19,7 +16,6 @@ pub enum NumberLiteral {
     Separated(SeparatedNumberLiteral),
     Recovery(NumericRecoveryLiteral),
 }
-
 impl NumberLiteral {
     #[must_use]
     pub fn raw(&self) -> &str {
@@ -29,7 +25,6 @@ impl NumberLiteral {
             Self::Recovery(literal) => &literal.raw,
         }
     }
-
     /// A syntactically valid spelling with the same numeric value as the
     /// recovered token. Malformed exponent text never reaches the type store.
     #[must_use]
@@ -40,7 +35,6 @@ impl NumberLiteral {
             Self::Recovery(literal) => &literal.semantic_text,
         }
     }
-
     /// JavaScript spelling selected from scanner-owned syntax metadata.
     #[must_use]
     pub fn emit_text(&self, preserve_separators: bool) -> &str {
@@ -51,7 +45,6 @@ impl NumberLiteral {
             Self::Recovery(literal) => &literal.emit_text,
         }
     }
-
     /// TypeScript adds a second property-access dot only for downleveled
     /// decimal spellings that canonicalize to an integer. Radix specifiers
     /// deliberately suppress this rule in the upstream printer.
@@ -66,7 +59,6 @@ impl NumberLiteral {
                 .bytes()
                 .any(|byte| matches!(byte, b'.' | b'e' | b'E'))
     }
-
     #[must_use]
     pub const fn validation_supported(&self) -> bool {
         match self {
@@ -74,7 +66,6 @@ impl NumberLiteral {
             Self::Recovery(literal) => literal.validation_supported,
         }
     }
-
     pub(crate) const fn recovery_kind(&self) -> Option<NumericRecoveryKind> {
         match self {
             Self::Plain(_) | Self::Separated(_) => None,
@@ -82,7 +73,6 @@ impl NumberLiteral {
         }
     }
 }
-
 /// A valid Number token containing numeric separators. Raw spelling is kept
 /// for ES2021+ source preservation; canonical text is the scanner-observed
 /// JavaScript Number value used by downlevel emit and synthesized products.
@@ -92,7 +82,6 @@ pub struct SeparatedNumberLiteral {
     canonical: String,
     with_radix_specifier: bool,
 }
-
 impl SeparatedNumberLiteral {
     fn from_valid_source(raw: &str, with_radix_specifier: bool) -> Option<Self> {
         let parsed = parse_number_literal(raw)?;
@@ -102,10 +91,8 @@ impl SeparatedNumberLiteral {
             with_radix_specifier,
         })
     }
-
     string_field_accessors!(raw, canonical);
 }
-
 /// Canonical JavaScript Number value produced from source spelling. Scanner
 /// metadata and semantic literal identity share this parser, while each owner
 /// retains its own typed representation.
@@ -114,7 +101,6 @@ pub(crate) struct ParsedNumberLiteral {
     pub(crate) value: f64,
     pub(crate) display: String,
 }
-
 pub(crate) fn parse_number_literal(source: &str) -> Option<ParsedNumberLiteral> {
     let compact = source.replace('_', "");
     let value = if let Some((digits, radix)) = prefixed_numeric(&compact) {
@@ -136,7 +122,6 @@ pub(crate) fn parse_number_literal(source: &str) -> Option<ParsedNumberLiteral> 
         display: javascript_number_to_string(value),
     })
 }
-
 pub(crate) fn erased_expression_separated_number(
     expression: &Expression,
 ) -> Option<&NumberLiteral> {
@@ -148,7 +133,6 @@ pub(crate) fn erased_expression_separated_number(
         _ => None,
     }
 }
-
 /// Return the JavaScript expression left after erasing an assertion and every
 /// parenthesis layer whose only purpose is to contain that assertion.
 pub(crate) fn erased_assertion_expression(expression: &Expression) -> Option<&Expression> {
@@ -160,7 +144,6 @@ pub(crate) fn erased_assertion_expression(expression: &Expression) -> Option<&Ex
         _ => None,
     }
 }
-
 /// Scanner-owned numeric recovery. The three spellings stay separate so emit
 /// never derives JavaScript text from a checker display or a diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,16 +154,13 @@ pub struct NumericRecoveryLiteral {
     kind: NumericRecoveryKind,
     validation_supported: bool,
 }
-
 impl NumericRecoveryLiteral {
     string_field_accessors!(raw, semantic_text, emit_text);
-
     #[must_use]
     pub const fn validation_supported(&self) -> bool {
         self.validation_supported
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NumericRecoveryKind {
     LegacyOctal,
@@ -189,19 +169,16 @@ pub(crate) enum NumericRecoveryKind {
     InvalidSeparator,
     IncompleteRadix,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ScannedNumericLiteral {
     pub span: Span,
     literal: NumericRecoveryLiteral,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ScannedSeparatedNumberLiteral {
     pub span: Span,
     literal: SeparatedNumberLiteral,
 }
-
 impl ScannedSeparatedNumberLiteral {
     pub(super) fn from_valid_token(
         source: &SourceText,
@@ -215,18 +192,15 @@ impl ScannedSeparatedNumberLiteral {
             literal: SeparatedNumberLiteral::from_valid_source(raw, with_radix_specifier)?,
         })
     }
-
     pub(super) fn syntax_literal(&self) -> SeparatedNumberLiteral {
         self.literal.clone()
     }
 }
-
 impl ScannedNumericLiteral {
     pub(super) fn syntax_literal(&self) -> NumericRecoveryLiteral {
         self.literal.clone()
     }
 }
-
 pub(super) struct ScannedNumericToken {
     pub end: usize,
     pub kind: TokenKind,
@@ -235,7 +209,6 @@ pub(super) struct ScannedNumericToken {
     pub separated_literal: Option<ScannedSeparatedNumberLiteral>,
     pub has_unmodeled_separator: bool,
 }
-
 pub(super) fn scan_numeric_literal(
     source: &SourceText,
     start: usize,
@@ -247,6 +220,7 @@ pub(super) fn scan_numeric_literal(
     if starts_with_dot {
         offset += 1;
         let fraction_run = consume_digits(bytes, &mut offset, 10);
+        let diagnostics = numeric_separator_diagnostics(source, &fraction_run);
         let integer = &source.text[start..offset];
         finish_decimal_numeric(
             source,
@@ -258,6 +232,7 @@ pub(super) fn scan_numeric_literal(
             true,
             fraction_run.invalid_separator,
             fraction_run.saw_separator,
+            diagnostics,
         )
     } else if let Some((_, radix)) = prefixed_numeric(&source.text[offset..]) {
         offset += 2;
@@ -266,19 +241,21 @@ pub(super) fn scan_numeric_literal(
         let leading_zero = bytes.get(start) == Some(&b'0');
         let mut invalid_separator = false;
         let mut saw_separator = false;
+        let mut diagnostics = Vec::new();
         if leading_zero {
             consume_ascii_digits(bytes, &mut offset);
             if offset == start + 1 && bytes.get(offset) == Some(&b'_') {
                 let run = consume_digits(bytes, &mut offset, 10);
                 invalid_separator = run.invalid_separator;
                 saw_separator = run.saw_separator;
+                diagnostics.extend(numeric_separator_diagnostics(source, &run));
             }
         } else {
             let run = consume_digits(bytes, &mut offset, 10);
             invalid_separator = run.invalid_separator;
             saw_separator = run.saw_separator;
+            diagnostics.extend(numeric_separator_diagnostics(source, &run));
         }
-
         let integer_end = offset;
         let integer = &source.text[start..integer_end];
         let has_legacy_prefix = integer.len() > 1 && leading_zero && !integer.contains('_');
@@ -316,7 +293,6 @@ pub(super) fn scan_numeric_literal(
                 TokenKind::NumericLiteral,
             );
         }
-
         let leading_zero_decimal = has_legacy_prefix;
         let mut has_fraction_or_exponent = false;
         let mut mantissa_has_fraction = false;
@@ -327,8 +303,8 @@ pub(super) fn scan_numeric_literal(
             let run = consume_digits(bytes, &mut offset, 10);
             invalid_separator |= run.invalid_separator;
             saw_separator |= run.saw_separator;
+            diagnostics.extend(numeric_separator_diagnostics(source, &run));
         }
-
         finish_decimal_numeric(
             source,
             start,
@@ -339,10 +315,10 @@ pub(super) fn scan_numeric_literal(
             mantissa_has_fraction,
             invalid_separator,
             saw_separator,
+            diagnostics,
         )
     }
 }
-
 #[allow(clippy::too_many_arguments)]
 fn finish_decimal_numeric(
     source: &SourceText,
@@ -354,6 +330,7 @@ fn finish_decimal_numeric(
     mantissa_has_fraction: bool,
     mut invalid_separator: bool,
     mut saw_separator: bool,
+    mut diagnostics: Vec<Diagnostic>,
 ) -> ScannedNumericToken {
     let bytes = source.text.as_bytes();
     let mut missing_exponent_digits = false;
@@ -369,13 +346,11 @@ fn finish_decimal_numeric(
         missing_exponent_digits = exponent_run.digit_count == 0;
         invalid_separator |= exponent_run.invalid_separator;
         saw_separator |= exponent_run.saw_separator;
+        diagnostics.extend(numeric_separator_diagnostics(source, &exponent_run));
     }
-
     if !has_fraction_or_exponent && !leading_zero_decimal && !invalid_separator {
         return plain_numeric_token(source, start, bytes, offset, saw_separator, false);
     }
-
-    let mut diagnostics = Vec::new();
     if leading_zero_decimal {
         diagnostics.push(Diagnostic::at(
             source,
@@ -395,7 +370,6 @@ fn finish_decimal_numeric(
     if diagnostics.is_empty() && !invalid_separator {
         return plain_numeric_token(source, start, bytes, offset, saw_separator, false);
     }
-
     let missing_exponent_suffix = missing_exponent_digits
         && !invalid_separator
         && bytes.get(offset) == Some(&b'n')
@@ -410,7 +384,6 @@ fn finish_decimal_numeric(
             }
             TokenKind::NumericLiteral
         };
-
     let raw = source.text[start..offset].to_string();
     let (semantic_text, emit_text, kind, validation_supported) = if missing_exponent_digits {
         let semantic_text = source.text[start..semantic_end].replace('_', "");
@@ -453,7 +426,6 @@ fn finish_decimal_numeric(
         token_kind,
     )
 }
-
 #[allow(clippy::too_many_arguments)]
 fn recovered_numeric_token_with_kind(
     source: &SourceText,
@@ -490,7 +462,6 @@ fn recovered_numeric_token_with_kind(
         has_unmodeled_separator,
     }
 }
-
 fn scan_prefixed_numeric(
     source: &SourceText,
     start: usize,
@@ -535,11 +506,10 @@ fn scan_prefixed_numeric(
         source.text[start..plain.end].to_string(),
         kind,
         false,
-        Vec::new(),
+        numeric_separator_diagnostics(source, &run),
         plain.kind,
     )
 }
-
 fn plain_numeric_token(
     source: &SourceText,
     start: usize,
@@ -568,14 +538,23 @@ fn plain_numeric_token(
         separated_literal,
     }
 }
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct DigitRun {
     digit_count: usize,
     invalid_separator: bool,
     saw_separator: bool,
+    separator_diagnostics: Vec<NumericSeparatorDiagnostic>,
 }
-
+#[derive(Debug, Clone, Copy)]
+struct NumericSeparatorDiagnostic {
+    offset: usize,
+    kind: NumericSeparatorDiagnosticKind,
+}
+#[derive(Debug, Clone, Copy)]
+enum NumericSeparatorDiagnosticKind {
+    NotAllowed,
+    Consecutive,
+}
 fn consume_ascii_digits(bytes: &[u8], offset: &mut usize) -> usize {
     let start = *offset;
     while bytes.get(*offset).is_some_and(u8::is_ascii_digit) {
@@ -583,7 +562,6 @@ fn consume_ascii_digits(bytes: &[u8], offset: &mut usize) -> usize {
     }
     *offset - start
 }
-
 fn consume_numeric_suffix(bytes: &[u8], offset: &mut usize) -> TokenKind {
     if bytes.get(*offset) == Some(&b'n') {
         *offset += 1;
@@ -592,18 +570,18 @@ fn consume_numeric_suffix(bytes: &[u8], offset: &mut usize) -> TokenKind {
         TokenKind::NumericLiteral
     }
 }
-
 fn conservatively_continues_identifier(bytes: &[u8], offset: usize) -> bool {
     bytes.get(offset).is_some_and(|byte| {
         byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'\\') || *byte >= 0x80
     })
 }
-
 fn consume_digits(bytes: &[u8], offset: &mut usize, radix: u32) -> DigitRun {
+    let digit_before_run = *offset > 0 && bytes[*offset - 1].is_ascii_digit();
     let mut digit_count = 0;
     let mut saw_separator = false;
     let mut previous_was_digit = false;
     let mut invalid_separator = false;
+    let mut separator_diagnostics = Vec::new();
     while bytes.get(*offset).is_some_and(|byte| {
         *byte == b'_'
             || matches!(radix, 2 | 8 | 10 | 16)
@@ -611,7 +589,19 @@ fn consume_digits(bytes: &[u8], offset: &mut usize, radix: u32) -> DigitRun {
     }) {
         if bytes[*offset] == b'_' {
             saw_separator = true;
-            invalid_separator |= !previous_was_digit;
+            if !previous_was_digit {
+                invalid_separator = true;
+                separator_diagnostics.push(NumericSeparatorDiagnostic {
+                    offset: *offset,
+                    kind: if (digit_before_run || digit_count > 0)
+                        && bytes.get((*offset).saturating_sub(1)) == Some(&b'_')
+                    {
+                        NumericSeparatorDiagnosticKind::Consecutive
+                    } else {
+                        NumericSeparatorDiagnosticKind::NotAllowed
+                    },
+                });
+            }
             previous_was_digit = false;
         } else {
             digit_count += 1;
@@ -619,19 +609,52 @@ fn consume_digits(bytes: &[u8], offset: &mut usize, radix: u32) -> DigitRun {
         }
         *offset += 1;
     }
-    invalid_separator |= saw_separator && !previous_was_digit;
+    if saw_separator && !previous_was_digit {
+        invalid_separator = true;
+        let trailing = (*offset).saturating_sub(1);
+        if !separator_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.offset == trailing)
+        {
+            separator_diagnostics.push(NumericSeparatorDiagnostic {
+                offset: trailing,
+                kind: NumericSeparatorDiagnosticKind::NotAllowed,
+            });
+        }
+    }
     DigitRun {
         digit_count,
         invalid_separator,
         saw_separator,
+        separator_diagnostics,
     }
 }
-
+fn numeric_separator_diagnostics(source: &SourceText, run: &DigitRun) -> Vec<Diagnostic> {
+    run.separator_diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let (message, code) = match diagnostic.kind {
+                NumericSeparatorDiagnosticKind::NotAllowed => {
+                    ("Numeric separators are not allowed here.", 6188)
+                }
+                NumericSeparatorDiagnosticKind::Consecutive => (
+                    "Multiple consecutive numeric separators are not permitted.",
+                    6189,
+                ),
+            };
+            Diagnostic::at(
+                source,
+                Span::new(source.id, diagnostic.offset, diagnostic.offset + 1),
+                message.to_string(),
+                code,
+            )
+        })
+        .collect()
+}
 fn is_decimal_literal(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut position = 0;
     let mut mantissa_digits = 0;
-
     mantissa_digits += consume_ascii_digits(bytes, &mut position);
     if bytes.get(position) == Some(&b'.') {
         position += 1;
@@ -653,7 +676,6 @@ fn is_decimal_literal(source: &str) -> bool {
     }
     position == bytes.len()
 }
-
 /// Parse a binary, octal, or hexadecimal integer directly into the correctly
 /// rounded JavaScript Number. These radices are powers of two, so retaining the
 /// leading 53 bits plus guard/sticky bits is exact even when the token is wider
@@ -676,7 +698,6 @@ fn parse_power_of_two_integer(digits: &str, bits_per_digit: usize) -> Option<f64
     let Some((first_index, first_value)) = first_nonzero else {
         return Some(0.0);
     };
-
     let first_width = (u8::BITS - first_value.leading_zeros()) as usize;
     let trailing_digits = digits.len() - first_index - 1;
     let bit_length = trailing_digits
@@ -686,7 +707,6 @@ fn parse_power_of_two_integer(digits: &str, bits_per_digit: usize) -> Option<f64
     if bit_length > 1024 {
         return Some(f64::INFINITY);
     }
-
     let mut leading = 0_u64;
     let mut consumed = 0_usize;
     let mut guard = false;
@@ -710,14 +730,12 @@ fn parse_power_of_two_integer(digits: &str, bits_per_digit: usize) -> Option<f64
             consumed += 1;
         }
     }
-
     if bit_length <= 53 {
         return Some(leading as f64);
     }
     if guard && (sticky || leading & 1 != 0) {
         leading += 1;
     }
-
     let mut exponent = bit_length - 1;
     if leading == 1_u64 << 53 {
         leading >>= 1;
@@ -731,7 +749,6 @@ fn parse_power_of_two_integer(digits: &str, bits_per_digit: usize) -> Option<f64
         (((exponent + 1023) as u64) << 52) | fraction,
     ))
 }
-
 const fn radix_digit(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -740,7 +757,6 @@ const fn radix_digit(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
-
 fn prefixed_numeric(source: &str) -> Option<(&str, u32)> {
     match source.as_bytes().get(..2)? {
         [b'0', b'x' | b'X'] => Some((&source[2..], 16)),
@@ -749,7 +765,6 @@ fn prefixed_numeric(source: &str) -> Option<(&str, u32)> {
         _ => None,
     }
 }
-
 /// ECMAScript's Number-to-string thresholds differ from Rust's Display
 /// thresholds. Rust's shortest-roundtrip digits are reused, then placed in
 /// fixed or exponential notation at the JavaScript boundaries.
@@ -760,7 +775,6 @@ fn javascript_number_to_string(value: f64) -> String {
     if value.is_infinite() {
         return "Infinity".to_string();
     }
-
     let shortest = format!("{value:?}");
     let (mantissa, explicit_exponent) = shortest
         .split_once(['e', 'E'])
@@ -780,7 +794,6 @@ fn javascript_number_to_string(value: f64) -> String {
     while digits.len() > 1 && digits.ends_with('0') {
         digits.pop();
     }
-
     let scientific_exponent = explicit_exponent.unwrap_or_else(|| {
         if let Some(dot) = mantissa.find('.') {
             if !mantissa.starts_with('0') {
@@ -796,7 +809,6 @@ fn javascript_number_to_string(value: f64) -> String {
             mantissa.len() as i32 - 1
         }
     });
-
     if (-6..21).contains(&scientific_exponent) {
         let decimal_position = scientific_exponent + 1;
         if decimal_position <= 0 {
@@ -813,7 +825,6 @@ fn javascript_number_to_string(value: f64) -> String {
             &digits[decimal_position..]
         );
     }
-
     let sign = if scientific_exponent >= 0 { "+" } else { "" };
     if digits.len() == 1 {
         format!("{digits}e{sign}{scientific_exponent}")
@@ -825,13 +836,11 @@ fn javascript_number_to_string(value: f64) -> String {
         )
     }
 }
-
 fn canonical_bounded_integer(digits: &str, radix: u32) -> Option<String> {
     const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
     let value = u64::from_str_radix(digits, radix).ok()?;
     (value <= MAX_SAFE_INTEGER).then(|| value.to_string())
 }
-
 fn legacy_octal_replacement_digits(digits: &str) -> String {
     const MAX_SIGNED_OCTAL: &str = "777777777777777777777";
     let value = u64::from_str_radix(digits, 8).ok();

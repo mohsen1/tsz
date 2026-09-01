@@ -1,15 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::bind::{DeclarationKind, Meaning, ScopeId};
+use crate::bind::{DeclarationKind, ScopeId};
 use crate::program::{CapabilityScope, CapabilityTarget, SemanticCompletion};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind, TypeStore};
 use crate::source::{DeclId, FileId, NodeId, SourceKind};
 use crate::syntax::{
     AuthoredTypeItem, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind, Literal,
-    Parameter, ParameterNameKind, Statement, StatementKind, TypeMember, TypeMemberKind,
-    TypeMemberName, TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration,
-    UnaryOperator,
+    Parameter, Statement, StatementKind, TypeMember, TypeMemberKind, TypeMemberName,
+    TypeMemberNameKind, TypeNode, TypeNodeKind, TypeParameterDeclaration, UnaryOperator,
 };
 
 use super::{
@@ -21,19 +20,12 @@ use super::{
 
 mod operands;
 mod program;
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TypeMemberContainerKind {
     Interface,
     TypeLiteral,
 }
-
 impl Checker<'_> {
-    /// Require a type at a declaration boundary.
-    ///
-    /// A concrete object, signature, tuple, or union can contain deferred components.
-    /// Its program-local `TypeId` active set closes productive recursion coinductively without a
-    /// second depth or fuel policy. Deferred evaluation keeps its own budget.
     pub(super) fn require_type_completion(&mut self, ty: TypeId) -> Completion<TypeId> {
         let mut active = HashSet::new();
         let mut references = ReferenceExpansionStack::new(ReferenceDemand::RequiredType);
@@ -710,12 +702,6 @@ impl Checker<'_> {
                         type_parameters,
                     )
                 };
-                self.register_anonymous_parameter_types(
-                    file,
-                    signature_scope,
-                    parameters,
-                    &signature_types,
-                );
                 self.validate_implicit_any_parameters(file, parameters);
                 self.visit_required_parameters(
                     file,
@@ -864,7 +850,11 @@ impl Checker<'_> {
                     code,
                 );
             }
-            self.infer_expression(file, scope, expression, None);
+            if container == TypeMemberContainerKind::TypeLiteral
+                || !matches!(&expression.peel_parentheses().kind, ExpressionKind::This)
+            {
+                self.infer_expression(file, scope, expression, None);
+            }
         }
         match &member.kind {
             TypeMemberKind::Property {
@@ -1005,43 +995,6 @@ impl Checker<'_> {
             }
         }
         parameters
-    }
-
-    pub(super) fn register_anonymous_parameter_types(
-        &mut self,
-        file: FileId,
-        scope: ScopeId,
-        parameters: &[Parameter],
-        type_parameters: &HashMap<String, TypeId>,
-    ) {
-        if !type_parameters.is_empty() {
-            return;
-        }
-        let mut seen = HashSet::new();
-        let declarations = parameters
-            .iter()
-            .filter(|parameter| parameter.name_kind == ParameterNameKind::Binding)
-            .filter(|parameter| seen.insert(parameter.name.as_str()))
-            .filter_map(|parameter| {
-                self.resolve_name(file, scope, &parameter.name, Meaning::Value)
-                    .map(|declaration| (parameter, declaration))
-            })
-            .collect::<Vec<_>>();
-        for (parameter, declaration) in declarations {
-            let ty = if let Some(annotation) = &parameter.annotation {
-                self.resolve_type_node(file, scope, annotation, type_parameters)
-            } else if let Some(initializer) = &parameter.initializer {
-                match self.signature_initializer_type(file, scope, initializer) {
-                    Completion::Complete(ty) => ty,
-                    Completion::Deferred | Completion::Cycle | Completion::Limit => continue,
-                }
-            } else {
-                self.store.builtins.any
-            };
-            if self.is_cacheable_type(ty) {
-                self.parameter_type_overrides.insert(declaration, ty);
-            }
-        }
     }
 
     /// `infer` declarations belong to the surrounding conditional's extends
@@ -1301,11 +1254,7 @@ fn class_has_ambient_implementation(declaration: &ClassDeclaration) -> bool {
 }
 
 const fn class_member_access(modifiers: &crate::syntax::ClassMemberModifiers) -> u8 {
-    match (modifiers.private, modifiers.protected) {
-        (true, _) => 1,
-        (false, true) => 2,
-        (false, false) => 0,
-    }
+    modifiers.private as u8 + ((!modifiers.private && modifiers.protected) as u8) * 2
 }
 
 fn is_bindable_computed_name(expression: &Expression) -> bool {

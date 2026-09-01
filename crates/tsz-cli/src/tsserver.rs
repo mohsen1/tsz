@@ -2,20 +2,18 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
 use tsz::CompilerOptions;
 use tsz::diagnostics::Diagnostic;
 use tsz::service::{
     DefinitionInfo, DocumentHighlights, LanguageService, ReferenceEntry, ReferencedSymbol,
-    RenameLocation, RenameResult, TextSpan,
+    RenameLocation, RenameResult, ServiceQuery, TextSpan,
 };
-use tsz::source::{FileId, SourceText};
+use tsz::source::SourceText;
 
 pub fn run_tsserver(input: impl Read, output: impl Write) -> Result<()> {
     Server::new(input, output).run()
 }
-
 struct Server<R, W> {
     input: BufReader<R>,
     output: W,
@@ -32,22 +30,20 @@ impl<R: Read, W: Write> Server<R, W> {
             sequence: 0,
         }
     }
-
     fn run(mut self) -> Result<()> {
         loop {
-            let Some(request) = read_message(&mut self.input)? else {
+            let Some(request) = read_framed_message(&mut self.input)? else {
                 return Ok(());
             };
             let should_exit = request.get("command").and_then(Value::as_str) == Some("exit");
             let response = self.handle(&request);
-            write_message(&mut self.output, &response)?;
+            write_framed_message(&mut self.output, &response)?;
             self.output.flush()?;
             if should_exit {
                 return Ok(());
             }
         }
     }
-
     fn handle(&mut self, request: &Value) -> Value {
         self.sequence += 1;
         let request_seq = request.get("seq").and_then(Value::as_u64).unwrap_or(0);
@@ -65,7 +61,6 @@ impl<R: Read, W: Write> Server<R, W> {
             ),
         }
     }
-
     fn dispatch(&mut self, command: &str, arguments: &Value) -> Result<Option<Value>, String> {
         match command {
             "compilerOptionsForInferredProjects" => {
@@ -82,12 +77,8 @@ impl<R: Read, W: Write> Server<R, W> {
             "configure" | "exit" => Ok(None),
             "open" => {
                 let path = file_argument(arguments)?;
-                let content = arguments
-                    .get("fileContent")
-                    .or_else(|| arguments.get("content"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                self.service.open(path, Arc::<str>::from(content));
+                let content = open_content(arguments, path)?;
+                self.service.open(path, content);
                 Ok(None)
             }
             "close" => {
@@ -102,8 +93,18 @@ impl<R: Read, W: Write> Server<R, W> {
             }
             "syntacticDiagnosticsSync" => {
                 let path = file_argument(arguments)?;
-                let diagnostics = self.service.syntactic_diagnostics(path);
-                Ok(Some(self.diagnostics_body(path, diagnostics, arguments)))
+                let result = self.service.syntactic_diagnostics(path);
+                if !result.syntactic_completion.is_complete() {
+                    return Err(format!(
+                        "TSZ syntactic diagnostics incomplete: {}",
+                        result.syntactic_completion.as_str()
+                    ));
+                }
+                Ok(Some(self.diagnostics_body(
+                    path,
+                    result.diagnostics,
+                    arguments,
+                )))
             }
             "semanticDiagnosticsSync" => {
                 let path = file_argument(arguments)?;
@@ -114,33 +115,24 @@ impl<R: Read, W: Write> Server<R, W> {
                         result.semantic_completion.as_str()
                     ));
                 }
-                let body = self.diagnostics_body(path, result.diagnostics, arguments);
-                Ok(Some(body))
+                Ok(Some(self.diagnostics_body(
+                    path,
+                    result.diagnostics,
+                    arguments,
+                )))
             }
             "quickinfo" => {
-                let path = file_argument(arguments)?;
-                let text = self
-                    .service
-                    .text(path)
-                    .ok_or_else(|| format!("File is not open: {path}"))?;
-                let line = number_argument(arguments, "line")? as u32;
-                let offset = number_argument(arguments, "offset")? as u32;
-                let absolute = position_to_offset(&text, line, offset)
-                    .ok_or_else(|| "Position is outside the file.".to_string())?;
-                let info = self
-                    .service
-                    .quick_info(path, absolute)
-                    .ok_or_else(|| "No content available at the requested position.".to_string())?;
-                let start = offset_to_position(&text, info.text_span.start);
-                let end = offset_to_position(
-                    &text,
-                    info.text_span.start.saturating_add(info.text_span.length),
-                );
+                let (path, absolute) = self.location(arguments)?;
+                let info = claimed_navigation(command, self.service.quick_info(&path, absolute))?
+                    .ok_or_else(|| {
+                    "No content available at the requested position.".to_string()
+                })?;
+                let span = protocol_span(self.source(&path)?, info.text_span);
                 Ok(Some(json!({
                     "kind": info.kind,
                     "kindModifiers": "",
-                    "start": start,
-                    "end": end,
+                    "start": span["start"],
+                    "end": span["end"],
                     "displayString": info.display,
                     "documentation": "",
                     "tags": [],
@@ -148,37 +140,19 @@ impl<R: Read, W: Write> Server<R, W> {
             }
             "definitionAndBoundSpan" => {
                 let (path, absolute) = self.location(arguments)?;
-                let result = self.service.definition_and_bound_span(&path, absolute);
-                Ok(Some(self.definition_and_bound_span_body(&path, result)))
+                let result = claimed_navigation(
+                    command,
+                    self.service.definition_and_bound_span(&path, absolute),
+                )?;
+                Ok(Some(self.definition_and_bound_span_body(&path, result)?))
             }
-            "definition" => {
-                let (path, absolute) = self.location(arguments)?;
-                let definitions = self
-                    .service
-                    .definition_and_bound_span(&path, absolute)
-                    .map_or_else(Vec::new, |result| result.definitions);
-                Ok(Some(self.definitions_body(&definitions)))
-            }
-            "typeDefinition" => {
-                let (path, absolute) = self.location(arguments)?;
-                let definitions = self
-                    .service
-                    .definition_and_bound_span(&path, absolute)
-                    .map_or_else(Vec::new, |result| {
-                        result
-                            .definitions
-                            .into_iter()
-                            .filter(|definition| {
-                                matches!(definition.kind.as_str(), "class" | "interface" | "type")
-                            })
-                            .collect()
-                    });
-                Ok(Some(self.definitions_body(&definitions)))
-            }
+            "definition" => Ok(Some(self.definitions_at(command, arguments, false)?)),
+            "typeDefinition" => Ok(Some(self.definitions_at(command, arguments, true)?)),
             "references-full" => {
                 let (path, absolute) = self.location(arguments)?;
-                let references = self.service.references(&path, absolute);
-                Ok(Some(self.full_references_body(references)))
+                let references =
+                    claimed_navigation(command, self.service.references(&path, absolute))?;
+                Ok(Some(self.full_references_body(references)?))
             }
             "documentHighlights" => {
                 let (path, absolute) = self.location(arguments)?;
@@ -193,15 +167,17 @@ impl<R: Read, W: Write> Server<R, W> {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_else(|| vec![path.clone()]);
-                let highlights =
+                let highlights = claimed_navigation(
+                    command,
                     self.service
-                        .document_highlights(&path, absolute, &files_to_search);
-                Ok(Some(self.document_highlights_body(highlights)))
+                        .document_highlights(&path, absolute, &files_to_search),
+                )?;
+                Ok(Some(self.document_highlights_body(highlights)?))
             }
             "rename" => {
                 let (path, absolute) = self.location(arguments)?;
-                let rename = self.service.rename(&path, absolute);
-                Ok(Some(self.rename_body(&path, rename)))
+                let rename = claimed_navigation(command, self.service.rename(&path, absolute))?;
+                Ok(Some(self.rename_body(&path, rename)?))
             }
             // Harness state probe for adapter consistency; exposes text, never semantics.
             "tsz/text" => {
@@ -220,141 +196,136 @@ impl<R: Read, W: Write> Server<R, W> {
             )),
         }
     }
-
     fn location(&self, arguments: &Value) -> Result<(String, u32), String> {
         let path = file_argument(arguments)?.to_string();
-        let text = self
+        let source = self
             .service
-            .text(&path)
+            .source_coordinates(&path)
             .ok_or_else(|| format!("File is not open: {path}"))?;
-        let line = number_argument(arguments, "line")? as u32;
-        let offset = number_argument(arguments, "offset")? as u32;
-        let absolute = position_to_offset(&text, line, offset)
+        let line = number_argument(arguments, "line")?;
+        let offset = number_argument(arguments, "offset")?;
+        let absolute = source
+            .byte_offset(line, offset)
             .ok_or_else(|| "Position is outside the file.".to_string())?;
         Ok((path, absolute))
     }
-
+    fn definitions_at(
+        &self,
+        command: &str,
+        arguments: &Value,
+        type_only: bool,
+    ) -> Result<Value, String> {
+        let (path, absolute) = self.location(arguments)?;
+        let definitions = if type_only {
+            claimed_navigation(command, self.service.type_definition(&path, absolute))?
+        } else {
+            claimed_navigation(
+                command,
+                self.service.definition_and_bound_span(&path, absolute),
+            )?
+            .map_or_else(Vec::new, |result| result.definitions)
+        };
+        self.definitions_body(&definitions)
+    }
     fn definition_and_bound_span_body(
         &self,
         path: &str,
         result: Option<tsz::service::DefinitionAndBoundSpan>,
-    ) -> Value {
+    ) -> Result<Value, String> {
         let Some(result) = result else {
-            return json!({"definitions": []});
+            return Ok(json!({"definitions": []}));
         };
-        json!({
-            "definitions": self.definitions_body(&result.definitions),
-            "textSpan": self.protocol_span_for_open_file(path, result.text_span),
-        })
+        Ok(json!({
+            "definitions": self.definitions_body(&result.definitions)?,
+            "textSpan": protocol_span(self.source(path)?, result.text_span),
+        }))
     }
-
-    fn definitions_body(&self, definitions: &[DefinitionInfo]) -> Value {
-        Value::Array(
-            definitions
-                .iter()
-                .filter_map(|definition| {
-                    let text = self.service.text(&definition.file_name)?;
-                    let mut result = protocol_span(&text, definition.text_span);
-                    result["file"] = Value::String(definition.file_name.clone());
-                    result["kind"] = Value::String(definition.kind.clone());
-                    result["name"] = Value::String(definition.name.clone());
-                    result["containerName"] = Value::String(definition.container_name.clone());
-                    result["isLocal"] = Value::Bool(definition.is_local);
-                    result["isAmbient"] = Value::Bool(definition.is_ambient);
-                    result["unverified"] = Value::Bool(definition.unverified);
-                    result["failedAliasResolution"] =
-                        Value::Bool(definition.failed_alias_resolution);
-                    if let Some(context_span) = definition.context_span {
-                        let context = protocol_span(&text, context_span);
-                        result["contextStart"] = context["start"].clone();
-                        result["contextEnd"] = context["end"].clone();
-                    }
-                    Some(result)
-                })
-                .collect(),
-        )
+    fn definitions_body(&self, definitions: &[DefinitionInfo]) -> Result<Value, String> {
+        definitions
+            .iter()
+            .map(|definition| {
+                let source = self.source(&definition.file_name)?;
+                let metadata = json_value(definition);
+                let mut result =
+                    protocol_location(source, definition.text_span, definition.context_span);
+                for (target, source) in [
+                    ("file", "fileName"),
+                    ("kind", "kind"),
+                    ("name", "name"),
+                    ("containerKind", "containerKind"),
+                    ("containerName", "containerName"),
+                    ("isLocal", "isLocal"),
+                    ("isAmbient", "isAmbient"),
+                    ("unverified", "unverified"),
+                    ("failedAliasResolution", "failedAliasResolution"),
+                ] {
+                    result[target] = metadata[source].clone();
+                }
+                Ok(result)
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map(Value::Array)
     }
-
-    fn protocol_span_for_open_file(&self, path: &str, span: TextSpan) -> Value {
+    fn source(&self, path: &str) -> Result<&SourceText, String> {
         self.service
-            .text(path)
-            .map_or_else(|| json!({}), |text| protocol_span(&text, span))
+            .source_coordinates(path)
+            .ok_or_else(|| format!("File is not open: {path}"))
     }
-
-    fn full_references_body(&self, references: Vec<ReferencedSymbol>) -> Value {
-        Value::Array(
-            references
-                .into_iter()
-                .filter_map(|referenced| {
-                    let definition_text = self.service.text(&referenced.definition.file_name)?;
-                    let mut definition = json!({
-                        "containerKind": referenced.definition.container_kind,
-                        "containerName": referenced.definition.container_name,
-                        "fileName": referenced.definition.file_name,
-                        "kind": referenced.definition.kind,
-                        "name": referenced.definition.name,
-                        "textSpan": absolute_span(&definition_text, referenced.definition.text_span),
-                        "displayParts": referenced.definition.display_parts,
-                    });
-                    if let Some(context_span) = referenced.definition.context_span {
-                        definition["contextSpan"] = absolute_span(&definition_text, context_span);
-                    }
-                    let entries = referenced
-                        .references
-                        .into_iter()
-                        .filter_map(|entry| self.full_reference_entry(entry))
-                        .collect::<Vec<_>>();
-                    Some(json!({"definition": definition, "references": entries}))
-                })
-                .collect(),
-        )
+    fn full_references_body(&self, references: Vec<ReferencedSymbol>) -> Result<Value, String> {
+        references
+            .into_iter()
+            .map(|referenced| {
+                let source = self.source(&referenced.definition.file_name)?;
+                let mut definition = json_value(&referenced.definition);
+                definition["textSpan"] = absolute_span(source, referenced.definition.text_span);
+                if let Some(context_span) = referenced.definition.context_span {
+                    definition["contextSpan"] = absolute_span(source, context_span);
+                }
+                let entries = referenced
+                    .references
+                    .into_iter()
+                    .map(|entry| self.full_reference_entry(entry))
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(json!({"definition": definition, "references": entries}))
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map(Value::Array)
     }
-
-    fn full_reference_entry(&self, entry: ReferenceEntry) -> Option<Value> {
-        let text = self.service.text(&entry.file_name)?;
-        let mut result = json!({
-            "textSpan": absolute_span(&text, entry.text_span),
-            "fileName": entry.file_name,
-            "isWriteAccess": entry.is_write_access,
-        });
+    fn full_reference_entry(&self, entry: ReferenceEntry) -> Result<Value, String> {
+        let source = self.source(&entry.file_name)?;
+        let mut result = json_value(&entry);
+        result["textSpan"] = absolute_span(source, entry.text_span);
         if let Some(context_span) = entry.context_span {
-            result["contextSpan"] = absolute_span(&text, context_span);
+            result["contextSpan"] = absolute_span(source, context_span);
         }
-        if let Some(is_definition) = entry.is_definition {
-            result["isDefinition"] = Value::Bool(is_definition);
-        }
-        Some(result)
+        Ok(result)
     }
-
-    fn document_highlights_body(&self, highlights: Vec<DocumentHighlights>) -> Value {
-        Value::Array(
-            highlights
-                .into_iter()
-                .filter_map(|document| {
-                    let text = self.service.text(&document.file_name)?;
-                    let spans = document
-                        .highlight_spans
-                        .into_iter()
-                        .map(|highlight| {
-                            let mut span = protocol_span(&text, highlight.text_span);
-                            span["kind"] = Value::String(highlight.kind);
-                            if let Some(context_span) = highlight.context_span {
-                                let context = protocol_span(&text, context_span);
-                                span["contextStart"] = context["start"].clone();
-                                span["contextEnd"] = context["end"].clone();
-                            }
-                            span
-                        })
-                        .collect::<Vec<_>>();
-                    Some(json!({"file": document.file_name, "highlightSpans": spans}))
-                })
-                .collect(),
-        )
+    fn document_highlights_body(
+        &self,
+        highlights: Vec<DocumentHighlights>,
+    ) -> Result<Value, String> {
+        highlights
+            .into_iter()
+            .map(|document| {
+                let source = self.source(&document.file_name)?;
+                let spans = document
+                    .highlight_spans
+                    .into_iter()
+                    .map(|highlight| {
+                        let mut span =
+                            protocol_location(source, highlight.text_span, highlight.context_span);
+                        span["kind"] = Value::String(highlight.kind);
+                        span
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!({"file": document.file_name, "highlightSpans": spans}))
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map(Value::Array)
     }
-
-    fn rename_body(&self, path: &str, rename: RenameResult) -> Value {
+    fn rename_body(&self, path: &str, rename: RenameResult) -> Result<Value, String> {
         if !rename.info.can_rename {
-            return json!({
+            return Ok(json!({
                 "info": {
                     "canRename": false,
                     "localizedErrorMessage": rename
@@ -363,18 +334,14 @@ impl<R: Read, W: Write> Server<R, W> {
                         .unwrap_or_else(|| "You cannot rename this element.".to_string()),
                 },
                 "locs": [],
-            });
+            }));
         }
         let trigger_span = rename.info.trigger_span.map_or_else(
-            || json!({}),
-            |span| {
-                self.service
-                    .text(path)
-                    .map_or_else(|| json!({}), |text| protocol_span_with_length(&text, span))
-            },
-        );
-        let locations = self.rename_location_groups(rename.locations);
-        json!({
+            || Ok::<_, String>(json!({})),
+            |span| Ok(protocol_span_with_length(self.source(path)?, span)),
+        )?;
+        let locations = self.rename_location_groups(rename.locations)?;
+        Ok(json!({
             "info": {
                 "canRename": true,
                 "displayName": rename.info.display_name.unwrap_or_default(),
@@ -384,58 +351,47 @@ impl<R: Read, W: Write> Server<R, W> {
                 "triggerSpan": trigger_span,
             },
             "locs": locations,
-        })
+        }))
     }
-
-    fn rename_location_groups(&self, locations: Vec<RenameLocation>) -> Vec<Value> {
+    fn rename_location_groups(&self, locations: Vec<RenameLocation>) -> Result<Vec<Value>, String> {
         let mut groups: std::collections::BTreeMap<String, Vec<Value>> =
             std::collections::BTreeMap::new();
         for location in locations {
-            let Some(text) = self.service.text(&location.file_name) else {
-                continue;
-            };
-            let mut span = protocol_span(&text, location.text_span);
-            if let Some(context_span) = location.context_span {
-                let context = protocol_span(&text, context_span);
-                span["contextStart"] = context["start"].clone();
-                span["contextEnd"] = context["end"].clone();
-            }
+            let source = self.source(&location.file_name)?;
+            let span = protocol_location(source, location.text_span, location.context_span);
             groups.entry(location.file_name).or_default().push(span);
         }
-        groups
+        Ok(groups
             .into_iter()
             .map(|(file, locs)| json!({"file": file, "locs": locs}))
-            .collect()
+            .collect())
     }
-
     fn apply_change(&mut self, path: &str, arguments: &Value) -> Result<(), String> {
-        let current = self
-            .service
-            .text(path)
-            .ok_or_else(|| format!("File is not open: {path}"))?;
+        let source = self.source(path)?;
         if let Some(full_text) = arguments.get("fileContent").and_then(Value::as_str) {
             self.service.change(path, Arc::<str>::from(full_text));
             return Ok(());
         }
-        let start_line = number_argument(arguments, "line")? as u32;
-        let start_offset = number_argument(arguments, "offset")? as u32;
+        let start_line = number_argument(arguments, "line")?;
+        let start_offset = number_argument(arguments, "offset")?;
         let end_line = arguments
             .get("endLine")
-            .and_then(Value::as_u64)
-            .unwrap_or(u64::from(start_line)) as u32;
-        let end_offset = arguments
-            .get("endOffset")
-            .and_then(Value::as_u64)
-            .unwrap_or(u64::from(start_offset)) as u32;
-        let start = position_to_offset(&current, start_line, start_offset)
+            .map_or(Ok(start_line), |_| number_argument(arguments, "endLine"))?;
+        let end_offset = arguments.get("endOffset").map_or(Ok(start_offset), |_| {
+            number_argument(arguments, "endOffset")
+        })?;
+        let start = source
+            .byte_offset(start_line, start_offset)
             .ok_or_else(|| "Change start is outside the file.".to_string())?
             as usize;
-        let end = position_to_offset(&current, end_line, end_offset)
+        let end = source
+            .byte_offset(end_line, end_offset)
             .ok_or_else(|| "Change end is outside the file.".to_string())?
             as usize;
-        if start > end || !current.is_char_boundary(start) || !current.is_char_boundary(end) {
+        if start > end {
             return Err("Change range is invalid.".to_string());
         }
+        let current = source.text();
         let inserted = arguments
             .get("insertString")
             .and_then(Value::as_str)
@@ -447,12 +403,10 @@ impl<R: Read, W: Write> Server<R, W> {
         self.service.change(path, Arc::<str>::from(changed));
         Ok(())
     }
-
     fn diagnostics_body(&self, path: &str, diagnostics: Vec<Diagnostic>, args: &Value) -> Value {
-        let Some(text) = self.service.text(path) else {
+        let Some(source) = self.service.source_coordinates(path) else {
             return json!([]);
         };
-        let source = SourceText::new(FileId(0), path.into(), text);
         let include_line_position = args.get("includeLinePosition").is_some_and(|value| {
             !matches!(value, Value::Null | Value::Bool(false))
                 && value.as_f64() != Some(0.0)
@@ -464,14 +418,15 @@ impl<R: Read, W: Write> Server<R, W> {
                 .map(|diagnostic| {
                     let start = source.line_and_column(diagnostic.start);
                     let end = source.line_and_column(diagnostic.start + diagnostic.length);
+                    let message = diagnostic_message_text(&diagnostic);
                     match include_line_position {
                         false => json!({
                             "start": {"line": start.0, "offset": start.1}, "end": {"line": end.0, "offset": end.1},
-                            "text": diagnostic.message_text, "code": diagnostic.code,
+                            "text": message, "code": diagnostic.code,
                             "category": diagnostic.category.as_str(),
                         }),
                         true => json!({
-                            "message": diagnostic.message_text, "start": diagnostic.start, "length": diagnostic.length,
+                            "message": message, "start": diagnostic.start, "length": diagnostic.length,
                             "startLocation": {"line": start.0, "offset": start.1}, "endLocation": {"line": end.0, "offset": end.1},
                             "category": diagnostic.category.as_str(), "code": diagnostic.code,
                         }),
@@ -482,7 +437,27 @@ impl<R: Read, W: Write> Server<R, W> {
     }
 }
 
-fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>> {
+fn diagnostic_message_text(diagnostic: &Diagnostic) -> String {
+    let mut message = diagnostic.message_text.clone();
+    for related in &diagnostic.related_information {
+        message.push('\n');
+        message.push_str(&"  ".repeat(related.depth.max(1) as usize));
+        message.push_str(&related.message_text);
+    }
+    message
+}
+
+fn claimed_navigation<T>(command: &str, query: ServiceQuery<T>) -> Result<T, String> {
+    match query {
+        ServiceQuery::Claimed(value) => Ok(value),
+        ServiceQuery::Nonclaimed(nonclaim) => Err(format!(
+            "TSZ {command} incomplete: {}",
+            nonclaim.completion().as_str()
+        )),
+    }
+}
+
+pub fn read_framed_message(reader: &mut impl BufRead) -> Result<Option<Value>> {
     let mut content_length = None;
     loop {
         let mut line = String::new();
@@ -503,73 +478,11 @@ fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>> {
     Ok(Some(serde_json::from_slice(&body)?))
 }
 
-fn write_message(writer: &mut impl Write, message: &Value) -> Result<()> {
-    let body = if message.get("command").and_then(Value::as_str) == Some("references-full") {
-        serde_json::to_vec(&OrderedReferencesJson(message))?
-    } else {
-        serde_json::to_vec(message)?
-    };
+pub fn write_framed_message(writer: &mut impl Write, message: &Value) -> Result<()> {
+    let body = serde_json::to_vec(message)?;
     write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
     writer.write_all(&body)?;
     Ok(())
-}
-
-/// `references-full` is consumed directly by the TypeScript service harness,
-/// whose baselines preserve JavaScript insertion order. `serde_json::Value`
-/// stores maps in lexical order in this workspace, so serialize the protocol's
-/// structurally ordered fields without changing their values.
-struct OrderedReferencesJson<'a>(&'a Value);
-
-impl Serialize for OrderedReferencesJson<'_> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self.0 {
-            Value::Array(values) => serializer.collect_seq(values.iter().map(Self)),
-            Value::Object(values) => {
-                let mut keys = values.keys().map(String::as_str).collect::<Vec<_>>();
-                let order = references_field_order(values);
-                keys.sort_by_key(|key| {
-                    order
-                        .iter()
-                        .position(|candidate| candidate == key)
-                        .unwrap_or(order.len())
-                });
-                serializer.collect_map(keys.into_iter().map(|key| (key, Self(&values[key]))))
-            }
-            value => value.serialize(serializer),
-        }
-    }
-}
-
-fn references_field_order(values: &serde_json::Map<String, Value>) -> &'static [&'static str] {
-    if values.contains_key("containerKind") && values.contains_key("displayParts") {
-        &[
-            "containerKind",
-            "containerName",
-            "fileName",
-            "kind",
-            "name",
-            "textSpan",
-            "displayParts",
-            "contextSpan",
-        ]
-    } else if values.len() == 2 && values.contains_key("text") && values.contains_key("kind") {
-        &["text", "kind"]
-    } else if values.len() == 2 && values.contains_key("start") && values.contains_key("length") {
-        &["start", "length"]
-    } else if values.contains_key("isWriteAccess") && values.contains_key("fileName") {
-        &[
-            "textSpan",
-            "fileName",
-            "contextSpan",
-            "isWriteAccess",
-            "isDefinition",
-        ]
-    } else {
-        &[]
-    }
 }
 
 fn response(
@@ -604,11 +517,49 @@ fn file_argument(arguments: &Value) -> Result<&str, String> {
         .ok_or_else(|| "Request requires a file argument.".to_string())
 }
 
-fn number_argument(arguments: &Value, name: &str) -> Result<u64, String> {
-    arguments
+fn open_content(arguments: &Value, path: &str) -> Result<Arc<str>, String> {
+    if let Some(content) = arguments
+        .get("fileContent")
+        .or_else(|| arguments.get("content"))
+    {
+        return content
+            .as_str()
+            .map(Arc::<str>::from)
+            .ok_or_else(|| "Open request content must be a string.".to_string());
+    }
+
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("Cannot open file '{path}' from disk: {error}"))?;
+    Ok(Arc::<str>::from(decode_disk_source(&bytes)))
+}
+
+fn decode_disk_source(bytes: &[u8]) -> String {
+    if let Some(content) = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
+        return String::from_utf8_lossy(content).into_owned();
+    }
+    let (content, little_endian) = if let Some(content) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        (content, true)
+    } else if let Some(content) = bytes.strip_prefix(&[0xfe, 0xff]) {
+        (content, false)
+    } else {
+        return String::from_utf8_lossy(bytes).into_owned();
+    };
+    let words = content
+        .chunks_exact(2)
+        .map(|pair| match little_endian {
+            true => u16::from_le_bytes([pair[0], pair[1]]),
+            false => u16::from_be_bytes([pair[0], pair[1]]),
+        })
+        .collect::<Vec<_>>();
+    String::from_utf16_lossy(&words)
+}
+
+fn number_argument(arguments: &Value, name: &str) -> Result<u32, String> {
+    let value = arguments
         .get(name)
         .and_then(Value::as_u64)
-        .ok_or_else(|| format!("Request requires a numeric {name} argument."))
+        .ok_or_else(|| format!("Request requires a numeric {name} argument."))?;
+    u32::try_from(value).map_err(|_| format!("Request {name} is outside the supported range."))
 }
 
 fn compiler_options(value: &Value) -> CompilerOptions {
@@ -645,62 +596,54 @@ fn compiler_options(value: &Value) -> CompilerOptions {
     }
 }
 
-fn position_to_offset(text: &str, line: u32, offset: u32) -> Option<u32> {
-    if line == 0 || offset == 0 {
-        return None;
-    }
-    let line_start = match line {
-        1 => 0,
-        _ => text.match_indices('\n').nth(line as usize - 2)?.0 + 1,
-    };
-    let target_units = offset - 1;
-    let line_text = text.get(line_start..)?.split(['\r', '\n']).next()?;
-    let mut units = 0_u32;
-    for (relative, character) in line_text.char_indices() {
-        if units == target_units {
-            return Some((line_start + relative) as u32);
-        }
-        units += character.len_utf16() as u32;
-        if units > target_units {
-            return None;
-        }
-    }
-    (units == target_units).then_some((line_start + line_text.len()) as u32)
-}
-
-fn protocol_span(text: &str, span: TextSpan) -> Value {
+fn protocol_span(source: &SourceText, span: TextSpan) -> Value {
+    let start = source
+        .position(span.start)
+        .expect("valid service span start");
+    let end = source
+        .position(span.start + span.length)
+        .expect("valid service span end");
     json!({
-        "start": offset_to_position(text, span.start),
-        "end": offset_to_position(text, span.start.saturating_add(span.length)),
+        "start": {"line": start.0, "offset": start.1},
+        "end": {"line": end.0, "offset": end.1},
     })
 }
 
-fn protocol_span_with_length(text: &str, span: TextSpan) -> Value {
-    let mut result = protocol_span(text, span);
+fn protocol_location(source: &SourceText, span: TextSpan, context_span: Option<TextSpan>) -> Value {
+    let mut result = protocol_span(source, span);
+    if let Some(context_span) = context_span {
+        let context = protocol_span(source, context_span);
+        result["contextStart"] = context["start"].clone();
+        result["contextEnd"] = context["end"].clone();
+    }
+    result
+}
+
+fn protocol_span_with_length(source: &SourceText, span: TextSpan) -> Value {
+    let mut result = protocol_span(source, span);
     result["length"] = Value::from(
-        byte_to_utf16_offset(text, span.start.saturating_add(span.length))
-            .saturating_sub(byte_to_utf16_offset(text, span.start)),
+        source
+            .utf16_range(span.start, span.length)
+            .expect("valid service span")
+            .1,
     );
     result
 }
 
-fn absolute_span(text: &str, span: TextSpan) -> Value {
-    let start = byte_to_utf16_offset(text, span.start);
-    let end = byte_to_utf16_offset(text, span.start.saturating_add(span.length));
-    json!({"start": start, "length": end.saturating_sub(start)})
+fn absolute_span(source: &SourceText, span: TextSpan) -> Value {
+    let (start, length) = source
+        .utf16_range(span.start, span.length)
+        .expect("valid service span");
+    json!({"start": start, "length": length})
 }
 
-fn offset_to_position(text: &str, offset: u32) -> Value {
-    let end = usize::try_from(offset)
-        .unwrap_or(usize::MAX)
-        .min(text.len());
-    let (line, line_text) = text[..end].split('\n').enumerate().last().unwrap();
-    json!({"line": line as u32 + 1, "offset": line_text.encode_utf16().count() as u32 + 1})
+fn json_value(value: &impl serde::Serialize) -> Value {
+    serde_json::to_value(value).expect("service response is serializable")
 }
 
-fn byte_to_utf16_offset(text: &str, offset: u32) -> u32 {
-    let end = usize::try_from(offset)
-        .unwrap_or(usize::MAX)
-        .min(text.len());
-    text[..end].encode_utf16().count() as u32
-}
+#[cfg(test)]
+#[path = "../rewrite-tests/tsserver_coordinates_unit.rs"]
+mod tests;
+#[cfg(test)]
+#[path = "../rewrite-tests/tsserver_type_definition_unit.rs"]
+mod type_definition_tests;

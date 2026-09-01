@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use crate::source::{NodeId, Span};
 use crate::syntax::{
     ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionEdge,
-    ExpressionKind, FunctionLikeBody, NestedStatement, ParameterNameKind, ParserRecoveryFact,
-    ParserRecoveryKind, Statement, StatementKind, TokenKind, walk_statement_list,
+    ExpressionKind, ExpressionRoot, ExpressionTraversal, FunctionLikeBody, NestedStatement,
+    ParameterNameKind, ParserRecoveryFact, ParserRecoveryKind, Statement, StatementKind, TokenKind,
+    contains_matching_expression, walk_statement_list,
 };
 
 use super::{SemanticGap, SyntaxGap};
@@ -17,9 +18,6 @@ pub(super) enum FileBoundary {
     ClassProperty,
 }
 
-/// Immutable ownership inventory for capability decisions. Statement-list
-/// state is folded in source order; each function, class, member, and
-/// function-like expression starts a fresh executable container.
 #[derive(Default)]
 pub(super) struct SemanticNodeInventory {
     pub(super) flow_regions: BTreeSet<NodeId>,
@@ -65,14 +63,6 @@ struct FlowContext {
 
 impl FlowContext {
     const ROOT: Self = Self::fresh(NodeId(0), false);
-
-    const fn owner(self, owner: NodeId) -> Self {
-        Self {
-            owners: (owner, owner),
-            ..self
-        }
-    }
-
     const fn fresh(owner: NodeId, active: bool) -> Self {
         Self {
             active,
@@ -98,7 +88,7 @@ impl<'ast> DescendantAdapter<'ast> for FlowRegionCollector<'_> {
         match container {
             DescendantContainer::Statement(statement) => FlowContext {
                 active: context.active || self.statement_starts_flow_region(statement),
-                ..context.owner(statement.id)
+                owners: (statement.id, statement.id),
             },
             DescendantContainer::Function(statement, declaration) => self.function_context(
                 statement.id,
@@ -106,45 +96,56 @@ impl<'ast> DescendantAdapter<'ast> for FlowRegionCollector<'_> {
                 &declaration.body,
                 declaration.has_leading_jsdoc,
                 &declaration.parameters,
+                declaration.return_type.is_none(),
             ),
             DescendantContainer::Class(statement, declaration) => {
-                self.out.boundaries.extend(
-                    (declaration.abstract_class
-                        || declaration
-                            .members
-                            .iter()
-                            .any(|member| !member.emit_products_supported))
-                    .then_some(FileBoundary::ClassProduct),
-                );
-                self.out.boundaries.extend(
-                    declaration
-                        .members
-                        .iter()
-                        .any(|member| matches!(member.kind, ClassMemberKind::Property { .. }))
-                        .then_some(FileBoundary::ClassProperty),
-                );
+                let members = &declaration.members;
+                if declaration.abstract_class
+                    || members.iter().any(|member| !member.emit_products_supported)
+                {
+                    self.out.boundaries.insert(FileBoundary::ClassProduct);
+                }
+                if members
+                    .iter()
+                    .any(|member| matches!(member.kind, ClassMemberKind::Property { .. }))
+                {
+                    self.out.boundaries.insert(FileBoundary::ClassProperty);
+                }
                 FlowContext::fresh(statement.id, false)
             }
             DescendantContainer::ClassMember(member) => {
-                let (parameters, body, has_body) = match &member.kind {
+                let (parameters, body, has_body, inferred_return) = match &member.kind {
                     ClassMemberKind::Constructor {
                         parameters,
                         body,
                         has_body,
                         ..
-                    }
-                    | ClassMemberKind::Method {
+                    } => (parameters.as_slice(), body.as_slice(), *has_body, false),
+                    ClassMemberKind::Method {
                         parameters,
                         body,
                         has_body,
+                        return_type,
                         ..
-                    } => (parameters.as_slice(), body.as_slice(), *has_body),
+                    } => (
+                        parameters.as_slice(),
+                        body.as_slice(),
+                        *has_body,
+                        return_type.is_none(),
+                    ),
                     ClassMemberKind::Property { .. } => unreachable!(),
                 };
                 if !has_body {
                     self.out.boundaries.insert(FileBoundary::CommonJsClass);
                 }
-                self.function_context(member.id, member.span, body, false, parameters)
+                self.function_context(
+                    member.id,
+                    member.span,
+                    body,
+                    false,
+                    parameters,
+                    inferred_return,
+                )
             }
             DescendantContainer::FunctionLike(expression, function) => {
                 let body_start = self.record_function_like(expression, function);
@@ -162,27 +163,28 @@ impl<'ast> DescendantAdapter<'ast> for FlowRegionCollector<'_> {
         statement: &'ast Statement,
         _next_statement: Option<&'ast Statement>,
     ) -> NestedStatement {
-        self.out.flow_regions.extend(
-            (context.active && statement_is_executable_region_member(statement))
-                .then_some(statement.id),
-        );
-        let declaration_boundary = match &statement.kind {
-            StatementKind::Import(item) => {
-                item.type_only || item.bindings.iter().any(|binding| binding.type_only)
-            }
-            StatementKind::Export(item) => {
-                item.type_only || item.specifiers.iter().any(|specifier| specifier.type_only)
-            }
-            StatementKind::TypeAlias(_) | StatementKind::Interface(_) => true,
-            _ => false,
+        let (executable, declaration_boundary) = match &statement.kind {
+            StatementKind::Import(item) => (
+                false,
+                item.type_only || item.bindings.iter().any(|binding| binding.type_only),
+            ),
+            StatementKind::Export(item) => (
+                item.assignment.is_some(),
+                item.type_only || item.specifiers.iter().any(|specifier| specifier.type_only),
+            ),
+            StatementKind::TypeAlias(_) | StatementKind::Interface(_) => (false, true),
+            StatementKind::Empty => (false, false),
+            _ => (true, false),
         };
-        self.out
-            .boundaries
-            .extend(declaration_boundary.then_some(FileBoundary::Declaration));
-        self.out.javascript_jsdoc_values.extend(
-            matches!(&statement.kind, StatementKind::Variable(item) if item.has_leading_jsdoc)
-                .then_some(statement.id),
-        );
+        if context.active && executable {
+            self.out.flow_regions.insert(statement.id);
+        }
+        if declaration_boundary {
+            self.out.boundaries.insert(FileBoundary::Declaration);
+        }
+        if matches!(&statement.kind, StatementKind::Variable(item) if item.has_leading_jsdoc) {
+            self.out.javascript_jsdoc_values.insert(statement.id);
+        }
         NestedStatement::Descend
     }
 
@@ -196,7 +198,21 @@ impl<'ast> DescendantAdapter<'ast> for FlowRegionCollector<'_> {
                 owners: (expression.id, context.owners.1),
                 ..*context
             },
-            ExpressionEdge::PropertyInitializer(member) => FlowContext::fresh(member.id, false),
+            ExpressionEdge::PropertyInitializer(member) => {
+                if member.has_leading_jsdoc
+                    && let ClassMemberKind::Property {
+                        initializer: Some(initializer),
+                        ..
+                    } = &member.kind
+                {
+                    let initializer = initializer.peel_parentheses();
+                    self.out.function_like_gaps.extend(
+                        matches!(initializer.kind, ExpressionKind::FunctionLike(_))
+                            .then_some((initializer.id, SemanticGap::JavaScriptJSDocSignature)),
+                    );
+                }
+                FlowContext::fresh(member.id, false)
+            }
         }
     }
 
@@ -212,16 +228,15 @@ impl<'ast> DescendantAdapter<'ast> for FlowRegionCollector<'_> {
             self.out.javascript_jsdoc_values.insert(context.owners.0);
             self.out.javascript_jsdoc_checks.insert(context.owners.1);
         }
-        self.out.javascript_jsdoc_values.extend(
-            matches!(
-                expression.kind,
-                ExpressionKind::Assignment {
-                    has_leading_jsdoc: true,
-                    ..
-                }
-            )
-            .then_some(expression.id),
-        );
+        if matches!(
+            expression.kind,
+            ExpressionKind::Assignment {
+                has_leading_jsdoc: true,
+                ..
+            }
+        ) {
+            self.out.javascript_jsdoc_values.insert(expression.id);
+        }
     }
 }
 
@@ -233,8 +248,13 @@ impl FlowRegionCollector<'_> {
         body: &[Statement],
         jsdoc: bool,
         parameters: &[crate::syntax::Parameter],
+        inferred_return: bool,
     ) -> FlowContext {
         self.record_signature_gaps(owner, jsdoc, parameters);
+        self.out.function_like_gaps.extend(
+            (inferred_return && has_complete_conditional(ExpressionRoot::Statements(body)))
+                .then_some((owner, SemanticGap::DeclarationExpressionSummary)),
+        );
         FlowContext::fresh(
             owner,
             self.record_recovery(owner, span, first_statement_start(body, span.end)),
@@ -267,9 +287,9 @@ impl FlowRegionCollector<'_> {
         self.out.function_likes.insert(owner);
         self.record_signature_gaps(owner, function.has_leading_jsdoc, &function.parameters);
         let object_method = function.syntax.is_object_method();
-        self.out
-            .object_method_owners
-            .extend(object_method.then_some(owner));
+        if object_method {
+            self.out.object_method_owners.insert(owner);
+        }
         if let Some((_, body)) = function.syntax.function()
             && let Some(body_span) = function.body_span
         {
@@ -277,7 +297,15 @@ impl FlowRegionCollector<'_> {
                 owner,
                 span: expression.span,
                 body_span,
-                inline_body_supported: inline_body_supported(body),
+                inline_body_supported: body.iter().all(|statement| {
+                    matches!(
+                        statement.kind,
+                        StatementKind::Variable(_)
+                            | StatementKind::Return(_)
+                            | StatementKind::Expression(_)
+                            | StatementKind::Empty
+                    )
+                }),
             };
             (if object_method {
                 &mut self.out.object_methods
@@ -290,17 +318,27 @@ impl FlowRegionCollector<'_> {
             matches!(function.syntax.function(), Some((Some(name), _)) if name.token_kind != TokenKind::Identifier)
                 .then_some((owner, SemanticGap::FunctionExpressionBindingName)),
         );
-        self.out.function_like_gaps.extend(
-            (!function.type_parameters.is_empty())
-                .then_some((owner, SemanticGap::FunctionLikeTypeParameters)),
-        );
-        self.out.function_like_binding_patterns.extend(
-            function
-                .parameters
-                .iter()
-                .any(|parameter| parameter.name_kind == ParameterNameKind::BindingPattern)
-                .then_some(owner),
-        );
+        if function.return_type.is_none() {
+            self.out.function_like_gaps.extend(
+                has_complete_conditional(match function.syntax.body() {
+                    FunctionLikeBody::Expression(body) => ExpressionRoot::Expression(body),
+                    FunctionLikeBody::Statements(body) => ExpressionRoot::Statements(body),
+                })
+                .then_some((owner, SemanticGap::DeclarationExpressionSummary)),
+            );
+        }
+        if !function.type_parameters.is_empty() {
+            self.out
+                .function_like_gaps
+                .push((owner, SemanticGap::FunctionLikeTypeParameters));
+        }
+        if function
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name_kind == ParameterNameKind::BindingPattern)
+        {
+            self.out.function_like_binding_patterns.insert(owner);
+        }
         let body_start = match function.syntax.body() {
             FunctionLikeBody::Expression(body) => body.span.start,
             FunctionLikeBody::Statements(body) => first_statement_start(body, expression.span.end),
@@ -332,7 +370,6 @@ impl FlowRegionCollector<'_> {
         }
         gap.is_some()
     }
-
     fn statement_starts_flow_region(&self, statement: &Statement) -> bool {
         let expression = match &statement.kind {
             StatementKind::If(statement) => &statement.condition,
@@ -348,31 +385,15 @@ impl FlowRegionCollector<'_> {
     }
 }
 
+fn has_complete_conditional(root: ExpressionRoot<'_>) -> bool {
+    contains_matching_expression(root, ExpressionTraversal::Executed, |expression| {
+        matches!(&expression.kind, ExpressionKind::Conditional { when_true, when_false, .. }
+            if !matches!(when_true.kind, ExpressionKind::Missing)
+                && !matches!(when_false.kind, ExpressionKind::Missing))
+    })
+}
 fn first_statement_start(statements: &[Statement], fallback: u32) -> u32 {
     statements
         .first()
         .map_or(fallback, |statement| statement.span.start)
-}
-
-fn inline_body_supported(body: &[Statement]) -> bool {
-    body.iter().all(|statement| {
-        matches!(
-            statement.kind,
-            StatementKind::Variable(_)
-                | StatementKind::Return(_)
-                | StatementKind::Expression(_)
-                | StatementKind::Empty
-        )
-    })
-}
-
-const fn statement_is_executable_region_member(statement: &Statement) -> bool {
-    match &statement.kind {
-        StatementKind::Import(_)
-        | StatementKind::TypeAlias(_)
-        | StatementKind::Interface(_)
-        | StatementKind::Empty => false,
-        StatementKind::Export(declaration) => declaration.assignment.is_some(),
-        _ => true,
-    }
 }

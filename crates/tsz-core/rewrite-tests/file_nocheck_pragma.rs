@@ -74,6 +74,7 @@ fn direct_trailing_text_and_colon_forms_match_ts7() {
         ("trailing", "// @ts-nocheck additional comments"),
         ("colon", "// @ts-nocheck: additional comments"),
         ("triple-case", "///\t@TS-NOCHECK trailing"),
+        ("zero-width-space", "//\u{200b}@ts-nocheck"),
     ] {
         let source = format!("{directive}\nconst hidden: string = 1;\n");
         let output = Compiler::new().compile(vec![input("case.ts", &source)], &options());
@@ -324,7 +325,7 @@ fn javascript_and_declaration_products_continue_without_semantic_checking() {
 }
 
 #[test]
-fn ts7_trailing_text_corpus_witnesses_complete() {
+fn ts7_trailing_text_corpus_witnesses_suppress_checking_before_binary_dts_defers() {
     for directive in [
         "// @ts-nocheck additional comments",
         "// @ts-nocheck: additional comments",
@@ -347,18 +348,19 @@ fn ts7_trailing_text_corpus_witnesses_complete() {
             "{directive}: {:#?}",
             output.diagnostics
         );
+        assert_eq!(output.stats.types, 0, "{directive}");
         assert_eq!(
             output.semantic_completion,
-            SemanticCompletion::Complete,
+            SemanticCompletion::Deferred,
             "{directive}"
         );
         assert_eq!(
             output.exit_status,
-            CompileExitStatus::Success,
+            CompileExitStatus::SemanticIncomplete,
             "{directive}"
         );
         assert!(output.emitted_files.iter().any(|file| !file.declaration));
-        assert!(output.emitted_files.iter().any(|file| file.declaration));
+        assert!(output.emitted_files.iter().all(|file| !file.declaration));
     }
 }
 

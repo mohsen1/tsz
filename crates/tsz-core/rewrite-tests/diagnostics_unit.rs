@@ -1,4 +1,4 @@
-use super::Diagnostic;
+use super::{Diagnostic, RelatedInformation, sort_and_deduplicate};
 use crate::source::{FileId, SourceText, Span};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,4 +51,57 @@ fn source_diagnostic_rendering_uses_typescript_line_terminators() {
             "{separator:?}",
         );
     }
+}
+
+#[test]
+fn diagnostic_order_uses_full_public_identity_before_internal_file_id() {
+    let related = RelatedInformation {
+        file: "origin.ts".to_string(),
+        start: 4,
+        length: 2,
+        message_text: "Origin.".to_string(),
+        code: 9001,
+        depth: 1,
+    };
+    let mut duplicate = Diagnostic::error("case.ts".to_string(), 3, 2, "B".to_string(), 2000)
+        .with_related_information(vec![related.clone()]);
+    duplicate.file_id = Some(FileId(1));
+    let mut duplicate_from_another_host = duplicate.clone();
+    duplicate_from_another_host.file_id = Some(FileId(3));
+    let mut distinct_related =
+        Diagnostic::error("case.ts".to_string(), 3, 2, "B".to_string(), 2000)
+            .with_related_information(vec![RelatedInformation::unlocated("Other.", 9002, 1)]);
+    distinct_related.file_id = Some(FileId(2));
+    let mut diagnostics = vec![
+        duplicate.clone(),
+        Diagnostic::error("case.ts".to_string(), 3, 1, "C".to_string(), 3000),
+        Diagnostic::error("case.ts".to_string(), 3, 2, "A".to_string(), 1000)
+            .with_related_information(vec![related]),
+        distinct_related,
+        duplicate_from_another_host,
+    ];
+
+    sort_and_deduplicate(&mut diagnostics);
+
+    assert_eq!(diagnostics.len(), 4);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.length,
+                diagnostic.code,
+                diagnostic.message_text.as_str(),
+                diagnostic
+                    .related_information
+                    .first()
+                    .map_or("", |related| related.message_text.as_str()),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (1, 3000, "C", ""),
+            (2, 1000, "A", "Origin."),
+            (2, 2000, "B", "Other."),
+            (2, 2000, "B", "Origin."),
+        ]
+    );
 }

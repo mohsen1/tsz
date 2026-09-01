@@ -1,11 +1,91 @@
+use crate::program::DefaultExportDeclaration;
 use crate::syntax::{
     AccessorKind, ClassDeclaration, ClassMember, ClassMemberKind, ExportDeclaration,
-    ImportDeclaration, Statement, StatementKind, SwitchClauseKind, TokenKind,
+    ExpressionKind, ImportDeclaration, Statement, StatementKind, SwitchClauseKind, TokenKind,
 };
 
 use super::{End, Gap, Kind, ModuleFormat, PREC_LOWEST, Printer};
 
 impl Printer<'_> {
+    pub(super) fn write_declaration_statement(&mut self, statement: &Statement) {
+        use StatementKind::*;
+        match &statement.kind {
+            Import(_) => self.write_raw_statement(statement),
+            Export(declaration) => self.write_declaration_export(statement, declaration),
+            Variable(declaration) => self.write_declaration_variable(declaration),
+            Function(declaration) => self.write_declaration_function(declaration),
+            Class(declaration) => self.write_declaration_class(declaration),
+            TypeAlias(declaration) => self.write_declaration_type_alias(declaration),
+            Interface(declaration) => self.write_declaration_interface(declaration),
+            Return(_) | If(_) | Switch(_) | Break(_) | Continue(_) | Block(_) | Expression(_)
+            | Empty | Unknown => {}
+        }
+    }
+    fn write_declaration_export(&mut self, statement: &Statement, declaration: &ExportDeclaration) {
+        let Some(expression) = declaration.assignment.as_ref() else {
+            self.write_esmodule_export(declaration);
+            return;
+        };
+        if !declaration.default_export {
+            self.reject_declaration();
+            return;
+        }
+        if matches!(expression.kind, ExpressionKind::Identifier { .. }) {
+            self.write_raw_statement(statement);
+            return;
+        }
+        let Some(summary) = self
+            .declaration_summaries()
+            .and_then(|summaries| summaries.default_export(statement.span.file, statement.id))
+        else {
+            self.reject_declaration();
+            return;
+        };
+        let (literal, ty, preferred_name) = match summary {
+            DefaultExportDeclaration::Literal => (true, None, None),
+            DefaultExportDeclaration::Typed {
+                ty, preferred_name, ..
+            } => (false, Some(ty.text.clone()), preferred_name.as_deref()),
+        };
+        let name = self.default_export_name(preferred_name);
+        self.write_indent();
+        self.output.push_str("declare const ");
+        self.output.push_str(&name);
+        if literal {
+            self.output.push_str(" = ");
+            self.write_expression(expression.peel_parentheses(), super::PREC_LOWEST);
+        } else if let Some(ty) = ty {
+            self.output.push_str(": ");
+            self.output.push_str(&ty);
+        }
+        self.output.push_str(";\n");
+        self.write_indent();
+        self.output.push_str("export default ");
+        self.output.push_str(&name);
+        self.output.push_str(";\n");
+    }
+
+    fn default_export_name(&self, preferred: Option<&str>) -> String {
+        let base = preferred.unwrap_or("_default");
+        if !self
+            .bindings
+            .scopes
+            .first()
+            .is_some_and(|scope| scope.names.contains_key(base))
+        {
+            return base.to_string();
+        }
+        (1..)
+            .map(|index| format!("{base}_{index}"))
+            .find(|candidate| {
+                !self
+                    .bindings
+                    .scopes
+                    .first()
+                    .is_some_and(|scope| scope.names.contains_key(candidate))
+            })
+            .expect("a finite declaration scope has a free generated name")
+    }
     pub(super) fn write_javascript_statement(&mut self, statement: &Statement, top_level: bool) {
         let emitted = self.javascript_statement_is_emitted(statement);
         self.write_comments_before_node(statement.span, emitted);
@@ -91,28 +171,19 @@ impl Printer<'_> {
         }
         self.write_comments_after_node(statement.span, true);
     }
-
     pub(super) fn javascript_statement_is_emitted(&self, statement: &Statement) -> bool {
+        use StatementKind::*;
         match &statement.kind {
-            StatementKind::Import(declaration) => self.javascript_import_is_emitted(declaration),
-            StatementKind::Export(declaration) => self.javascript_export_is_emitted(declaration),
-            StatementKind::Variable(declaration) => !declaration.declared,
-            StatementKind::Function(declaration) => !declaration.declared && declaration.has_body,
-            StatementKind::Class(declaration) => !declaration.declared,
-            StatementKind::TypeAlias(_) | StatementKind::Interface(_) | StatementKind::Unknown => {
-                false
-            }
-            StatementKind::If(_)
-            | StatementKind::Switch(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
-            | StatementKind::Return(_)
-            | StatementKind::Block(_)
-            | StatementKind::Expression(_)
-            | StatementKind::Empty => true,
+            Import(declaration) => self.javascript_import_is_emitted(declaration),
+            Export(declaration) => self.javascript_export_is_emitted(declaration),
+            Variable(declaration) => !declaration.declared,
+            Function(declaration) => !declaration.declared && declaration.has_body,
+            Class(declaration) => !declaration.declared,
+            TypeAlias(_) | Interface(_) | Unknown => false,
+            If(_) | Switch(_) | Break(_) | Continue(_) | Return(_) | Block(_) | Expression(_)
+            | Empty => true,
         }
     }
-
     fn javascript_import_is_emitted(&self, declaration: &ImportDeclaration) -> bool {
         !declaration.type_only
             && (declaration.side_effect_only
@@ -121,7 +192,6 @@ impl Printer<'_> {
                     .iter()
                     .any(|binding| !binding.type_only))
     }
-
     fn javascript_export_is_emitted(&self, declaration: &ExportDeclaration) -> bool {
         if !export_has_runtime_product(declaration) {
             return false;
@@ -140,7 +210,6 @@ impl Printer<'_> {
             }
         }
     }
-
     fn write_javascript_if(&mut self, control_flow: &crate::syntax::IfStatement) {
         let mut control_flow = control_flow;
         self.write_indent();
@@ -183,7 +252,6 @@ impl Printer<'_> {
         }
         self.write_newline();
     }
-
     fn write_body_gap(&mut self, kind: TokenKind, statement: &Statement) {
         let separator = if matches!(&statement.kind, StatementKind::Block(_)) {
             Gap::Space
@@ -192,7 +260,6 @@ impl Printer<'_> {
         };
         self.write_gap(Kind(kind, statement.span.start), true, separator);
     }
-
     fn write_control_flow_body(&mut self, statement: &Statement) {
         if let StatementKind::Block(statements) = &statement.kind {
             self.write_braced_statements(Some(statement.span), statements);
@@ -202,7 +269,6 @@ impl Printer<'_> {
             self.indent = self.indent.saturating_sub(1);
         }
     }
-
     fn write_jump_statement(
         &mut self,
         keyword: &str,
@@ -229,10 +295,13 @@ impl Printer<'_> {
                 self.output.push_str("default ");
             }
         }
-        self.output.push_str("class ");
+        self.output.push_str("class");
         if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
-            self.output.push_str(&declaration.name);
-        } else {
+            self.output.push(' ');
+            self.output
+                .push_str(&self.declaration_runtime_name(&declaration.name));
+        } else if !declaration.name.is_empty() {
+            self.output.push(' ');
             self.write_authored_identifier(&declaration.name, declaration.name_span);
         }
         if let Some(base) = &declaration.extends {
@@ -241,7 +310,16 @@ impl Printer<'_> {
         }
         self.output.push_str(" {\n");
         self.indent += 1;
+        let mut empty_index = 0;
         for member in &declaration.members {
+            while declaration
+                .empty_elements
+                .get(empty_index)
+                .is_some_and(|span| span.start < member.span.start)
+            {
+                self.write_javascript_empty_class_element(declaration.empty_elements[empty_index]);
+                empty_index += 1;
+            }
             let emitted = Self::javascript_class_member_is_emitted(member);
             self.write_comments_before_node(member.span, emitted);
             if !emitted {
@@ -250,6 +328,9 @@ impl Printer<'_> {
             }
             self.write_javascript_class_member(member, declaration.extends.is_some());
             self.write_comments_after_node(member.span, true);
+        }
+        for span in &declaration.empty_elements[empty_index..] {
+            self.write_javascript_empty_class_element(*span);
         }
         if let Some(body_span) = declaration.body_span {
             self.write_comments_before_close(body_span.end);
@@ -264,8 +345,16 @@ impl Printer<'_> {
             } else {
                 &declaration.name
             };
-            self.write_commonjs_export(export_name, &declaration.name, None);
+            let runtime_name = self.declaration_runtime_name(&declaration.name);
+            self.write_commonjs_export(export_name, &runtime_name);
         }
+    }
+
+    fn write_javascript_empty_class_element(&mut self, span: crate::source::Span) {
+        self.write_comments_before_node(span, true);
+        self.write_indent();
+        self.output.push_str(";\n");
+        self.write_comments_after_node(span, true);
     }
 
     const fn javascript_class_member_is_emitted(member: &ClassMember) -> bool {
@@ -386,6 +475,15 @@ impl Printer<'_> {
     }
 }
 
+pub(super) const fn declaration_statement_is_emitted(statement: &Statement) -> bool {
+    use StatementKind::*;
+    match &statement.kind {
+        Import(_) | Variable(_) | Function(_) | Class(_) | TypeAlias(_) | Interface(_) => true,
+        Export(declaration) => declaration.assignment.is_none() || declaration.default_export,
+        _ => false,
+    }
+}
+
 pub(super) fn export_has_runtime_product(declaration: &ExportDeclaration) -> bool {
     let has_runtime_specifier = declaration
         .specifiers
@@ -393,4 +491,32 @@ pub(super) fn export_has_runtime_product(declaration: &ExportDeclaration) -> boo
         .any(|specifier| !specifier.type_only);
     !declaration.type_only
         && (declaration.export_all || declaration.assignment.is_some() || has_runtime_specifier)
+}
+
+pub(super) fn module_export_facts(statements: &[Statement]) -> (bool, bool) {
+    use StatementKind::*;
+
+    statements.iter().fold((false, false), |facts, statement| {
+        let next = match &statement.kind {
+            Import(_) => (true, false),
+            Export(declaration) => (true, export_has_runtime_product(declaration)),
+            Variable(declaration) => (
+                declaration.exported,
+                declaration.exported && !declaration.declared,
+            ),
+            Function(declaration) => (
+                declaration.exported,
+                declaration.exported && !declaration.declared && declaration.has_body,
+            ),
+            Class(declaration) => (
+                declaration.exported,
+                declaration.exported && !declaration.declared,
+            ),
+            TypeAlias(declaration) => (declaration.exported, false),
+            Interface(declaration) => (declaration.exported, false),
+            If(_) | Switch(_) | Break(_) | Continue(_) | Return(_) | Block(_) | Expression(_)
+            | Empty | Unknown => (false, false),
+        };
+        (facts.0 || next.0, facts.1 || next.1)
+    })
 }

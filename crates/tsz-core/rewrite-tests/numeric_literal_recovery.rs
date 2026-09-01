@@ -450,7 +450,7 @@ fn exact_sixteen_row_checked_no_check_no_emit_and_javascript_manifest() {
                     options(no_check, no_emit),
                 );
                 let recovery_is_unmodeled = case.source == "01.0";
-                let expected_completion = if recovery_is_unmodeled {
+                let expected_completion = if recovery_is_unmodeled && !no_emit {
                     SemanticCompletion::Deferred
                 } else {
                     SemanticCompletion::Complete
@@ -466,7 +466,7 @@ fn exact_sixteen_row_checked_no_check_no_emit_and_javascript_manifest() {
                     "{} noCheck={no_check} noEmit={no_emit}",
                     case.name
                 );
-                let expected_status = if recovery_is_unmodeled {
+                let expected_status = if recovery_is_unmodeled && !no_emit {
                     CompileExitStatus::SemanticIncomplete
                 } else if case.parser_diagnostics.is_empty() {
                     CompileExitStatus::Success
@@ -687,16 +687,50 @@ fn separator_radix_and_fraction_adjacencies_fail_closed() {
     }
 
     // Decimal invalid-separator runs keep an immediate BigInt suffix in the
-    // same token, matching the pre-campaign scanner boundary. TS6188/TS6189
-    // remain unowned, so every product mode stays explicitly Deferred.
-    for (source_text, end) in [("1_n", 3), ("0_1n", 4), ("1__0n", 5)] {
+    // same token. Exact separator diagnostics are scanner-owned, while the
+    // unsupported recovered value keeps every product explicitly Deferred.
+    for (source_text, end, expected) in [
+        (
+            "1_n",
+            3,
+            (6188, 1, 1, "Numeric separators are not allowed here."),
+        ),
+        (
+            "0_1n",
+            4,
+            (6188, 1, 1, "Numeric separators are not allowed here."),
+        ),
+        (
+            "1__0n",
+            5,
+            (
+                6189,
+                2,
+                1,
+                "Multiple consecutive numeric separators are not permitted.",
+            ),
+        ),
+    ] {
         let source = SourceText::new(
             FileId(15),
             PathBuf::from("invalid-separator-bigint.ts"),
             Arc::<str>::from(source_text),
         );
         let scanned = scan_source(&source);
-        assert!(scanned.diagnostics.is_empty(), "{source_text:?}");
+        assert_eq!(
+            scanned
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (
+                    diagnostic.code,
+                    diagnostic.start,
+                    diagnostic.length,
+                    diagnostic.message_text.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            [expected],
+            "{source_text:?}"
+        );
         assert_eq!(
             scanned
                 .tokens
@@ -710,7 +744,20 @@ fn separator_radix_and_fraction_adjacencies_fail_closed() {
             "{source_text:?}"
         );
         let parsed = parse_source(&source);
-        assert!(parsed.diagnostics.is_empty(), "{source_text:?}");
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (
+                    diagnostic.code,
+                    diagnostic.start,
+                    diagnostic.length,
+                    diagnostic.message_text.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            [expected],
+            "{source_text:?}"
+        );
         let [
             Statement {
                 kind:
@@ -738,7 +785,20 @@ fn separator_radix_and_fraction_adjacencies_fail_closed() {
                 SemanticCompletion::Deferred
             );
             assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-            assert!(output.diagnostics.is_empty(), "{source_text:?}");
+            assert_eq!(
+                output
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| (
+                        diagnostic.code,
+                        diagnostic.start,
+                        diagnostic.length,
+                        diagnostic.message_text.as_str(),
+                    ))
+                    .collect::<Vec<_>>(),
+                [expected],
+                "{source_text:?}"
+            );
             assert!(output.emitted_files.is_empty(), "{source_text:?}");
         }
     }
@@ -941,21 +1001,50 @@ fn separator_radix_and_fraction_adjacencies_fail_closed() {
         assert!(output.emitted_files.is_empty());
     }
 
-    // TS6188 and its exact separator spans are not owned by this campaign.
-    // These typed scanner facts must defer without inventing a partial event.
-    for source_text in ["0_1", "0x_FF", "0b_1", "0o_1"] {
+    // Exact separator diagnostics are scanner-owned. The typed recovery facts
+    // still defer because their semantic values are deliberately unvalidated.
+    for (source_text, expected) in [
+        ("0_1", Some((6188, 1, 1))),
+        ("0x_FF", Some((6188, 2, 1))),
+        ("0b_1", Some((6188, 2, 1))),
+        ("0o_1", Some((6188, 2, 1))),
+    ] {
         let source = SourceText::new(
             FileId(13),
             PathBuf::from("unowned-separator.ts"),
             Arc::<str>::from(source_text),
         );
         let scanned = scan_source(&source);
-        assert!(scanned.diagnostics.is_empty(), "{source_text:?}");
+        assert_eq!(
+            scanned
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
+                .collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>(),
+            "{source_text:?}"
+        );
         let parsed = parse_source(&source);
-        assert!(parsed.diagnostics.is_empty(), "{source_text:?}");
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
+                .collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>(),
+            "{source_text:?}"
+        );
         let output = compile("unowned-separator.ts", source_text, options(false, false));
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert!(output.diagnostics.is_empty(), "{source_text:?}");
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
+                .collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>(),
+            "{source_text:?}"
+        );
         assert!(output.emitted_files.is_empty(), "{source_text:?}");
     }
 
@@ -1054,6 +1143,20 @@ fn unvalidated_recovery_is_deferred_across_repeat_and_root_order() {
                 ))
                 .collect::<Vec<_>>(),
             [
+                (
+                    "a.ts",
+                    6188,
+                    2,
+                    1,
+                    "Numeric separators are not allowed here.",
+                ),
+                (
+                    "b.ts",
+                    6188,
+                    2,
+                    1,
+                    "Numeric separators are not allowed here.",
+                ),
                 ("b.ts", 1124, 3, 0, DIGIT_EXPECTED),
                 ("c.ts", 1124, 3, 0, DIGIT_EXPECTED),
             ]

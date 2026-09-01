@@ -66,6 +66,7 @@ else process.exit(1);
   const pinnedCli = new CliTranspiler(5_000, {
     binaryPath: pinned.binaryPath,
     label: 'pinned-typescript-7-allow-js-witness',
+    diagnosticWitnessProvider: 'typescript-7-api',
   });
   const jsInput = {
     sourceFiles: [{ name: 'input.js', content: 'module.exports = 1;\n' }],
@@ -87,6 +88,65 @@ else process.exit(1);
     assert.equal(disabled.outcome.exitCode, 2);
     assert.equal(disabled.outcome.diagnosticCodes.includes('TS6504'), true);
     assert.deepEqual(disabled.jsProducts, [], 'explicit false remains distinct from explicit true');
+
+    const semanticOptions = {
+      sourceFiles: [{ name: 'src/case.ts', content: 'const value: number = "wrong";\r\n' }],
+      strict: true,
+      noEmitOnError: true,
+    };
+    const semantic = await pinnedCli.transpile('', undefined, undefined, semanticOptions);
+    assert.equal(semantic.outcome.exitCode, 1);
+    assert.deepEqual(semantic.outcome.diagnosticCodes, ['TS2322']);
+    assert.deepEqual(semantic.outcome.diagnosticWitnesses, [{
+      path: 'src/case.ts',
+      start: 6,
+      length: 5,
+      category: 'error',
+      code: 'TS2322',
+      text: "Type 'string' is not assignable to type 'number'.",
+      messageChain: [],
+      relatedInformation: [],
+    }]);
+    const repeated = await pinnedCli.transpile('', undefined, undefined, semanticOptions);
+    assert.deepEqual(
+      repeated.outcome.diagnosticWitnesses,
+      semantic.outcome.diagnosticWitnesses,
+      'one pinned API session is reused without leaking per-invocation paths or state',
+    );
+
+    const globals = await pinnedCli.transpile('', undefined, undefined, {
+      sourceFiles: [{ name: 'globals.ts', content: 'const value = 1;\n' }],
+      noEmit: true,
+      noLib: true,
+    });
+    assert.equal(globals.outcome.exitCode, 1);
+    assert.equal(globals.outcome.diagnosticCodes.length, 10);
+    assert.equal(globals.outcome.diagnosticWitnesses?.length, 10);
+    assert.ok(globals.outcome.diagnosticWitnesses?.every(diagnostic =>
+      diagnostic.path === null && diagnostic.start === null && diagnostic.length === null
+    ));
+
+    const chain = await pinnedCli.transpile('', undefined, undefined, {
+      sourceFiles: [{
+        name: 'chain.ts',
+        content: 'declare const source: {a:{b:string}}; const target: {a:{b:number}} = source;\n',
+      }],
+      noEmit: true,
+      strict: true,
+    });
+    assert.equal(chain.outcome.exitCode, 1);
+    assert.deepEqual(chain.outcome.diagnosticCodes, ['TS2322']);
+    assert.deepEqual(chain.outcome.diagnosticWitnesses?.[0]?.messageChain, [{
+      text: "The types of 'a.b' are incompatible between these types.",
+      category: 'error',
+      code: 'TS2200',
+      next: [{
+        text: "Type 'string' is not assignable to type 'number'.",
+        category: 'error',
+        code: 'TS2322',
+        next: [],
+      }],
+    }]);
   } finally {
     pinnedCli.terminate();
   }

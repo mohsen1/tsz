@@ -33,7 +33,7 @@ fn shared_schema_mutates_every_supported_option_outside_debug_assertions() {
     .map(OsString::from);
 
     let invocation = parse_arguments(&arguments).expect("all schema options parse");
-    assert!(invocation.unknown_options.is_empty());
+    assert!(invocation.command_line_diagnostics.is_empty());
     assert_eq!(
         invocation.options,
         CompilerOptionPatch {
@@ -61,6 +61,7 @@ fn shared_schema_mutates_every_supported_option_outside_debug_assertions() {
             root_dir: Some(PathBuf::from("source")),
             out_dir: Some(PathBuf::from("output")),
             declaration_dir: Some(PathBuf::from("types")),
+            ..CompilerOptionPatch::default()
         }
     );
 }

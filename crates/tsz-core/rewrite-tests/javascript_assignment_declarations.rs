@@ -1,7 +1,13 @@
 use std::sync::Arc;
 
-use tsz::service::LanguageService;
+use tsz::diagnostics::DiagnosticCategory;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
 
 fn compile(files: &[(&str, &str)]) -> tsz::CompileOutput {
     compile_with_no_unused(files, false)
@@ -20,6 +26,25 @@ fn compile_with_no_unused(files: &[(&str, &str)], no_unused: bool) -> tsz::Compi
             no_emit: true,
             no_unused_locals: no_unused,
             no_unused_parameters: no_unused,
+            ..CompilerOptions::default()
+        },
+    )
+}
+
+fn compile_javascript_implicit_any(files: &[(&str, &str)], no_check: bool) -> tsz::CompileOutput {
+    Compiler::new().compile(
+        files
+            .iter()
+            .map(|(path, source)| SourceInput::new(*path, Arc::<str>::from(*source)))
+            .collect(),
+        &CompilerOptions {
+            allow_js: true,
+            check_js: Some(true),
+            strict: false,
+            no_implicit_any: Some(true),
+            no_check,
+            no_emit: true,
+            target: "es2015".to_string(),
             ..CompilerOptions::default()
         },
     )
@@ -80,16 +105,29 @@ fn assert_property_services_nonclaimed(
     offset: u32,
     files: &[String],
 ) {
-    assert!(service.quick_info(path, offset).is_none());
+    assert!(matches!(
+        service.quick_info(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    ));
     assert!(
-        service.definition_and_bound_span(path, offset).is_none(),
+        matches!(
+            service.definition_and_bound_span(path, offset),
+            ServiceQuery::Nonclaimed(_)
+        ),
         "definition at {path}:{offset} must wait for property navigation identity",
     );
-    assert!(service.references(path, offset).is_empty());
-    assert!(service.document_highlights(path, offset, files).is_empty());
-    let rename = service.rename(path, offset);
-    assert!(!rename.info.can_rename);
-    assert!(rename.locations.is_empty());
+    assert!(matches!(
+        service.references(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.document_highlights(path, offset, files),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.rename(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    ));
 }
 
 #[test]
@@ -212,6 +250,125 @@ fn jsdoc_typed_javascript_signature_is_capability_deferred() {
 }
 
 #[test]
+fn jsdoc_param_tag_on_class_property_initializer_has_no_false_implicit_any() {
+    let source = concat!(
+        "class Foo {\n",
+        "    /**@param {string} x */\n",
+        "    m = x => x.toLowerCase();\n",
+        "}\n",
+    );
+    let output = compile_javascript_implicit_any(&[("a.js", source)], false);
+
+    assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+}
+
+#[test]
+fn class_property_jsdoc_signature_locality_covers_wrappers_and_member_forms() {
+    let source = concat!(
+        "class Renamed {\n",
+        "  /** @param {number} directParameter */\n",
+        "  direct = directParameter => MissingInside;\n",
+        "  /** @param {number} wrappedParameter */\n",
+        "  wrapped = (((wrappedParameter) => wrappedParameter));\n",
+        "  /** @param {number} expressionParameter */\n",
+        "  expression = function (expressionParameter) { return expressionParameter; };\n",
+        "  /** @param {number} staticParameter */\n",
+        "  static fixed = staticParameter => staticParameter;\n",
+        "  /* ordinary block comment */\n",
+        "  ordinary = ordinaryParameter => ordinaryParameter;\n",
+        "  plain = plainParameter => plainParameter;\n",
+        "}\n",
+        "MissingSibling;\n",
+    );
+    let output = compile_javascript_implicit_any(&[("locality.js", source)], false);
+    let identity = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.file.as_str(),
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.category,
+                diagnostic.message_text.as_str(),
+                diagnostic.related_information.len(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        identity,
+        vec![
+            (
+                "locality.js",
+                2304,
+                source.find("MissingInside").unwrap() as u32,
+                "MissingInside".len() as u32,
+                DiagnosticCategory::Error,
+                "Cannot find name 'MissingInside'.",
+                0,
+            ),
+            (
+                "locality.js",
+                7006,
+                source.find("ordinaryParameter").unwrap() as u32,
+                "ordinaryParameter".len() as u32,
+                DiagnosticCategory::Error,
+                "Parameter 'ordinaryParameter' implicitly has an 'any' type.",
+                0,
+            ),
+            (
+                "locality.js",
+                7006,
+                source.find("plainParameter").unwrap() as u32,
+                "plainParameter".len() as u32,
+                DiagnosticCategory::Error,
+                "Parameter 'plainParameter' implicitly has an 'any' type.",
+                0,
+            ),
+            (
+                "locality.js",
+                2304,
+                source.find("MissingSibling").unwrap() as u32,
+                "MissingSibling".len() as u32,
+                DiagnosticCategory::Error,
+                "Cannot find name 'MissingSibling'.",
+                0,
+            ),
+        ],
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+}
+
+#[test]
+fn class_property_jsdoc_signature_is_repeatable_root_order_independent_and_nocheck_safe() {
+    let affected = (
+        "affected.js",
+        "class Vessel { /** @param {number} renamed */ invoke = renamed => renamed; }",
+    );
+    let independent = ("independent.js", "MissingCrossFile;");
+    let forward = compile_javascript_implicit_any(&[affected, independent], false);
+    let repeated = compile_javascript_implicit_any(&[affected, independent], false);
+    let reverse = compile_javascript_implicit_any(&[independent, affected], false);
+
+    assert_eq!(forward.diagnostics, repeated.diagnostics);
+    assert_eq!(forward.diagnostics, reverse.diagnostics);
+    assert_eq!(codes(&forward), [2304]);
+    assert_eq!(forward.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(repeated.semantic_completion, forward.semantic_completion);
+    assert_eq!(reverse.semantic_completion, forward.semantic_completion);
+
+    let unchecked = compile_javascript_implicit_any(&[affected, independent], true);
+    assert_eq!(unchecked.diagnostics, []);
+    assert_eq!(unchecked.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(unchecked.exit_status, CompileExitStatus::Success);
+}
+
+#[test]
 fn jsdoc_function_expression_is_deferred_but_ordinary_block_comments_are_not() {
     let documented = compile(&[(
         "documented-expression.js",
@@ -263,14 +420,14 @@ fn jsdoc_signature_withholds_quick_info_but_preserves_binder_definition_identity
     service.open("documented-service.js", Arc::<str>::from(source));
     let declaration = source.find("documented").unwrap() as u32;
     let reference = source.rfind("documented").unwrap() as u32;
-    assert!(
-        service
-            .quick_info("documented-service.js", declaration)
-            .is_none()
-    );
+    assert!(matches!(
+        service.quick_info("documented-service.js", declaration),
+        ServiceQuery::Nonclaimed(_)
+    ));
     assert!(
         service
             .definition_and_bound_span("documented-service.js", reference)
+            .expect_claimed("documented function definition")
             .is_some()
     );
 }
@@ -370,14 +527,14 @@ fn variable_jsdoc_value_withholds_quick_info_but_keeps_definition_identity() {
     service.open("variable-jsdoc-service.js", Arc::<str>::from(source));
     let declaration = source.find("alias").unwrap() as u32;
     let reference = source.rfind("alias").unwrap() as u32;
-    assert!(
-        service
-            .quick_info("variable-jsdoc-service.js", declaration)
-            .is_none()
-    );
+    assert!(matches!(
+        service.quick_info("variable-jsdoc-service.js", declaration),
+        ServiceQuery::Nonclaimed(_)
+    ));
     assert!(
         service
             .definition_and_bound_span("variable-jsdoc-service.js", reference)
+            .expect_claimed("JSDoc variable definition")
             .is_some()
     );
 }
@@ -805,6 +962,7 @@ fn expando_property_services_fail_closed_at_exact_member_nodes() {
     assert!(
         service
             .quick_info("members.js", source.find("left").unwrap() as u32)
+            .expect_claimed("expando root quick info")
             .is_some(),
         "the renamed root declaration remains independently claimed",
     );
@@ -827,6 +985,7 @@ fn expando_property_services_fail_closed_at_exact_member_nodes() {
         assert!(
             service
                 .definition_and_bound_span("members.js", start)
+                .expect_claimed("expando root definition")
                 .is_some(),
             "the root binder identity remains independently claimed",
         );
@@ -861,7 +1020,7 @@ fn cross_file_repeated_root_property_service_nonclaims_are_order_independent() {
 
 #[test]
 fn incomplete_and_unresolved_javascript_members_are_service_nonclaimed() {
-    for (path, source, claimed_root) in [
+    for (path, source, bound_root) in [
         ("unresolved.js", "missing.value=1; missing.value;", None),
         (
             "noneligible.js",
@@ -880,10 +1039,67 @@ fn incomplete_and_unresolved_javascript_members_are_service_nonclaimed() {
         for (property, _) in source.match_indices("value") {
             assert_property_services_nonclaimed(&service, path, property as u32, &files);
         }
-        if let Some(root) = claimed_root {
+        if let Some(root) = bound_root {
             let root = source.find(root).unwrap() as u32;
-            assert!(service.quick_info(path, root).is_some());
-            assert!(service.definition_and_bound_span(path, root).is_some());
+            assert!(matches!(
+                service.quick_info(path, root),
+                ServiceQuery::Nonclaimed(_)
+            ));
+            assert!(
+                service
+                    .definition_and_bound_span(path, root)
+                    .expect_claimed("JavaScript root definition")
+                    .is_some(),
+                "the root binder identity remains independently claimed",
+            );
+            assert!(matches!(
+                service.references(path, root),
+                ServiceQuery::Nonclaimed(_)
+            ));
+            assert!(
+                !service
+                    .document_highlights(path, root, &files)
+                    .expect_claimed("JavaScript root highlights")
+                    .is_empty()
+            );
+            assert!(
+                service
+                    .rename(path, root)
+                    .expect_claimed("JavaScript root rename")
+                    .info
+                    .can_rename
+            );
+        } else {
+            let root = source.find("missing").unwrap() as u32;
+            assert!(
+                service
+                    .quick_info(path, root)
+                    .expect_claimed("unresolved JavaScript root quick info")
+                    .is_none()
+            );
+            assert!(
+                service
+                    .definition_and_bound_span(path, root)
+                    .expect_claimed("unresolved JavaScript root definition")
+                    .is_none()
+            );
+            assert!(
+                service
+                    .references(path, root)
+                    .expect_claimed("unresolved JavaScript root references")
+                    .is_empty()
+            );
+            assert!(
+                service
+                    .document_highlights(path, root, &files)
+                    .expect_claimed("unresolved JavaScript root highlights")
+                    .is_empty()
+            );
+            let rename = service
+                .rename(path, root)
+                .expect_claimed("unresolved JavaScript root rename");
+            assert!(!rename.info.can_rename);
+            assert!(rename.locations.is_empty());
         }
     }
 }

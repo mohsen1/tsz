@@ -114,19 +114,31 @@ fn one_leading_comment_is_positioned_before_its_template_statement() {
 }
 
 #[test]
-fn unicode_line_comment_terminators_fail_closed_for_every_program_product() {
+fn unicode_line_comment_terminators_fail_closed_for_every_requested_program_product() {
     for no_check in [false, true] {
         for no_emit in [false, true] {
             for declaration in [false, true] {
                 for separator in ['\u{2028}', '\u{2029}'] {
-                    for source in [
-                        format!("// ordinary{separator}\"use strict\";"),
-                        format!("// ordinary{separator}declare const value: number;"),
-                        format!("// ordinary{separator}enum Kind {{ First }}"),
-                        format!("// ordinary{separator}`plain`;"),
-                        format!("// ordinary{separator}declare const value: number;\n`plain`;"),
-                        format!("#!/usr/bin/env node{separator}declare const value: number;"),
-                        format!("#!/usr/bin/env node{separator}`plain`;"),
+                    for (source, syntactic_diagnostics_are_complete) in [
+                        (format!("// ordinary{separator}\"use strict\";"), true),
+                        (
+                            format!("// ordinary{separator}declare const value: number;"),
+                            true,
+                        ),
+                        (
+                            format!("// ordinary{separator}enum Kind {{ First }}"),
+                            false,
+                        ),
+                        (format!("// ordinary{separator}`plain`;"), true),
+                        (
+                            format!("// ordinary{separator}declare const value: number;\n`plain`;"),
+                            true,
+                        ),
+                        (
+                            format!("#!/usr/bin/env node{separator}declare const value: number;"),
+                            true,
+                        ),
+                        (format!("#!/usr/bin/env node{separator}`plain`;"), true),
                     ] {
                         let output = compile(
                             "unicode-comment-tail.ts",
@@ -140,9 +152,14 @@ fn unicode_line_comment_terminators_fail_closed_for_every_program_product() {
                                 ..options("es2015")
                             },
                         );
+                        let expected = if no_check && no_emit && syntactic_diagnostics_are_complete
+                        {
+                            SemanticCompletion::Complete
+                        } else {
+                            SemanticCompletion::Deferred
+                        };
                         assert_eq!(
-                            output.semantic_completion,
-                            SemanticCompletion::Deferred,
+                            output.semantic_completion, expected,
                             "{source:?} noCheck={no_check} noEmit={no_emit} declaration={declaration}: {:?}",
                             output.diagnostics
                         );

@@ -1,6 +1,6 @@
 use super::super::{
     AuthoredLiteralKind, Expression, ExpressionKind, Literal, NumberLiteral, NumericRecoveryKind,
-    Token, TokenKind,
+    SourceSyntaxFact, Token, TokenKind,
 };
 use super::{Parser, scan_at};
 use crate::diagnostics::Diagnostic;
@@ -51,6 +51,33 @@ impl Parser<'_> {
         &mut self,
         expression: &Expression,
     ) -> bool {
+        let same_line = self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index);
+        if same_line
+            && matches!(expression.kind, ExpressionKind::Identifier { .. })
+            && self.kind() == TokenKind::NumericLiteral
+            && self.text(self.current().span).starts_with('.')
+        {
+            self.diagnostics.push(Diagnostic::at(
+                self.source,
+                expression.span,
+                "Unexpected keyword or identifier.".to_string(),
+                1434,
+            ));
+            return true;
+        }
+        if same_line
+            && matches!(expression.kind, ExpressionKind::Literal(Literal::Number(_)))
+            && self.kind() == TokenKind::Identifier
+            && self.identifier_value(self.current().span).is_some()
+        {
+            self.diagnostics.push(Diagnostic::at(
+                self.source,
+                self.current().span,
+                "';' expected.".to_string(),
+                1005,
+            ));
+            return true;
+        }
         let recovery_kind = match &expression.kind {
             ExpressionKind::Literal(Literal::Number(number)) => number.recovery_kind(),
             _ => None,
@@ -64,7 +91,7 @@ impl Parser<'_> {
                 && self.text(self.current().span).starts_with('.');
         if recovery_kind == Some(NumericRecoveryKind::MissingExponentDigits)
             && next_token_requires_separator
-            && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
+            && same_line
         {
             self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericRecovery);
             self.retain_recovery_extent(
@@ -76,7 +103,7 @@ impl Parser<'_> {
         if self.statement_nesting_depth != 0
             || !recovery_can_terminate_before_next_token
             || !next_token_requires_separator
-            || !self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
+            || !same_line
         {
             return false;
         }
@@ -87,11 +114,8 @@ impl Parser<'_> {
             1005,
         );
         self.diagnostics.push(diagnostic);
-        self.observe_literal_unsupported_host(AuthoredLiteralKind::NumericRecovery);
-        self.retain_recovery_extent(
-            super::super::ParserRecoveryKind::Expression,
-            expression.span,
-        );
+        self.source_syntax_facts
+            .insert(SourceSyntaxFact::NumericRecoveryEmit(expression.id));
         true
     }
 

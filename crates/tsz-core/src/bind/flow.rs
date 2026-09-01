@@ -1,5 +1,4 @@
-use rustc_hash::{FxHashMap, FxHashSet};
-
+use super::{BoundFile, Meaning, ScopeId, flow_assignment_root, simple_assignment_target};
 use crate::source::{DeclId, NodeId, Span};
 use crate::syntax::{
     BinaryOperator, DescendantContainer, Expression, ExpressionKind, ExpressionRoot,
@@ -7,9 +6,7 @@ use crate::syntax::{
     SwitchClauseKind, UnaryOperator, contains_matching_expression, for_each_statement_in,
     parse_number_literal,
 };
-
-use super::{BoundFile, Meaning, ScopeId, flow_assignment_root, simple_assignment_target};
-
+use rustc_hash::{FxHashMap, FxHashSet};
 #[derive(Debug, Clone)]
 pub(super) struct PendingFlowReference {
     pub(super) expression: NodeId,
@@ -18,7 +15,6 @@ pub(super) struct PendingFlowReference {
     pub(super) name: String,
     pub(super) demand: FlowDemandPath,
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum FlowAssignmentSource<T = (NodeId, DeclId)> {
     Reference(T),
@@ -27,16 +23,13 @@ pub(crate) enum FlowAssignmentSource<T = (NodeId, DeclId)> {
     LogicalOrConstruct([T; 2]),
     Join(Box<[FlowAssignmentSource<T>; 2]>),
 }
-
 pub(super) type PendingFlowAssignmentSource = FlowAssignmentSource<NodeId>;
-
 impl FlowAssignmentSource<NodeId> {
     fn reference(expression: &Expression) -> Option<NodeId> {
         let node = expression.peel_parentheses();
         matches!(&node.kind, ExpressionKind::Identifier { entity_name, .. } if *entity_name)
             .then_some(node.id)
     }
-
     pub(super) fn from_expression(expression: &Expression) -> Option<Self> {
         let expression = expression.peel_parentheses();
         match &expression.kind {
@@ -82,7 +75,6 @@ impl FlowAssignmentSource<NodeId> {
         }
     }
 }
-
 #[derive(Debug, Clone)]
 pub(super) struct PendingFlowMutation {
     pub(super) target: NodeId,
@@ -90,7 +82,6 @@ pub(super) struct PendingFlowMutation {
     pub(super) control: Option<NodeId>,
     pub(super) effect_span: Span,
 }
-
 #[derive(Debug, Clone, Default)]
 pub(super) struct PendingFlowFacts {
     pub(super) references: Vec<PendingFlowReference>,
@@ -99,22 +90,18 @@ pub(super) struct PendingFlowFacts {
     pub(super) evolving_array_declarations: Vec<DeclId>,
     pub(super) evolving_array_writes: Vec<NodeId>,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum FlowContainerKind {
     Ordinary,
     Creation,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct FlowContainer {
     pub(super) owner: NodeId,
     pub(super) kind: FlowContainerKind,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct FlowNodeId(u32);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TypeofWitness {
     Undefined,
@@ -126,37 +113,30 @@ pub(crate) enum TypeofWitness {
     Symbol,
     Function,
 }
-
 impl TypeofWitness {
     const fn bit(self) -> u8 {
         1 << self as u8
     }
 }
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct TypeofWitnessSet(u8);
-
 impl TypeofWitnessSet {
     pub(crate) const fn contains(self, witness: TypeofWitness) -> bool {
         self.0 & witness.bit() != 0
     }
-
     const fn insert(&mut self, witness: TypeofWitness) -> bool {
         let duplicate = self.contains(witness);
         self.0 |= witness.bit();
         duplicate
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FlowPathSegment(pub(crate) String);
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FlowDemandPath {
     pub(super) known_prefix: Vec<FlowPathSegment>,
     pub(super) complete: bool,
 }
-
 impl FlowDemandPath {
     pub(super) const fn root() -> Self {
         Self {
@@ -164,12 +144,10 @@ impl FlowDemandPath {
             complete: true,
         }
     }
-
     pub(super) fn member(mut self, name: &str) -> Self {
         self.known_prefix.insert(0, FlowPathSegment(name.into()));
         self
     }
-
     pub(super) fn element(mut self, index: &Expression) -> Self {
         if let Some(name) = flow_path_key(index) {
             self.known_prefix.insert(0, FlowPathSegment(name));
@@ -179,18 +157,15 @@ impl FlowDemandPath {
         }
         self
     }
-
     const fn is_root(&self) -> bool {
         self.complete && self.known_prefix.is_empty()
     }
 }
-
 #[derive(Clone, Copy)]
 struct PredicateRoute<'a> {
     path: &'a FlowDemandPath,
     unknown: FlowNodeId,
 }
-
 impl PredicateRoute<'_> {
     fn node_for(self, demand: &FlowDemandPath, supported: FlowNodeId) -> Option<FlowNodeId> {
         let shared_prefix = self.path.known_prefix.starts_with(&demand.known_prefix)
@@ -205,7 +180,6 @@ impl PredicateRoute<'_> {
             .or_else(|| ambiguous.then_some(self.unknown))
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FlowNarrowing {
     TruthinessCandidate(bool),
@@ -225,7 +199,6 @@ pub(crate) enum FlowNarrowing {
         truthy: Option<bool>,
     },
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnsupportedFlowKind {
     FunctionBoundaryCapture,
@@ -237,7 +210,6 @@ pub(crate) enum UnsupportedFlowKind {
     UnsupportedCase,
     InstanceOf,
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum BoundFlowNode {
     Start,
@@ -257,14 +229,12 @@ pub(crate) enum BoundFlowNode {
         kind: UnsupportedFlowKind,
     },
 }
-
 #[derive(Debug, Clone)]
 pub(crate) struct BoundFlowGraph {
     nodes: Vec<BoundFlowNode>,
     references: FxHashMap<NodeId, (DeclId, FlowNodeId)>,
     incomplete_declaration_values: FxHashSet<DeclId>,
 }
-
 impl Default for BoundFlowGraph {
     fn default() -> Self {
         Self {
@@ -274,7 +244,6 @@ impl Default for BoundFlowGraph {
         }
     }
 }
-
 impl BoundFlowGraph {
     pub(super) fn build(
         unit: &SourceUnit,
@@ -318,7 +287,6 @@ impl BoundFlowGraph {
         builder.graph.incomplete_declaration_values = incomplete_declaration_values;
         builder.graph
     }
-
     pub(crate) fn reference_node(
         &self,
         expression: NodeId,
@@ -328,16 +296,13 @@ impl BoundFlowGraph {
         (*resolved == declaration && !matches!(self.node(*node), BoundFlowNode::Start))
             .then_some(*node)
     }
-
     pub(crate) fn node(&self, node: FlowNodeId) -> &BoundFlowNode {
         &self.nodes[node.0 as usize]
     }
-
     pub(crate) fn declaration_value_is_incomplete(&self, declaration: DeclId) -> bool {
         self.incomplete_declaration_values.contains(&declaration)
     }
 }
-
 #[derive(Debug, Clone)]
 struct ResolvedReference {
     expression: NodeId,
@@ -347,13 +312,11 @@ struct ResolvedReference {
     container: Option<FlowContainer>,
     demand: FlowDemandPath,
 }
-
 struct ReferenceIndex {
     by_expression: FxHashMap<NodeId, ResolvedReference>,
     by_container: FxHashMap<Option<FlowContainer>, Vec<ResolvedReference>>,
     by_span: Vec<ResolvedReference>,
 }
-
 impl ReferenceIndex {
     fn new(
         bindings: &BoundFile,
@@ -396,11 +359,9 @@ impl ReferenceIndex {
             by_span,
         }
     }
-
     fn expression(&self, expression: NodeId) -> Option<ResolvedReference> {
         self.by_expression.get(&expression).cloned()
     }
-
     fn in_container_span(
         &self,
         container: Option<FlowContainer>,
@@ -410,11 +371,9 @@ impl ReferenceIndex {
             span_range(references, span, |item| item.span)
         })
     }
-
     fn in_span(&self, span: Span) -> &[ResolvedReference] {
         span_range(&self.by_span, span, |item| item.span)
     }
-
     fn after_in_container(
         &self,
         container: Option<FlowContainer>,
@@ -425,13 +384,11 @@ impl ReferenceIndex {
         &references[references.partition_point(|reference| reference.span.start < start)..]
     }
 }
-
 fn span_range<T>(items: &[T], span: Span, item_span: impl Fn(&T) -> Span) -> &[T] {
     let start = items.partition_point(|item| item_span(item).start < span.start);
     let end = items.partition_point(|item| item_span(item).start < span.end);
     &items[start..end]
 }
-
 fn resolve_assignment_source(
     references: &ReferenceIndex,
     source: &PendingFlowAssignmentSource,
@@ -467,7 +424,6 @@ fn resolve_assignment_source(
         PendingFlowAssignmentSource::Join(_) => None,
     }
 }
-
 #[derive(Debug, Clone)]
 struct ResolvedMutation {
     target: NodeId,
@@ -477,14 +433,11 @@ struct ResolvedMutation {
     control: Option<NodeId>,
     path: FlowDemandPath,
 }
-
 #[derive(Clone)]
 struct Arm(FlowNodeId, FlowNodeId, Option<FlowAssignmentSource>, bool);
-
 struct MutationIndex {
     by_container: FxHashMap<Option<FlowContainer>, Vec<ResolvedMutation>>,
 }
-
 impl MutationIndex {
     fn new(references: &ReferenceIndex, pending: &[PendingFlowMutation]) -> Self {
         let mut by_container: FxHashMap<Option<FlowContainer>, Vec<ResolvedMutation>> =
@@ -513,7 +466,6 @@ impl MutationIndex {
         }
         Self { by_container }
     }
-
     fn in_container_span(
         &self,
         container: Option<FlowContainer>,
@@ -524,7 +476,6 @@ impl MutationIndex {
         })
     }
 }
-
 struct FlowBuilder<'a> {
     bindings: &'a BoundFile,
     references: &'a ReferenceIndex,
@@ -533,7 +484,6 @@ struct FlowBuilder<'a> {
     graph: BoundFlowGraph,
     captured: Vec<(NodeId, DeclId, FlowNodeId)>,
 }
-
 fn apply_rebased_node(
     graph: &mut BoundFlowGraph,
     captured: &mut Vec<(NodeId, DeclId, FlowNodeId)>,
@@ -575,26 +525,22 @@ fn apply_rebased_node(
         graph.references.insert(expression, (declaration, node));
     }
 }
-
 struct LiteralSubject {
     expression: NodeId,
     declaration: DeclId,
     property: Option<String>,
     supported: bool,
 }
-
 enum SwitchMode {
     Typeof,
     Literal(Option<String>),
     UnsupportedLiteral,
 }
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum IfFlowEffects {
     SubjectOnly,
     AllMutations,
 }
-
 impl FlowBuilder<'_> {
     fn add_straight_line_assignment(&mut self, statement: &Statement) -> Option<()> {
         let StatementKind::Expression(expression) = &statement.kind else {
@@ -630,7 +576,6 @@ impl FlowBuilder<'_> {
         self.assign_after(mutation.span.end, container, declaration, node, None);
         Some(())
     }
-
     fn add_switch(&mut self, statement: &Statement) {
         let StatementKind::Switch(switch) = &statement.kind else {
             return;
@@ -686,7 +631,6 @@ impl FlowBuilder<'_> {
         let mut has_semantic_exit = false;
         let mut join_supported = labels_supported;
         let mut mutated = FxHashMap::default();
-
         for clause in &switch.clauses {
             let flow_neutral = clause
                 .statements
@@ -763,7 +707,6 @@ impl FlowBuilder<'_> {
                 Some(ClauseExit::Fallthrough) | None => previous_falls_through = true,
             }
         }
-
         if has_return || has_semantic_exit || !join_supported {
             let exit = self.unsupported(antecedent, subject, UnsupportedFlowKind::SwitchExit);
             self.assign_after(statement.span.end, container, subject, exit, None);
@@ -772,7 +715,6 @@ impl FlowBuilder<'_> {
             self.assign_after(statement.span.end, container, declaration, flow.1, None);
         }
     }
-
     fn add_if(&mut self, statement: &Statement) {
         let StatementKind::If(branch) = &statement.kind else {
             return;
@@ -902,7 +844,6 @@ impl FlowBuilder<'_> {
             IfFlowEffects::AllMutations,
         );
     }
-
     fn assign_if_nodes(
         &mut self,
         statement: &Statement,
@@ -1015,7 +956,6 @@ impl FlowBuilder<'_> {
             self.assign_after(statement.span.end, container, declaration, node, None);
         }
     }
-
     fn initializer_source(
         &self,
         statement: &Statement,
@@ -1044,7 +984,6 @@ impl FlowBuilder<'_> {
         }
         Some(FlowAssignmentSource::Literal(initializer.1.clone()))
     }
-
     fn assignment(&mut self, subject: DeclId, source: FlowAssignmentSource) -> FlowNodeId {
         self.push(BoundFlowNode::Assignment {
             antecedent: FlowNodeId(0),
@@ -1052,7 +991,6 @@ impl FlowBuilder<'_> {
             source,
         })
     }
-
     fn narrowing(
         &mut self,
         antecedent: FlowNodeId,
@@ -1065,7 +1003,6 @@ impl FlowBuilder<'_> {
             narrowing,
         })
     }
-
     fn add_predicate_if(
         &mut self,
         statement: &Statement,
@@ -1142,7 +1079,6 @@ impl FlowBuilder<'_> {
         }
         true
     }
-
     fn assign_after(
         &mut self,
         start: u32,
@@ -1162,7 +1098,6 @@ impl FlowBuilder<'_> {
             }
         }
     }
-
     fn typeof_subject(&self, expression: &Expression) -> Option<(NodeId, DeclId)> {
         let expression = expression.peel_parentheses();
         let ExpressionKind::Unary {
@@ -1176,7 +1111,6 @@ impl FlowBuilder<'_> {
         let reference = self.references.expression(expression.id)?;
         Some((expression.id, reference.declaration))
     }
-
     fn literal_subject(&self, expression: &Expression) -> Option<LiteralSubject> {
         let expression = expression.peel_parentheses();
         let (reference, path) = self.predicate_subject(expression)?;
@@ -1198,7 +1132,6 @@ impl FlowBuilder<'_> {
             supported,
         })
     }
-
     fn predicate_subject(
         &self,
         mut expression: &Expression,
@@ -1222,17 +1155,14 @@ impl FlowBuilder<'_> {
             }
         }
     }
-
     fn container(&self, node: NodeId) -> Option<FlowContainer> {
         let scope = self.bindings.scope_for_node.get(&node)?;
         self.bindings.scopes[scope.0 as usize].flow_container
     }
-
     fn antecedent(&self, expression: NodeId) -> FlowNodeId {
         let reference = self.graph.references.get(&expression);
         reference.map_or(FlowNodeId(0), |entry| entry.1)
     }
-
     fn if_root_mutates(&self, statement: &Statement, declaration: DeclId) -> bool {
         let container = self.container(statement.id);
         self.mutations
@@ -1240,7 +1170,6 @@ impl FlowBuilder<'_> {
             .iter()
             .any(|mutation| mutation.declaration == declaration && mutation.path.is_root())
     }
-
     fn assign_region(
         &mut self,
         span: Span,
@@ -1273,7 +1202,6 @@ impl FlowBuilder<'_> {
             }
         }
     }
-
     fn assign_path_mutations(
         &mut self,
         clause: Span,
@@ -1328,7 +1256,6 @@ impl FlowBuilder<'_> {
         }
         invalidated
     }
-
     fn assign_mutations(
         &mut self,
         clause: Span,
@@ -1393,7 +1320,6 @@ impl FlowBuilder<'_> {
             mutated.insert(declaration, Arm(local_node, outgoing, source, joinable));
         }
     }
-
     fn creation_capture_reaches(&self, mut scope: ScopeId, outer: Option<FlowContainer>) -> bool {
         let mut previous = outer;
         loop {
@@ -1416,13 +1342,11 @@ impl FlowBuilder<'_> {
             scope = parent;
         }
     }
-
     fn push(&mut self, node: BoundFlowNode) -> FlowNodeId {
         let id = FlowNodeId(self.graph.nodes.len() as u32);
         self.graph.nodes.push(node);
         id
     }
-
     fn unsupported(
         &mut self,
         antecedent: FlowNodeId,
@@ -1436,7 +1360,6 @@ impl FlowBuilder<'_> {
         })
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClauseExit {
     Break,
@@ -1444,7 +1367,6 @@ enum ClauseExit {
     Fallthrough,
     Unsupported,
 }
-
 fn clause_exit(statement: &Statement) -> ClauseExit {
     match &statement.kind {
         StatementKind::Break(_) => ClauseExit::Break,
@@ -1467,7 +1389,6 @@ fn clause_exit(statement: &Statement) -> ClauseExit {
         _ => ClauseExit::Fallthrough,
     }
 }
-
 fn typeof_witness(value: &str) -> Option<TypeofWitness> {
     match value {
         "undefined" => Some(TypeofWitness::Undefined),
@@ -1481,7 +1402,6 @@ fn typeof_witness(value: &str) -> Option<TypeofWitness> {
         _ => None,
     }
 }
-
 fn literal_value(expression: &Expression) -> Option<String> {
     match &expression.peel_parentheses().kind {
         ExpressionKind::Literal(Literal::String(StringLiteral::Plain(value))) => {
@@ -1493,7 +1413,6 @@ fn literal_value(expression: &Expression) -> Option<String> {
         _ => None,
     }
 }
-
 fn flow_path_key(expression: &Expression) -> Option<String> {
     match &expression.peel_parentheses().kind {
         ExpressionKind::Literal(Literal::Number(value)) if value.validation_supported() => {
@@ -1502,12 +1421,10 @@ fn flow_path_key(expression: &Expression) -> Option<String> {
         _ => literal_value(expression),
     }
 }
-
 fn switch_label(expression: &Expression, mode: &SwitchMode) -> Option<String> {
     let value = literal_value(expression)?;
     (!matches!(mode, SwitchMode::Typeof) || typeof_witness(&value).is_some()).then_some(value)
 }
-
 fn flow_narrowing(mode: &SwitchMode, include: bool, labels: &[String]) -> Option<FlowNarrowing> {
     match mode {
         SwitchMode::Typeof => {
@@ -1525,7 +1442,6 @@ fn flow_narrowing(mode: &SwitchMode, include: bool, labels: &[String]) -> Option
         SwitchMode::UnsupportedLiteral => None,
     }
 }
-
 fn statement_is_flow_neutral(statement: &Statement, path_writes: bool) -> bool {
     let mut neutral = true;
     statement.for_each_statement_where(
@@ -1542,7 +1458,6 @@ fn statement_is_flow_neutral(statement: &Statement, path_writes: bool) -> bool {
     );
     neutral && expressions_are_flow_neutral(statement, path_writes)
 }
-
 fn expressions_are_flow_neutral(statement: &Statement, path_writes: bool) -> bool {
     let mut ignored = FxHashSet::default();
     !contains_matching_expression(

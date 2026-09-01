@@ -1,6 +1,7 @@
 use crate::bind::ScopeId;
-use crate::program::SemanticCompletion;
-use crate::source::{FileId, Span};
+use crate::program::{CapabilityScope, CapabilityTarget, SemanticCompletion};
+use crate::semantics::types::{TypeId, UnionPolicy};
+use crate::source::{FileId, NodeId, Span};
 use crate::syntax::{
     ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, ExpressionKind,
     FunctionLikeExpression, NestedStatement, Parameter, Statement, StatementKind, SwitchClauseKind,
@@ -8,9 +9,16 @@ use crate::syntax::{
 };
 
 use super::Checker;
-use super::projection_model::PropertyOrderTree;
 use super::relation_diagnostic::{ContextualType, RelationDiagnosticStyle};
 use crate::semantics::relation::RelationMode;
+
+const BREAK_OUTSIDE: &str =
+    "A 'break' statement can only be used within an enclosing iteration or switch statement.";
+const BREAK_LABEL: &str = "A 'break' statement can only jump to a label of an enclosing statement.";
+const CONTINUE_OUTSIDE: &str =
+    "A 'continue' statement can only be used within an enclosing iteration statement.";
+const CONTINUE_LABEL: &str =
+    "A 'continue' statement can only jump to a label of an enclosing iteration statement.";
 
 #[derive(Clone, Copy)]
 enum FunctionLikeExpressionAction {
@@ -20,47 +28,88 @@ enum FunctionLikeExpressionAction {
 }
 
 #[derive(Clone, Copy)]
-struct SemanticDescendantContext<'a> {
+pub(super) struct JumpTargetContext(u8);
+pub(super) const ROOT_JUMP_TARGETS: JumpTargetContext = JumpTargetContext(1);
+const UNKNOWN_JUMP_TARGETS: JumpTargetContext = JumpTargetContext(0);
+
+#[derive(Clone, Copy)]
+struct SemanticDescendantContext {
     scope: ScopeId,
     expected_return: ContextualType,
-    expected_return_order: Option<&'a PropertyOrderTree>,
     reenter_all_statements: bool,
 }
 
-impl SemanticDescendantContext<'_> {
-    const fn deferred(scope: ScopeId) -> Self {
+impl SemanticDescendantContext {
+    const fn new(scope: ScopeId, expected_return: ContextualType) -> Self {
         Self {
             scope,
-            expected_return: ContextualType::Deferred,
-            expected_return_order: None,
+            expected_return,
             reenter_all_statements: false,
         }
     }
 }
 
-#[derive(Clone, Copy)]
-enum NestedSemanticAction {
-    Recovery,
-    FunctionLikeOwners,
-}
-
-struct SemanticDescendantAdapter<'checker, 'program, 'order> {
+struct SemanticDescendantAdapter<'checker, 'program> {
     checker: &'checker mut Checker<'program>,
     file: FileId,
     function_action: FunctionLikeExpressionAction,
-    nested_action: NestedSemanticAction,
+    recover_statements: bool,
     allow_identifier_semantics: bool,
-    _order: std::marker::PhantomData<&'order PropertyOrderTree>,
 }
 
 impl Checker<'_> {
+    fn semantic_descendant_permissions(
+        &self,
+        file: FileId,
+        owner: NodeId,
+        function_like: bool,
+    ) -> (bool, bool) {
+        let scope = |identifiers| {
+            if function_like {
+                CapabilityScope::function_like_descendant(file, owner, identifiers)
+            } else {
+                CapabilityScope::semantic_descendant(file, owner, identifiers)
+            }
+        };
+        let claimed = |identifiers| {
+            self.capabilities
+                .claim(CapabilityTarget::SemanticCheck, scope(identifiers))
+                .is_claimed()
+        };
+        let descendants = claimed(false);
+        (descendants, descendants && claimed(true))
+    }
+
+    pub(super) fn infer_conditional_expression(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        expression: &Expression,
+        expected: ContextualType,
+    ) -> TypeId {
+        let ExpressionKind::Conditional {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } = &expression.kind
+        else {
+            unreachable!("conditional inference requires conditional syntax")
+        };
+        self.infer_expression(file, scope, condition, None);
+        let when_true = self.infer_expression_contextual(file, scope, when_true, expected);
+        let when_false = self.infer_expression_contextual(file, scope, when_false, expected);
+        self.store
+            .union([when_true, when_false], UnionPolicy::Canonical)
+    }
+
     pub(super) fn check_statement_list(
         &mut self,
         file: FileId,
         scope: ScopeId,
         statements: &[Statement],
         expected_return: ContextualType,
-        expected_return_order: Option<&PropertyOrderTree>,
+        jump_targets: JumpTargetContext,
     ) {
         for statement in statements {
             let statement_scope = self.node_scope(file, statement.id, scope);
@@ -69,7 +118,7 @@ impl Checker<'_> {
                 statement_scope,
                 statement,
                 expected_return,
-                expected_return_order,
+                jump_targets,
             );
         }
     }
@@ -80,29 +129,26 @@ impl Checker<'_> {
         scope: ScopeId,
         statement: &Statement,
         expected_return: ContextualType,
-        expected_return_order: Option<&PropertyOrderTree>,
+        jump_targets: JumpTargetContext,
     ) {
         if !self
             .capabilities
             .semantic_check_node_is_claimed(file, statement.id)
         {
             self.observe_file_completion(file, SemanticCompletion::Deferred);
-            if self
-                .capabilities
-                .semantic_check_node_descendant_permissions(file, statement.id)
-                .0
-            {
+            let (allows_descendants, allow_identifier_semantics) =
+                self.semantic_descendant_permissions(file, statement.id, false);
+            if allows_descendants {
                 self.check_recovery_statement_descendants(
                     file,
                     scope,
                     statement,
                     expected_return,
-                    expected_return_order,
+                    allow_identifier_semantics,
                 );
             } else {
-                let (allows_descendants, allow_identifier_semantics) = self
-                    .capabilities
-                    .semantic_check_node_function_like_descendant_permissions(file, statement.id);
+                let (allows_descendants, allow_identifier_semantics) =
+                    self.semantic_descendant_permissions(file, statement.id, true);
                 if allows_descendants {
                     self.check_nonclaimed_function_like_descendants(
                         file,
@@ -153,20 +199,15 @@ impl Checker<'_> {
                             expected,
                             return_span,
                             Some(expression),
-                            expected_return_order.cloned(),
                             RelationMode::Assignment,
                             RelationDiagnosticStyle::Type,
                         );
                     }
                 }
             }
-            StatementKind::Block(statements) => self.check_statement_list(
-                file,
-                scope,
-                statements,
-                expected_return,
-                expected_return_order,
-            ),
+            StatementKind::Block(statements) => {
+                self.check_statement_list(file, scope, statements, expected_return, jump_targets)
+            }
             StatementKind::If(control_flow) => {
                 self.infer_expression(file, scope, &control_flow.condition, None);
                 let then_scope = self.node_scope(file, control_flow.then_statement.id, scope);
@@ -175,7 +216,7 @@ impl Checker<'_> {
                     then_scope,
                     &control_flow.then_statement,
                     expected_return,
-                    expected_return_order,
+                    jump_targets,
                 );
                 if let Some(else_statement) = &control_flow.else_statement {
                     let else_scope = self.node_scope(file, else_statement.id, scope);
@@ -184,7 +225,7 @@ impl Checker<'_> {
                         else_scope,
                         else_statement,
                         expected_return,
-                        expected_return_order,
+                        jump_targets,
                     );
                 }
             }
@@ -200,8 +241,28 @@ impl Checker<'_> {
                         switch_scope,
                         &clause.statements,
                         expected_return,
-                        expected_return_order,
+                        JumpTargetContext(jump_targets.0 | 2),
                     );
+                }
+            }
+            StatementKind::Break(jump) | StatementKind::Continue(jump) => {
+                let is_continue = matches!(statement.kind, StatementKind::Continue(_));
+                let known = jump_targets.0 & 1 != 0;
+                let in_switch = jump_targets.0 & 2 != 0;
+                let diagnostic = match (jump.label.is_some(), is_continue) {
+                    (true, true) if known => Some((CONTINUE_LABEL, 1115, 8)),
+                    (true, false) if known => Some((BREAK_LABEL, 1116, 5)),
+                    (false, true) if known => Some((CONTINUE_OUTSIDE, 1104, 8)),
+                    (false, false) if known && !in_switch => Some((BREAK_OUTSIDE, 1105, 5)),
+                    _ => None,
+                };
+                if let Some((message, code, length)) = diagnostic {
+                    let span = Span {
+                        file,
+                        start: statement.span.start,
+                        end: statement.span.start + length,
+                    };
+                    self.push_diagnostic(file, span, message.into(), code);
                 }
             }
             StatementKind::Expression(expression) => {
@@ -210,8 +271,6 @@ impl Checker<'_> {
             StatementKind::Import(_)
             | StatementKind::TypeAlias(_)
             | StatementKind::Interface(_)
-            | StatementKind::Break(_)
-            | StatementKind::Continue(_)
             | StatementKind::Empty
             | StatementKind::Unknown => {}
         }
@@ -223,25 +282,15 @@ impl Checker<'_> {
         scope: ScopeId,
         statement: &Statement,
         expected_return: ContextualType,
-        expected_return_order: Option<&PropertyOrderTree>,
+        allow_identifier_semantics: bool,
     ) {
-        let context = SemanticDescendantContext {
-            scope,
-            expected_return,
-            expected_return_order,
-            reenter_all_statements: false,
-        };
-        let allow_identifier_semantics = self
-            .capabilities
-            .semantic_check_node_descendant_permissions(file, statement.id)
-            .1;
+        let context = SemanticDescendantContext::new(scope, expected_return);
         let mut adapter = SemanticDescendantAdapter {
             checker: self,
             file,
             function_action: FunctionLikeExpressionAction::SemanticOwner,
-            nested_action: NestedSemanticAction::Recovery,
+            recover_statements: true,
             allow_identifier_semantics,
-            _order: std::marker::PhantomData,
         };
         walk_statement_descendants(&mut adapter, &context, statement);
     }
@@ -271,14 +320,13 @@ impl Checker<'_> {
         statement: &Statement,
         allow_identifier_semantics: bool,
     ) {
-        let context = SemanticDescendantContext::deferred(scope);
+        let context = SemanticDescendantContext::new(scope, ContextualType::Deferred);
         let mut adapter = SemanticDescendantAdapter {
             checker: self,
             file,
             function_action: FunctionLikeExpressionAction::DeferredSemanticOwner,
-            nested_action: NestedSemanticAction::FunctionLikeOwners,
+            recover_statements: false,
             allow_identifier_semantics,
-            _order: std::marker::PhantomData,
         };
         walk_statement_descendants(&mut adapter, &context, statement);
     }
@@ -350,14 +398,13 @@ impl Checker<'_> {
         scope: ScopeId,
         expression: &Expression,
     ) {
-        let context = SemanticDescendantContext::deferred(scope);
+        let context = SemanticDescendantContext::new(scope, ContextualType::Deferred);
         let mut adapter = SemanticDescendantAdapter {
             checker: self,
             file,
             function_action: FunctionLikeExpressionAction::SemanticOwner,
-            nested_action: NestedSemanticAction::FunctionLikeOwners,
+            recover_statements: false,
             allow_identifier_semantics: false,
-            _order: std::marker::PhantomData,
         };
         walk_expression_descendants(&mut adapter, &context, expression);
     }
@@ -369,10 +416,15 @@ impl Checker<'_> {
         expression: &Expression,
         function: &FunctionLikeExpression,
     ) {
-        let context = SemanticDescendantContext::deferred(scope);
-        let (allows_descendants, allow_identifier_semantics) = self
+        let context = SemanticDescendantContext::new(scope, ContextualType::Deferred);
+        let owner_claimed = self
             .capabilities
-            .semantic_check_node_function_like_descendant_permissions(file, expression.id);
+            .semantic_check_node_is_claimed(file, expression.id);
+        let (allows_descendants, allow_identifier_semantics) = if owner_claimed {
+            (false, false)
+        } else {
+            self.semantic_descendant_permissions(file, expression.id, true)
+        };
         let function_action = if allows_descendants {
             FunctionLikeExpressionAction::SemanticOwner
         } else {
@@ -382,18 +434,17 @@ impl Checker<'_> {
             checker: self,
             file,
             function_action,
-            nested_action: NestedSemanticAction::Recovery,
+            recover_statements: true,
             allow_identifier_semantics,
-            _order: std::marker::PhantomData,
         };
         walk_function_like_descendants(&mut adapter, &context, expression, function);
     }
 }
 
-impl<'ast, 'checker, 'program, 'order> DescendantAdapter<'ast>
-    for SemanticDescendantAdapter<'checker, 'program, 'order>
+impl<'ast, 'checker, 'program> DescendantAdapter<'ast>
+    for SemanticDescendantAdapter<'checker, 'program>
 {
-    type Context = SemanticDescendantContext<'order>;
+    type Context = SemanticDescendantContext;
 
     fn context(
         &mut self,
@@ -413,7 +464,6 @@ impl<'ast, 'checker, 'program, 'order> DescendantAdapter<'ast>
         };
         if resets_return {
             next.expected_return = ContextualType::Deferred;
-            next.expected_return_order = None;
         }
         next.reenter_all_statements |= reenter_all;
         next
@@ -425,35 +475,32 @@ impl<'ast, 'checker, 'program, 'order> DescendantAdapter<'ast>
         statement: &'ast Statement,
         _next_statement: Option<&'ast Statement>,
     ) -> NestedStatement {
-        match self.nested_action {
-            NestedSemanticAction::Recovery => {
-                self.checker.check_statement(
-                    self.file,
-                    context.scope,
-                    statement,
-                    context.expected_return,
-                    context.expected_return_order,
-                );
-                NestedStatement::Handled
-            }
-            NestedSemanticAction::FunctionLikeOwners
-                if context.reenter_all_statements
-                    || matches!(
-                        statement.kind,
-                        StatementKind::Function(_) | StatementKind::Class(_)
-                    ) =>
-            {
-                self.checker.check_statement(
-                    self.file,
-                    context.scope,
-                    statement,
-                    ContextualType::Deferred,
-                    None,
-                );
-                NestedStatement::Handled
-            }
-            NestedSemanticAction::FunctionLikeOwners => NestedStatement::Descend,
+        if self.recover_statements {
+            self.checker.check_statement(
+                self.file,
+                context.scope,
+                statement,
+                context.expected_return,
+                UNKNOWN_JUMP_TARGETS,
+            );
+            return NestedStatement::Handled;
         }
+        if !context.reenter_all_statements
+            && !matches!(
+                statement.kind,
+                StatementKind::Function(_) | StatementKind::Class(_)
+            )
+        {
+            return NestedStatement::Descend;
+        }
+        self.checker.check_statement(
+            self.file,
+            context.scope,
+            statement,
+            ContextualType::Deferred,
+            UNKNOWN_JUMP_TARGETS,
+        );
+        NestedStatement::Handled
     }
 
     fn function_like(
@@ -470,7 +517,7 @@ impl<'ast, 'checker, 'program, 'order> DescendantAdapter<'ast>
                 if matches!(
                     &function.syntax,
                     crate::syntax::FunctionLikeSyntax::Arrow(_)
-                ) && matches!(self.nested_action, NestedSemanticAction::Recovery) =>
+                ) && self.recover_statements =>
             {
                 walk_function_like_descendants(self, context, expression, function);
             }

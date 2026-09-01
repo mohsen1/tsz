@@ -1,14 +1,23 @@
 use std::sync::Arc;
 
-use tsz::service::LanguageService;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{
     Expression, ExpressionKind, FunctionLikeSyntax, ParameterNameKind, StatementKind, parse_source,
 };
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
+
 #[path = "angle_assertion_products.rs"]
 mod angle_assertion_products;
+#[path = "function_expression_parts/contextual_parameter_cache.rs"]
+mod contextual_parameter_cache;
+#[path = "function_expression_parts/diagnostic_phases.rs"]
+mod diagnostic_phases;
 
 fn compile(source: &str, no_emit: bool, no_check: bool) -> tsz::CompileOutput {
     compile_with_comments(source, no_emit, no_check, false)
@@ -58,6 +67,12 @@ fn parse(source: &str) -> tsz::syntax::ParseOutput {
 fn parse_path(path: &str, source: &str) -> tsz::syntax::ParseOutput {
     let source = SourceText::new(FileId(0), path.into(), Arc::<str>::from(source));
     parse_source(&source)
+}
+
+fn language_service(source: &str) -> LanguageService {
+    let mut service = LanguageService::new(CompilerOptions::default());
+    service.open("function-expression.ts", Arc::<str>::from(source));
+    service
 }
 
 fn variable_initializer(parsed: &tsz::syntax::ParseOutput) -> &Expression {
@@ -186,6 +201,112 @@ fn named_function_expression_self_is_local_and_uses_its_authored_signature() {
         output.exit_status,
         CompileExitStatus::DiagnosticsPresentOutputsSkipped
     );
+}
+
+#[test]
+fn named_function_expression_self_does_not_publish_deferred_signature_graphs() {
+    for (case, source, expect_no_diagnostics) in [
+        (
+            "bigint parameter",
+            "const holder = function local(value: 1n): void { local(value); local(value); };",
+            true,
+        ),
+        (
+            "bigint return",
+            "const holder = function local(value: number): 1n { return local(value); };",
+            true,
+        ),
+        (
+            "wrapped renamed unique-symbol parameter",
+            "const holder = (function changed(value: unique symbol): void { changed(value); changed(value); });",
+            false,
+        ),
+        (
+            "nested unique-symbol return",
+            concat!(
+                "const holder = function outer(value: number): void { ",
+                "const nested = function inner(changed: number): unique symbol { ",
+                "return inner(changed); }; };",
+            ),
+            false,
+        ),
+    ] {
+        let service = language_service(source);
+        for query in 0..2 {
+            let semantic = service.semantic_diagnostics("function-expression.ts");
+            assert_eq!(
+                semantic.semantic_completion,
+                SemanticCompletion::Deferred,
+                "{case}, warm query {query}: {semantic:#?}",
+            );
+            assert!(
+                semantic
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| ![2322, 2345, 2349, 2722].contains(&diagnostic.code)),
+                "{case}, warm query {query}: {:#?}",
+                semantic.diagnostics,
+            );
+            if expect_no_diagnostics {
+                assert!(
+                    semantic.diagnostics.is_empty(),
+                    "{case}, warm query {query}: {:#?}",
+                    semantic.diagnostics,
+                );
+            }
+        }
+        for compile in 0..2 {
+            let output = service.compile();
+            assert_eq!(
+                output.semantic_completion,
+                SemanticCompletion::Deferred,
+                "{case}, cold compile {compile}: {output:#?}",
+            );
+            assert!(
+                output
+                    .diagnostics
+                    .iter()
+                    .all(|diagnostic| ![2322, 2345, 2349, 2722].contains(&diagnostic.code)),
+                "{case}, cold compile {compile}: {:#?}",
+                output.diagnostics,
+            );
+        }
+    }
+}
+
+#[test]
+fn named_function_expression_self_keeps_complete_signature_controls_cacheable() {
+    let source = concat!(
+        "const holder = (function renamed(value: number): number { ",
+        "renamed(value); return renamed(value); });",
+    );
+    let service = language_service(source);
+    for query in 0..2 {
+        let semantic = service.semantic_diagnostics("function-expression.ts");
+        assert!(
+            semantic.diagnostics.is_empty(),
+            "warm query {query}: {:#?}",
+            semantic.diagnostics,
+        );
+        assert_eq!(
+            semantic.semantic_completion,
+            SemanticCompletion::Complete,
+            "warm query {query}: {semantic:#?}",
+        );
+    }
+    for compile in 0..2 {
+        let output = service.compile();
+        assert!(
+            output.diagnostics.is_empty(),
+            "cold compile {compile}: {:#?}",
+            output.diagnostics,
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Complete,
+            "cold compile {compile}: {output:#?}",
+        );
+    }
 }
 
 #[test]
@@ -867,27 +988,6 @@ fn missing_function_body_does_not_consume_the_following_statement() {
 }
 
 #[test]
-fn recovered_function_header_blocks_emit_but_body_recovery_keeps_siblings_visible() {
-    let malformed = compile("const value = function named(@) { };", false, true);
-    assert!(malformed.emitted_files.is_empty());
-    assert_eq!(malformed.semantic_completion, SemanticCompletion::Deferred);
-
-    let source = concat!(
-        "const value = function named(input: number): number { const broken = ; return input; };\n",
-        "const independent: MissingBodySibling = 1;\n",
-    );
-    let emit = compile(source, false, true);
-    assert!(emit.emitted_files.is_empty());
-    assert_eq!(emit.semantic_completion, SemanticCompletion::Deferred);
-    let output = compile(source, true, false);
-    assert!(output.diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == 2304
-            && diagnostic.start == source.find("MissingBodySibling").unwrap() as u32
-    }));
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-}
-
-#[test]
 fn generic_nonclaim_retains_its_owned_type_parameters_in_nested_body_types() {
     let source = concat!(
         "const identity = function<Item>(value: Item) { const nested: Item = value; };\n",
@@ -910,23 +1010,6 @@ fn unsupported_unannotated_return_analysis_propagates_deferred_completion() {
     let source = "let flag: boolean; const value = function () { if (flag) return 1; };";
     let output = compile(source, true, false);
     assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-}
-
-#[test]
-fn authored_return_mismatch_survives_a_deferred_flow_host() {
-    let source = concat!(
-        "let subject: string | number = 0;\n",
-        "switch (subject.) { default: break; }\n",
-        "const nested = function self(input: number): number { return 'bad'; };\n",
-    );
-    let output = compile(source, true, false);
-    assert!(
-        output
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == 2322)
-    );
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
 
@@ -981,15 +1064,16 @@ fn function_expression_service_identity_is_local_and_capability_scoped() {
         .map(|(offset, _)| offset as u32)
         .collect::<Vec<_>>();
     assert_eq!(positions.len(), 3);
-    let mut service = LanguageService::new(CompilerOptions::default());
-    service.open("function-expression.ts", Arc::<str>::from(source));
+    let mut service = language_service(source);
     let definition = service
         .definition_and_bound_span("function-expression.ts", positions[1] + 1)
+        .expect_claimed("inner constraint navigation")
         .expect("inner constraint reference");
     assert_eq!(definition.definitions[0].text_span.start, positions[0]);
     assert_eq!(
         service
             .rename("function-expression.ts", positions[0] + 1)
+            .expect_claimed("inner function rename")
             .locations
             .len(),
         2
@@ -997,29 +1081,28 @@ fn function_expression_service_identity_is_local_and_capability_scoped() {
     assert!(
         service
             .definition_and_bound_span("function-expression.ts", positions[2] + 1)
+            .expect_claimed("out-of-scope inner navigation")
             .is_none()
     );
     assert!(
-        service
-            .quick_info("function-expression.ts", positions[0] + 1)
-            .is_none(),
+        matches!(
+            service.quick_info("function-expression.ts", positions[0] + 1),
+            ServiceQuery::Nonclaimed(_)
+        ),
         "FunctionExpression QuickInfo remains an explicit typed nonclaim"
     );
 
     let malformed = "const value = function broken(@) { };";
     service.change("function-expression.ts", Arc::<str>::from(malformed));
     let broken = malformed.find("broken").unwrap() as u32;
-    assert!(
-        service
-            .definition_and_bound_span("function-expression.ts", broken + 1)
-            .is_none()
-    );
-    assert!(
-        !service
-            .rename("function-expression.ts", broken + 1)
-            .info
-            .can_rename
-    );
+    assert!(matches!(
+        service.definition_and_bound_span("function-expression.ts", broken + 1),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.rename("function-expression.ts", broken + 1),
+        ServiceQuery::Nonclaimed(_)
+    ));
 
     let recovered = concat!(
         "const external = 1;\n",
@@ -1034,10 +1117,12 @@ fn function_expression_service_identity_is_local_and_capability_scoped() {
     assert_eq!(external.len(), 3);
     let body_definition = service
         .definition_and_bound_span("function-expression.ts", external[1] + 1)
+        .expect_claimed("represented body definition capability")
         .expect("the represented body query remains independently claimed");
     assert_eq!(body_definition.definitions[0].text_span.start, external[0]);
     let definition = service
         .definition_and_bound_span("function-expression.ts", external[2] + 1)
+        .expect_claimed("sibling definition capability")
         .expect("the sibling query remains independently claimed");
     assert_eq!(definition.definitions[0].text_span.start, external[0]);
 }
@@ -1052,11 +1137,11 @@ fn function_expression_signature_navigation_uses_its_independent_owner() {
         .match_indices("Alias")
         .map(|(offset, _)| offset as u32)
         .collect::<Vec<_>>();
-    let mut service = LanguageService::new(CompilerOptions::default());
-    service.open("function-expression.ts", Arc::<str>::from(recovered));
+    let mut service = language_service(recovered);
     for reference in &aliases[1..] {
         let definition = service
             .definition_and_bound_span("function-expression.ts", reference + 1)
+            .expect_claimed("function-expression signature navigation")
             .expect("the represented FunctionExpression signature owns this query");
         assert_eq!(definition.definitions[0].text_span.start, aliases[0]);
     }
@@ -1075,6 +1160,7 @@ fn function_expression_signature_navigation_uses_its_independent_owner() {
         for reference in &positions[1..] {
             let definition = service
                 .definition_and_bound_span("function-expression.ts", reference + 1)
+                .expect_claimed("signature definition capability")
                 .unwrap_or_else(|| panic!("missing signature definition for {name}"));
             assert_eq!(definition.definitions[0].text_span.start, positions[0]);
         }
@@ -1098,17 +1184,18 @@ fn function_expression_services_scope_outer_bindings_and_preserve_nested_metadat
     let authored = source.find("authored").unwrap() as u32;
     let nested_statement = "const nested: string = 'ok';";
     let nested_context = source.find(nested_statement).unwrap() as u32;
-    let mut service = LanguageService::new(CompilerOptions::default());
-    service.open("function-expression.ts", Arc::<str>::from(source));
+    let service = language_service(source);
 
     assert!(
-        service
-            .quick_info("function-expression.ts", outer + 1)
-            .is_none(),
+        matches!(
+            service.quick_info("function-expression.ts", outer + 1),
+            ServiceQuery::Nonclaimed(_)
+        ),
         "an inferred outer binding must reuse the FunctionExpression QuickInfo nonclaim",
     );
     let authored = service
         .quick_info("function-expression.ts", authored + 1)
+        .expect_claimed("authored outer quick info capability")
         .expect("an authored outer type remains independently answerable");
     assert_eq!(authored.kind, "const");
     assert_eq!(
@@ -1118,6 +1205,7 @@ fn function_expression_services_scope_outer_bindings_and_preserve_nested_metadat
 
     let nested_info = service
         .quick_info("function-expression.ts", nested[0] + 1)
+        .expect_claimed("nested quick info capability")
         .expect("the nested declaration has its own claimed QuickInfo scope");
     assert_eq!(nested_info.kind, "const");
     assert_eq!(nested_info.text_span.start, nested[0]);
@@ -1125,6 +1213,7 @@ fn function_expression_services_scope_outer_bindings_and_preserve_nested_metadat
 
     let definition = service
         .definition_and_bound_span("function-expression.ts", nested[1] + 1)
+        .expect_claimed("nested definition capability")
         .expect("nested reference definition");
     let declaration = &definition.definitions[0];
     assert_eq!(declaration.kind, "const");
@@ -1135,7 +1224,9 @@ fn function_expression_services_scope_outer_bindings_and_preserve_nested_metadat
     assert_eq!(context.start, nested_context);
     assert_eq!(context.length, nested_statement.len() as u32);
 
-    let references = service.references("function-expression.ts", nested[0] + 1);
+    let references = service
+        .references("function-expression.ts", nested[0] + 1)
+        .expect_claimed("nested references");
     assert_eq!(references.len(), 1);
     assert_eq!(references[0].definition.kind, "const");
     assert_eq!(references[0].definition.name, "const nested: string");
@@ -1322,186 +1413,6 @@ fn missing_generic_arrow_return_type_uses_the_source_kind_grammar() {
 }
 
 #[test]
-fn parenthesized_arrow_certainty_owns_missing_arrow_tokens_without_false_heads() {
-    for (path, source) in [
-        ("case.ts", "const value = () { return 1; }"),
-        ("case.ts", "const value = (named: Cedar) { return named; }"),
-        ("case.ts", "const value = (...renamed) { return renamed; }"),
-        (
-            "case.ts",
-            "const value = (public renamed) { return renamed; }",
-        ),
-        ("case.ts", "const value = (named?: Cedar) { return named; }"),
-        ("case.ts", "const value = (named) { return named; }"),
-        ("case.ts", "const value = (left, right) { return left; }"),
-        ("case.ts", "const value = ({ named }) { return named; }"),
-        ("case.ts", "const value = <Cedar>() { return 1; }"),
-        ("case.tsx", "const value = <Cedar,>() { return 1; }"),
-        ("case.ts", "const value = (named: Cedar);"),
-    ] {
-        let parsed = parse_path(path, source);
-        assert!(
-            matches!(
-                &variable_initializer(&parsed).kind,
-                ExpressionKind::FunctionLike(function)
-                    if matches!(&function.syntax, FunctionLikeSyntax::Arrow(_))
-            ),
-            "{path}: {source}: {:#?}",
-            parsed.diagnostics,
-        );
-        assert_eq!(
-            parsed
-                .diagnostics
-                .iter()
-                .map(|diagnostic| diagnostic.code)
-                .collect::<Vec<_>>(),
-            vec![1005],
-            "{path}: {source}: {:#?}",
-            parsed.diagnostics,
-        );
-    }
-
-    for source in [
-        "const value = (named);",
-        "const value = (named, changed);",
-        "const value = (named, changed + other) => named;",
-        "const value = (named, 1) => named;",
-        "const value = (named, const) => named;",
-        "const value = (named, const changed) => named;",
-        "const value = (named, default changed) => named;",
-        "const value = (named, in) => named;",
-        "const value = (named, in\nchanged) => named;",
-        "const value = <Cedar>(named + changed) => named;",
-        "const value = <Cedar>(1) { return 1; }",
-    ] {
-        let parsed = parse_path("case.ts", source);
-        assert!(
-            !matches!(
-                &variable_initializer(&parsed).kind,
-                ExpressionKind::FunctionLike(_)
-            ),
-            "{source}: {:#?}",
-            parsed.diagnostics,
-        );
-    }
-
-    let contextual_name = parse_path("case.ts", "const value = (named, public) => named;");
-    assert!(matches!(
-        &variable_initializer(&contextual_name).kind,
-        ExpressionKind::FunctionLike(function)
-            if matches!(&function.syntax, FunctionLikeSyntax::Arrow(_))
-    ));
-    for source in [
-        "const value = (named, in changed) => named;",
-        "const value = (named, export changed) => named;",
-        "const value = (named, export\nchanged) => named;",
-        "const value = (named, static changed) => named;",
-        "const value = (named, static\nchanged) => named;",
-        "const value = (named, public\nchanged) => named;",
-    ] {
-        let parsed = parse_path("case.ts", source);
-        assert!(
-            matches!(
-                &variable_initializer(&parsed).kind,
-                ExpressionKind::FunctionLike(function)
-                    if matches!(&function.syntax, FunctionLikeSyntax::Arrow(_))
-            ),
-            "{source}: {:#?}",
-            parsed.diagnostics,
-        );
-    }
-
-    let recovered_separator = parse_path(
-        "case.ts",
-        "const value = (named, public\nchanged) => named;",
-    );
-    assert_eq!(
-        recovered_separator
-            .diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.code)
-            .collect::<Vec<_>>(),
-        vec![1005],
-    );
-    for source in [
-        "const value = (named, export\nchanged) => named;",
-        "const value = (named, static\nchanged) => named;",
-    ] {
-        assert!(
-            parse_path("case.ts", source).diagnostics.is_empty(),
-            "{source}"
-        );
-    }
-
-    for source in [
-        "const value = (named, changed third) => named;",
-        "const value = <Cedar>(named changed) => named;",
-    ] {
-        let parsed = parse_path("case.ts", source);
-        assert!(matches!(
-            &variable_initializer(&parsed).kind,
-            ExpressionKind::FunctionLike(function)
-                if matches!(&function.syntax, FunctionLikeSyntax::Arrow(_))
-        ));
-        assert!(
-            parsed
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == 1005)
-        );
-    }
-
-    for (source, function_count) in [
-        (
-            concat!(
-                "declare const consume: (...values: any[]) => void;",
-                "consume((): => 1, (renamed) { return renamed; }, MissingSameCall);",
-            ),
-            2,
-        ),
-        (
-            concat!(
-                "declare const consume: (...values: any[]) => void;",
-                "consume(<Cedar,>(): => 1, (renamed) { return renamed; }, MissingSameCall);",
-            ),
-            1,
-        ),
-    ] {
-        let parsed = parse_path("case.ts", source);
-        let StatementKind::Expression(Expression {
-            kind: ExpressionKind::Call { arguments, .. },
-            ..
-        }) = &parsed.unit.statements[1].kind
-        else {
-            panic!("expected a call expression: {:#?}", parsed.unit.statements);
-        };
-        assert_eq!(
-            arguments
-                .iter()
-                .filter(|argument| matches!(argument.kind, ExpressionKind::FunctionLike(_)))
-                .count(),
-            function_count,
-            "{source}: {arguments:#?}",
-        );
-
-        let output = compile(source, true, false);
-        let missing_names = output
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code == 2304)
-            .map(|diagnostic| diagnostic.start)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            missing_names,
-            vec![source.find("MissingSameCall").unwrap() as u32],
-            "{source}: {:#?}",
-            output.diagnostics,
-        );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    }
-}
-
-#[test]
 fn malformed_generic_arrow_type_parameter_lists_remain_nonclaiming() {
     for source in [
         "const value = <Cedar Birch>(): Elm => 1;",
@@ -1614,66 +1525,6 @@ fn semantic_nonclaims_reenter_nested_function_expression_owners() {
         )
     );
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-}
-
-#[test]
-fn unowned_function_expression_modifiers_withhold_products_and_name_fallout() {
-    for source in [
-        "export const value = async function changed() { };",
-        "export const value = function* changed() { };",
-        "export const value = async function* changed() { };",
-    ] {
-        let output = Compiler::new().compile(
-            vec![SourceInput::new(
-                "function-expression.ts",
-                Arc::<str>::from(source),
-            )],
-            &CompilerOptions {
-                target: "es2022".to_string(),
-                declaration: true,
-                no_check: true,
-                no_emit_on_error: false,
-                ..CompilerOptions::default()
-            },
-        );
-        assert!(output.emitted_files.is_empty(), "{source}: {output:#?}");
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    }
-
-    let checked = compile(
-        concat!(
-            "const value = async function changed() { };\n",
-            "const independent: MissingIndependent = 1;\n",
-        ),
-        true,
-        false,
-    );
-    let [diagnostic] = checked.diagnostics.as_slice() else {
-        panic!("unexpected diagnostics: {:#?}", checked.diagnostics);
-    };
-    assert_eq!(diagnostic.code, 2304);
-    assert_eq!(
-        diagnostic.start,
-        "const value = async function changed() { };\nconst independent: ".len() as u32
-    );
-    assert_eq!(diagnostic.length, "MissingIndependent".len() as u32);
-    assert_eq!(
-        diagnostic.message_text,
-        "Cannot find name 'MissingIndependent'."
-    );
-    assert_eq!(checked.semantic_completion, SemanticCompletion::Deferred);
-
-    for source in [
-        "const value = function changed() { };",
-        "const async = 1;\nconst value = async\nfunction changed() { }\n",
-    ] {
-        let output = compile(source, false, true);
-        assert!(
-            output.emitted_files.iter().any(|file| !file.declaration),
-            "{source}: {output:#?}",
-        );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-    }
 }
 
 #[test]

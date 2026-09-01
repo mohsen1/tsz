@@ -25,6 +25,26 @@ fn javascript(source: &str, module: &str, remove_comments: bool) -> String {
         .text
 }
 
+fn declaration(source: &str, remove_comments: bool) -> String {
+    let output = Compiler::new().compile(
+        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+        &CompilerOptions {
+            target: "es2015".to_string(),
+            declaration: true,
+            no_check: true,
+            remove_comments,
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(output.diagnostics, [], "{:#?}", output.diagnostics);
+    output
+        .emitted_files
+        .into_iter()
+        .find(|file| file.declaration)
+        .expect("declaration output")
+        .text
+}
+
 fn javascript_files(sources: &[(&str, &str)]) -> BTreeMap<String, String> {
     let output = Compiler::new().compile(
         sources
@@ -70,6 +90,48 @@ fn emitted_nodes_own_leading_trailing_inline_detached_and_eof_comments() {
             "// detached line\n",
             "const fourth = 4;\n",
             "// eof detached\n",
+        )
+    );
+}
+
+#[test]
+fn eof_block_comment_without_a_line_break_keeps_the_ts7_separator() {
+    assert_eq!(
+        javascript("var renamed: any;\n/*\nvar hidden;\n*/", "", false),
+        "\"use strict\";\nvar renamed;\n/*\nvar hidden;\n*/ \n"
+    );
+}
+
+#[test]
+fn declaration_comments_keep_attached_docs_and_only_detached_pinned_headers() {
+    let source = concat!(
+        "/*! detached header */\n\n",
+        "/** attached renamed docs */\n",
+        "class Renamed {}\n",
+        "/* detached ordinary */\n\n",
+        "/** attached nested docs */\n",
+        "class Nested {}\n",
+    );
+    assert_eq!(
+        declaration(source, false),
+        concat!(
+            "/*! detached header */\n",
+            "/** attached renamed docs */\n",
+            "declare class Renamed {\n",
+            "}\n",
+            "/** attached nested docs */\n",
+            "declare class Nested {\n",
+            "}\n",
+        )
+    );
+    assert_eq!(
+        declaration(source, true),
+        concat!(
+            "/*! detached header */\n",
+            "declare class Renamed {\n",
+            "}\n",
+            "declare class Nested {\n",
+            "}\n",
         )
     );
 }
@@ -200,6 +262,70 @@ fn source_detached_pinned_policy_matches_remove_comments_and_erased_nodes() {
     assert_eq!(
         javascript(non_top, "", false),
         "\"use strict\";\nconst first = 1;\n"
+    );
+}
+
+#[test]
+fn detached_headers_use_the_source_line_map_for_every_ecmascript_terminator() {
+    // TypeScript 7 classifies a source-leading comment as detached from the
+    // first statement when their line-map entries differ by at least two.
+    // TSZ reuses SourceText's scanner-compatible line map for that decision.
+    for (name, separator) in [
+        ("lf", "\n"),
+        ("crlf", "\r\n"),
+        ("cr", "\r"),
+        ("line-separator", "\u{2028}"),
+        ("paragraph-separator", "\u{2029}"),
+    ] {
+        let source =
+            format!("/*! renamed header */{separator}{separator}export const renamed = 1;");
+        for remove_comments in [false, true] {
+            assert_eq!(
+                javascript(&source, "esnext", remove_comments),
+                "/*! renamed header */\nexport const renamed = 1;\n",
+                "ES module {name}, removeComments={remove_comments}",
+            );
+            assert_eq!(
+                javascript(&source, "commonjs", remove_comments),
+                concat!(
+                    "\"use strict\";\n",
+                    "/*! renamed header */\n",
+                    "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                    "exports.renamed = void 0;\n",
+                    "exports.renamed = 1;\n",
+                ),
+                "CommonJS {name}, removeComments={remove_comments}",
+            );
+        }
+    }
+}
+
+#[test]
+fn detached_header_is_the_first_source_leading_comment_run_only() {
+    // TypeScript stops the copyright-header run at the first blank line
+    // between comments. A later pinned comment remains statement-owned and is
+    // therefore removed by removeComments instead of moving ahead of the CJS
+    // prologue.
+    let source = concat!(
+        "/*! renamed header */\n\n",
+        "/*! statement pinned */\n\n",
+        "export const renamed = 1;",
+    );
+    let commonjs_prologue = concat!(
+        "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+        "exports.renamed = void 0;\n",
+    );
+    assert_eq!(
+        javascript(source, "commonjs", false),
+        format!(
+            "\"use strict\";\n/*! renamed header */\n{commonjs_prologue}/*! statement pinned */\nexports.renamed = 1;\n"
+        ),
+    );
+    assert_eq!(
+        javascript(source, "commonjs", true),
+        format!(
+            "\"use strict\";\n/*! renamed header */\n{commonjs_prologue}exports.renamed = 1;\n"
+        ),
     );
 }
 
@@ -595,6 +721,29 @@ fn jsdoc_attachment_is_node_scoped_and_captured_before_async() {
     assert!(expression_jsdoc(2));
     assert!(!expression_jsdoc(3));
     assert!(!expression_jsdoc(4));
+}
+
+#[test]
+fn astral_prefix_does_not_shift_jsdoc_line_adjacency() {
+    for (gap, expected) in [("\n", true), ("\n\n", false)] {
+        let source = SourceText::new(
+            FileId(0),
+            "unicode-jsdoc.js".into(),
+            Arc::<str>::from(format!(
+                "const icon = '😀';\n/** declaration */{gap}function renamed() {{}}"
+            )),
+        );
+        let parsed = parse_source(&source);
+        assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+        assert_eq!(
+            matches!(
+                &parsed.unit.statements[1].kind,
+                StatementKind::Function(declaration) if declaration.has_leading_jsdoc
+            ),
+            expected,
+            "gap {gap:?}",
+        );
+    }
 }
 
 #[test]

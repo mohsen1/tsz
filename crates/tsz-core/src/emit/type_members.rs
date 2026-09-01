@@ -1,3 +1,5 @@
+use crate::bind::DeclarationKind;
+use crate::program::{DeclarationDisplayParts, RenderedType};
 use crate::source::Span;
 use crate::syntax::{
     AccessorKind, ClassDeclaration, ClassMemberKind, Expression, ExpressionKind,
@@ -28,22 +30,49 @@ impl Printer<'_> {
             self.output.push_str("void");
         } else if !declaration.has_body {
             self.output.push_str("any");
+        } else if let Some(result) = self
+            .checked_function_result(declaration)
+            .map(|result| result.text.clone())
+        {
+            self.output.push_str(&result);
         } else {
-            self.output.push_str("unknown");
+            self.reject_declaration();
+            return;
         }
         self.output.push_str(";\n");
     }
 
+    fn checked_function_result(&self, declaration: &FunctionDeclaration) -> Option<&RenderedType> {
+        let summary = self
+            .bindings
+            .declarations
+            .iter()
+            .find(|bound| {
+                bound.kind == DeclarationKind::Function && bound.name_span == declaration.name_span
+            })
+            .and_then(|bound| self.declaration_summaries()?.get(&bound.id))?;
+        let DeclarationDisplayParts::Function {
+            result: Some(result),
+            ..
+        } = &summary.display_parts
+        else {
+            return None;
+        };
+        Some(result)
+    }
     pub(super) fn write_declaration_class(&mut self, declaration: &ClassDeclaration) {
         self.write_indent();
         self.output.push_str(if declaration.default_export {
-            "export default class "
+            "export default class"
         } else if declaration.exported {
-            "export declare class "
+            "export declare class"
         } else {
-            "declare class "
+            "declare class"
         });
-        self.write_authored_identifier(&declaration.name, declaration.name_span);
+        if !declaration.default_export || !declaration.name.is_empty() {
+            self.output.push(' ');
+            self.write_authored_identifier(&declaration.name, declaration.name_span);
+        }
         self.write_type_parameters(&declaration.type_parameters);
         if let Some(base) = &declaration.extends {
             self.output.push_str(" extends ");
@@ -137,7 +166,7 @@ impl Printer<'_> {
                             .as_ref()
                             .is_some_and(literals::expression_contains_template)
                         {
-                            self.declaration_supported = false;
+                            self.reject_declaration();
                         }
                         self.output.push_str("unknown");
                     }
@@ -193,7 +222,7 @@ impl Printer<'_> {
                     } else if body.is_empty() {
                         self.output.push_str("void");
                     } else {
-                        self.declaration_supported = false;
+                        self.reject_declaration();
                         self.output.push_str("unknown");
                     }
                     self.output.push_str(";\n");
@@ -204,7 +233,6 @@ impl Printer<'_> {
         self.write_indent();
         self.output.push_str("}\n");
     }
-
     pub(super) fn write_parameter_property_fields(&mut self, parameters: &[Parameter]) {
         for parameter in parameter_properties(parameters) {
             self.write_indent();
@@ -212,7 +240,6 @@ impl Printer<'_> {
             self.output.push_str(";\n");
         }
     }
-
     pub(super) fn write_declaration_parameter_type(&mut self, parameter: &Parameter) {
         if let Some(annotation) = &parameter.annotation {
             self.write_type(annotation, TYPE_PREC_LOWEST);
@@ -224,7 +251,6 @@ impl Printer<'_> {
             self.output.push_str("any");
         }
     }
-
     fn write_declaration_initializer_type(&mut self, initializer: &crate::syntax::Expression) {
         match &initializer.kind {
             ExpressionKind::Literal(Literal::String(_)) => self.output.push_str("string"),
@@ -233,12 +259,11 @@ impl Printer<'_> {
             ExpressionKind::Literal(Literal::Boolean(_)) => self.output.push_str("boolean"),
             ExpressionKind::Literal(Literal::Null) => self.output.push_str("null"),
             _ => {
-                self.declaration_supported = false;
+                self.reject_declaration();
                 self.output.push_str("any");
             }
         }
     }
-
     pub(super) fn write_parameter_property_declarations(&mut self, parameters: &[Parameter]) {
         for parameter in parameter_properties(parameters) {
             self.write_indent();
@@ -272,7 +297,6 @@ impl Printer<'_> {
             self.output.push_str(";\n");
         }
     }
-
     pub(super) fn write_private_accessor_declaration(
         &mut self,
         accessor: AccessorKind,
@@ -290,7 +314,6 @@ impl Printer<'_> {
             AccessorKind::Set => self.output.push_str("(value);\n"),
         }
     }
-
     pub(super) fn write_constructor_body(
         &mut self,
         body_span: Option<crate::source::Span>,
@@ -331,7 +354,6 @@ impl Printer<'_> {
         self.write_indent();
         self.output.push('}');
     }
-
     fn write_parameter_property_assignments(&mut self, parameters: &[Parameter]) {
         for parameter in parameter_properties(parameters) {
             self.write_indent();
@@ -342,7 +364,6 @@ impl Printer<'_> {
             self.output.push_str(";\n");
         }
     }
-
     pub(super) fn write_type_member(&mut self, member: &TypeMember) {
         if member.modifiers.readonly {
             self.output.push_str("readonly ");
@@ -446,11 +467,10 @@ impl Printer<'_> {
         }
         self.output.push(';');
     }
-
     fn write_type_member_name(&mut self, name: &TypeMemberName) {
         match &name.kind {
             TypeMemberNameKind::Identifier(_)
-            | TypeMemberNameKind::StringLiteral(_)
+            | TypeMemberNameKind::StringLiteral(..)
             | TypeMemberNameKind::NumericLiteral(_)
             | TypeMemberNameKind::BigIntLiteral(_) => {
                 self.output.push_str(self.source.slice(name.span).trim());

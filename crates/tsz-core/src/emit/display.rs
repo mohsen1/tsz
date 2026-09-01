@@ -1,31 +1,12 @@
-use crate::program::{CompilerOptions, ProgramFile};
+use crate::program::{
+    CompilerOptions, ProgramFile, RenderedParameter, RenderedParameters, RenderedType,
+};
 use crate::syntax::{
     AuthoredTypeEdge, AuthoredTypeItem, KeywordType, Literal, NumberLiteral, Parameter,
     StringLiteral, TypeMemberKind, TypeMemberModifier, TypeMemberNameKind, TypeNode, TypeNodeKind,
 };
 
 use super::{Printer, TYPE_PREC_LOWEST};
-
-#[derive(Debug, Clone)]
-pub(crate) struct RenderedType {
-    pub text: String,
-    pub part_kind: &'static str,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RenderedParameter {
-    pub text: String,
-    pub name: String,
-    pub rest: bool,
-    pub optional: bool,
-    pub ty: RenderedType,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RenderedParameters {
-    pub text: String,
-    pub parameters: Vec<RenderedParameter>,
-}
 
 pub(crate) fn render_authored_type(
     file: &ProgramFile,
@@ -36,10 +17,10 @@ pub(crate) fn render_authored_type(
         return None;
     }
     let mut printer = Printer::new(&file.source, &file.bindings, options);
-    printer.emitting_declaration = true;
+    printer.begin_declaration(None);
     printer.compact_type = true;
     printer.write_type(ty, TYPE_PREC_LOWEST);
-    printer.declaration_supported.then_some(RenderedType {
+    printer.declaration_is_complete().then_some(RenderedType {
         text: printer.output,
         part_kind: authored_type_part_kind(ty),
     })
@@ -120,7 +101,6 @@ fn authored_type_display_is_supported(root: &TypeNode) -> bool {
     }
     true
 }
-
 fn plain_signature(
     type_parameters: &[crate::syntax::TypeParameterDeclaration],
     parameters: &[Parameter],
@@ -131,7 +111,6 @@ fn plain_signature(
         .iter()
         .all(|parameter| parameter.initializer.is_none() && parameter.modifiers.is_empty())
 }
-
 pub(crate) fn render_authored_parameter(
     file: &ProgramFile,
     options: &CompilerOptions,

@@ -1,3 +1,6 @@
+use super::call_model::InferredCallCallee;
+use super::relation_diagnostic::RelationDiagnosticStyle;
+use super::{Checker, DeclarationModel};
 use crate::bind::{Meaning, ScopeId};
 use crate::program::{JavaScriptAssignmentDisposition, SemanticCompletion};
 use crate::semantics::relation::RelationMode;
@@ -10,11 +13,6 @@ use crate::standard_library::{LibraryCallMember, LibraryMemberLookup, LibraryRec
 use crate::syntax::{
     AssignmentOperator, Expression, ExpressionKind, ObjectProperty, parse_number_literal,
 };
-
-use super::call_model::InferredCallCallee;
-use super::relation_diagnostic::RelationDiagnosticStyle;
-use super::{Checker, DeclarationModel};
-
 impl Checker<'_> {
     pub(super) fn infer_assignment(
         &mut self,
@@ -40,7 +38,6 @@ impl Checker<'_> {
             }
         }
     }
-
     fn observe_incomplete_javascript_assignment_target(
         &mut self,
         file: FileId,
@@ -60,7 +57,6 @@ impl Checker<'_> {
             }
         }
     }
-
     pub(super) fn infer_expression_statement(
         &mut self,
         file: FileId,
@@ -69,7 +65,6 @@ impl Checker<'_> {
     ) {
         self.infer_expression(file, scope, expression, None);
     }
-
     pub(super) fn infer_element_access_expression(
         &mut self,
         file: FileId,
@@ -89,7 +84,6 @@ impl Checker<'_> {
             }));
         self.complete_type(query).unwrap_or(query)
     }
-
     pub(super) fn infer_element_access_call_callee(
         &mut self,
         file: FileId,
@@ -129,7 +123,6 @@ impl Checker<'_> {
             library_member: Completion::Complete(None),
         }
     }
-
     pub(super) fn infer_assignment_target(
         &mut self,
         file: FileId,
@@ -204,7 +197,6 @@ impl Checker<'_> {
         }
         inferred
     }
-
     fn infer_destructuring_target(
         &mut self,
         file: FileId,
@@ -231,14 +223,12 @@ impl Checker<'_> {
                 target,
                 right.span,
                 Some(right),
-                self.expression_order_origins.get(&(file, left.id)).cloned(),
                 RelationMode::Assignment,
                 RelationDiagnosticStyle::Type,
             );
         }
         target
     }
-
     pub(super) fn report_object_literal_shorthand_default(
         &mut self,
         file: FileId,
@@ -255,7 +245,6 @@ impl Checker<'_> {
             );
         }
     }
-
     fn is_evolving_empty_array_target(
         &self,
         file: FileId,
@@ -284,7 +273,6 @@ impl Checker<'_> {
                     )
         )
     }
-
     pub(super) fn infer_assignment_expression(
         &mut self,
         file: FileId,
@@ -303,14 +291,12 @@ impl Checker<'_> {
                 target,
                 right.span,
                 Some(right),
-                self.expression_order_origins.get(&(file, left.id)).cloned(),
                 RelationMode::Assignment,
                 RelationDiagnosticStyle::Type,
             );
         }
         source
     }
-
     fn infer_paired_destructuring_assignment(
         &mut self,
         file: FileId,
@@ -331,7 +317,11 @@ impl Checker<'_> {
             let target = self
                 .infer_destructuring_target(file, scope, target_expression)
                 .expect("paired assignment targets are preflighted");
-            let mut source_element = self.expression_type_origins[&(file, source_expression.id)];
+            // Exact syntax pairing owns this leaf query.  Do not recover the
+            // source from a transient expression-origin side table after
+            // target/default inference has performed nested demands: the
+            // relation must be over the authored RHS leaf itself.
+            let mut source_element = self.infer_expression(file, scope, source_expression, None);
             if self.options.effective_strict_null_checks()
                 && matches!(target_expression.kind, ExpressionKind::Assignment { .. })
             {
@@ -355,16 +345,12 @@ impl Checker<'_> {
                 target,
                 diagnostic_target.span,
                 Some(source_expression),
-                self.expression_order_origins
-                    .get(&(file, diagnostic_target.id))
-                    .cloned(),
                 RelationMode::Assignment,
                 RelationDiagnosticStyle::Type,
             );
         }
         Some(source)
     }
-
     pub(super) fn observe_delete_operand(&mut self, operand: TypeId) {
         if !matches!(
             self.store.kind(operand),
@@ -373,7 +359,6 @@ impl Checker<'_> {
             let _ = self.require_completion(Completion::<()>::Deferred);
         }
     }
-
     pub(super) fn evaluate_element_access(
         &mut self,
         object: TypeId,
@@ -386,7 +371,6 @@ impl Checker<'_> {
         let index = completed!(index);
         self.evaluate_resolved_element_access(object, index, mode)
     }
-
     fn evaluate_resolved_element_access(
         &mut self,
         object: TypeId,
@@ -450,7 +434,6 @@ impl Checker<'_> {
             _ => Completion::Deferred,
         }
     }
-
     fn tuple_element_access(
         &mut self,
         elements: &[TypeId],
@@ -469,7 +452,6 @@ impl Checker<'_> {
             _ => Completion::Deferred,
         }
     }
-
     fn object_element_access(
         &mut self,
         shape: &ObjectShape,
@@ -508,7 +490,6 @@ impl Checker<'_> {
             }
         })
     }
-
     fn standard_library_value_element_access(
         &mut self,
         declaration: crate::source::DeclId,
@@ -538,7 +519,6 @@ impl Checker<'_> {
         }
     }
 }
-
 fn property(shape: &ObjectShape, key: &str, mode: ElementAccessMode) -> Option<Completion<TypeId>> {
     shape
         .properties
@@ -552,7 +532,6 @@ fn property(shape: &ObjectShape, key: &str, mode: ElementAccessMode) -> Option<C
             }
         })
 }
-
 fn index_value(
     shape: &ObjectShape,
     key: IndexKeyKind,
@@ -566,17 +545,14 @@ fn index_value(
         }
     })
 }
-
 const fn is_number_like(kind: &TypeKind) -> bool {
     matches!(kind, TypeKind::Number | TypeKind::LiteralNumber(_, _))
 }
-
 fn is_number_index_type(kind: &TypeKind) -> bool {
     matches!(kind, TypeKind::Any)
         || is_number_like(kind)
         || matches!(kind, TypeKind::LiteralString(value, _) if is_numeric_literal_name(value))
 }
-
 fn is_numeric_literal_name(value: &str) -> bool {
     if matches!(value, "NaN" | "Infinity" | "-Infinity") {
         return true;
@@ -593,7 +569,6 @@ fn is_numeric_literal_name(value: &str) -> bool {
         value == parsed.display
     }
 }
-
 fn canonical_array_index(value: &str) -> Option<usize> {
     let parsed = parse_number_literal(value)?;
     (value == parsed.display
@@ -603,13 +578,11 @@ fn canonical_array_index(value: &str) -> Option<usize> {
         && parsed.value <= usize::MAX as f64)
         .then_some(parsed.value as usize)
 }
-
 fn exact_tuple_index(index: Option<usize>, elements: &[TypeId]) -> Completion<TypeId> {
     index
         .and_then(|index| elements.get(index).copied())
         .map_or(Completion::Deferred, Completion::Complete)
 }
-
 fn collect_paired_assignment_leaves<'a>(
     target: &'a Expression,
     source: &'a Expression,
@@ -653,7 +626,6 @@ fn collect_paired_assignment_leaves<'a>(
         _ => false,
     }
 }
-
 fn is_plain_assignment_target(expression: &Expression) -> bool {
     matches!(
         &expression.peel_parentheses().kind,
@@ -662,13 +634,11 @@ fn is_plain_assignment_target(expression: &Expression) -> bool {
             | ExpressionKind::ElementAccess { .. }
     )
 }
-
 fn unique_property<'a>(properties: &'a [ObjectProperty], name: &str) -> Option<&'a ObjectProperty> {
     let mut matches = properties.iter().filter(|property| property.name == name);
     let property = matches.next()?;
     matches.next().is_none().then_some(property)
 }
-
 pub(super) const fn is_property_key_like(kind: &TypeKind) -> bool {
     matches!(
         kind,

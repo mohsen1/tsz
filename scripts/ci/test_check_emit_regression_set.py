@@ -59,6 +59,59 @@ def row(
     return result
 
 
+def v2_row(
+    name,
+    *,
+    artifact="complete",
+    outcome_match=True,
+    js_selected=True,
+    dts_selected=False,
+    js_product_match=True,
+    dts_product_match=None,
+):
+    if dts_selected and dts_product_match is None:
+        dts_product_match = True
+    if not js_selected:
+        js_product_match = None
+    if not dts_selected:
+        dts_product_match = None
+
+    result = {
+        "name": name,
+        "baselineFile": "%s.js" % name,
+        "testPath": "tests/cases/compiler/%s.ts" % name,
+        "artifactState": artifact,
+        "outcomeMatch": outcome_match,
+        "jsSelected": js_selected,
+        "dtsSelected": dts_selected,
+    }
+    for surface, selected, product_match in (
+        ("js", js_selected, js_product_match),
+        ("dts", dts_selected, dts_product_match),
+    ):
+        match = outcome_match is True and product_match is True if selected else None
+        status = (
+            ("pass" if match else "fail") if artifact == "complete" else artifact
+        ) if selected else "skip"
+        result[f"{surface}Match"] = match
+        result[f"{surface}ProductMatch"] = product_match
+        result[f"{surface}Status"] = status
+        if product_match is False:
+            product_error = "Content mismatch at out.js: +1/-1 lines"
+            result[f"{surface}ProductError"] = product_error
+        else:
+            product_error = None
+        if selected and not match:
+            result[f"{surface}Error"] = (
+                "TSZ_NONZERO_OUTCOME: exit=3, diagnostics=<none>"
+                if outcome_match is False
+                else product_error or "typed terminal state"
+            )
+    if outcome_match is False:
+        result["outcomeError"] = "TSZ_NONZERO_OUTCOME: exit=3, diagnostics=<none>"
+    return result
+
+
 def detail_doc(rows, oracle=None):
     result = {
         "schemaVersion": 1,
@@ -256,7 +309,143 @@ class EmitRegressionSetTests(unittest.TestCase):
         current["artifactState"] = "complete"
         code, err, _ = run_checker([row("a")], [[current]])
         self.assertEqual(code, 1)
-        self.assertIn("inconsistent complete product statuses", err)
+        self.assertIn("inconsistent js artifact product status", err)
+
+    def test_schema_v2_dts_only_row_keeps_unselected_js_product_neutral(self):
+        rows = [v2_row("a", js_selected=False, dts_selected=True)]
+
+        code, err, out = run_checker(rows, [rows])
+
+        self.assertEqual(code, 0, err)
+        self.assertIn("Emit regression set OK", out)
+        self.assertEqual(rows[0]["jsStatus"], "skip")
+        self.assertIsNone(rows[0]["jsMatch"])
+        self.assertIsNone(rows[0]["jsProductMatch"])
+
+    def test_schema_v2_js_only_row_keeps_unselected_dts_product_neutral(self):
+        rows = [v2_row("a", js_selected=True, dts_selected=False)]
+
+        code, err, out = run_checker(rows, [rows])
+
+        self.assertEqual(code, 0, err)
+        self.assertIn("Emit regression set OK", out)
+        self.assertEqual(rows[0]["dtsStatus"], "skip")
+        self.assertIsNone(rows[0]["dtsMatch"])
+        self.assertIsNone(rows[0]["dtsProductMatch"])
+
+    def test_schema_v2_unselected_js_product_must_be_skip(self):
+        current = v2_row("a", js_selected=False, dts_selected=True)
+        current["jsStatus"] = "incomplete"
+
+        code, err, _ = run_checker(
+            [v2_row("a", js_selected=False, dts_selected=True)],
+            [[current]],
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("selected=False", err)
+        self.assertIn("status=incomplete", err)
+
+    def test_schema_v2_unselected_product_cannot_claim_raw_parity(self):
+        current = v2_row("a", js_selected=False, dts_selected=True)
+        current["jsProductMatch"] = False
+
+        code, err, _ = run_checker(
+            [v2_row("a", js_selected=False, dts_selected=True)],
+            [[current]],
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("unselected JS product with measured parity", err)
+
+    def test_schema_v2_terminal_product_mismatch_keeps_both_facts(self):
+        rows = [
+            v2_row(
+                "a",
+                artifact="incomplete",
+                outcome_match=False,
+                js_product_match=False,
+            )
+        ]
+
+        code, err, out = run_checker(rows, [rows])
+
+        self.assertEqual(code, 0, err)
+        self.assertIn("Emit regression set OK", out)
+        self.assertEqual(rows[0]["jsStatus"], "incomplete")
+        self.assertFalse(rows[0]["jsProductMatch"])
+        self.assertIn("Content mismatch", rows[0]["jsProductError"])
+
+    def test_schema_v2_product_mismatch_requires_product_error(self):
+        current = v2_row(
+            "a",
+            artifact="incomplete",
+            outcome_match=False,
+            js_product_match=False,
+        )
+        del current["jsProductError"]
+
+        code, err, _ = run_checker(
+            [
+                v2_row(
+                    "a",
+                    artifact="incomplete",
+                    outcome_match=False,
+                    js_product_match=False,
+                )
+            ],
+            [[current]],
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("jsProductMatch=false without jsProductError", err)
+
+    def test_schema_v2_terminal_row_cannot_lose_proven_product_parity(self):
+        baseline = [
+            v2_row(
+                "a",
+                artifact="incomplete",
+                outcome_match=False,
+                js_product_match=True,
+            )
+        ]
+        current = [
+            v2_row(
+                "a",
+                artifact="incomplete",
+                outcome_match=False,
+                js_product_match=False,
+            )
+        ]
+
+        code, err, _ = run_checker(baseline, [current])
+
+        self.assertEqual(code, 1)
+        self.assertIn("emit product parity regression", err)
+        self.assertIn("productMatch=True -> False", err)
+
+    def test_schema_v2_terminal_product_mismatch_may_improve(self):
+        baseline = [
+            v2_row(
+                "a",
+                artifact="incomplete",
+                outcome_match=False,
+                js_product_match=False,
+            )
+        ]
+        current = [
+            v2_row(
+                "a",
+                artifact="incomplete",
+                outcome_match=False,
+                js_product_match=True,
+            )
+        ]
+
+        code, err, out = run_checker(baseline, [current])
+
+        self.assertEqual(code, 0, err)
+        self.assertIn("Emit regression set OK", out)
 
     def test_passing_product_cannot_retain_an_error_payload(self):
         current = row(

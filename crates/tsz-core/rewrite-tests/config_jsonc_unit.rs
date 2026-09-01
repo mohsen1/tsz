@@ -1,8 +1,9 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use tempfile::TempDir;
 
-use super::{ProjectRequest, ProjectSelection, parse_jsonc, partial_options, resolve_project};
+use super::{CompilerOptionPatch, ProjectRequest, ProjectSelection, parse_jsonc, resolve_project};
 use crate::host::SystemHost;
 use crate::program::{CompileExitStatus, Compiler, SemanticCompletion};
 
@@ -24,17 +25,25 @@ fn one_jsonc_scan_preserves_original_option_and_reference_byte_spans() {
     assert_eq!(document.value["compilerOptions"]["target"], "wat");
     assert_eq!(document.value["compilerOptions"]["module"], "co//mmonjs");
 
-    let option = document.source_spans.compiler_options["target"];
+    let option = document
+        .source_spans
+        .compiler_options
+        .iter()
+        .find(|option| option.name == "target")
+        .expect("target occurrence");
     assert_eq!(
-        option.key_start,
+        option.span.key.0,
         source.find("\"tar\\u0067et\"").unwrap() as u32
     );
-    assert_eq!(option.key_length, "\"tar\\u0067et\"".len() as u32);
+    assert_eq!(option.span.key.1, "\"tar\\u0067et\"".len() as u32);
     assert_eq!(
-        option.value_start,
-        Some(source.find("\"wat\"").unwrap() as u32)
+        option.span.value.map(|span| span.0),
+        Some(source.find("\"wat\"").unwrap() as u32),
     );
-    assert_eq!(option.value_length, Some("\"wat\"".len() as u32));
+    assert_eq!(
+        option.span.value.map(|span| span.1),
+        Some("\"wat\"".len() as u32)
+    );
 
     let object_start = source.find("{ \"path\"").unwrap();
     let object_end = source[object_start..].find('}').unwrap() + object_start + 1;
@@ -62,27 +71,36 @@ fn project_path_normalization_keeps_legacy_leading_parent_behavior() {
 
 #[test]
 fn check_js_schema_keeps_false_distinct_from_absence() {
-    let absent = parse_jsonc(r#"{"compilerOptions":{"allowJs":true}}"#).unwrap();
-    let explicit = parse_jsonc(r#"{"compilerOptions":{"checkJs":false}}"#).unwrap();
-    let absent = partial_options(absent.value.as_object().unwrap(), Path::new("."));
-    let explicit = partial_options(explicit.value.as_object().unwrap(), Path::new("."));
+    let absent = decoded_options(r#"{"compilerOptions":{"allowJs":true}}"#);
+    let explicit = decoded_options(r#"{"compilerOptions":{"checkJs":false}}"#);
     assert_eq!((absent.allow_js, absent.check_js), (Some(true), None));
     assert_eq!((explicit.allow_js, explicit.check_js), (None, Some(false)));
 }
 
 #[test]
 fn use_define_for_class_fields_schema_keeps_false_distinct_from_absence_and_true() {
-    let absent = parse_jsonc(r#"{"compilerOptions":{"target":"es2022"}}"#).unwrap();
+    let absent = decoded_options(r#"{"compilerOptions":{"target":"es2022"}}"#);
     let explicit_false =
-        parse_jsonc(r#"{"compilerOptions":{"useDefineForClassFields":false}}"#).unwrap();
-    let explicit_true =
-        parse_jsonc(r#"{"compilerOptions":{"useDefineForClassFields":true}}"#).unwrap();
-    let absent = partial_options(absent.value.as_object().unwrap(), Path::new("."));
-    let explicit_false = partial_options(explicit_false.value.as_object().unwrap(), Path::new("."));
-    let explicit_true = partial_options(explicit_true.value.as_object().unwrap(), Path::new("."));
+        decoded_options(r#"{"compilerOptions":{"useDefineForClassFields":false}}"#);
+    let explicit_true = decoded_options(r#"{"compilerOptions":{"useDefineForClassFields":true}}"#);
     assert_eq!(absent.use_define_for_class_fields, None);
     assert_eq!(explicit_false.use_define_for_class_fields, Some(false));
     assert_eq!(explicit_true.use_define_for_class_fields, Some(true));
+}
+
+fn decoded_options(source: &str) -> CompilerOptionPatch {
+    let document = parse_jsonc(source).expect("valid JSONC");
+    let source_text = Arc::<str>::from(source);
+    let mut diagnostics = Vec::new();
+    let decoded = super::compiler_options::decode_compiler_options(
+        &document.source_spans.compiler_options,
+        Path::new("."),
+        Path::new("tsconfig.json"),
+        &source_text,
+        &mut diagnostics,
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+    decoded.patch
 }
 
 #[test]

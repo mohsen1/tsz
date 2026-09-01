@@ -87,7 +87,7 @@ impl Parser<'_> {
                         declared: false,
                     }),
                 });
-                self.record_parser_recovery_for_analysis(
+                self.note_recovery(
                     crate::syntax::ParserRecoveryKind::ForStatement,
                     binding_start,
                     declaration_span,
@@ -119,7 +119,7 @@ impl Parser<'_> {
         };
         statements.extend(body);
         let recovery_extent = authored_span.merge(self.previous().span);
-        self.record_parser_recovery_for_analysis(
+        self.note_recovery(
             crate::syntax::ParserRecoveryKind::ForStatement,
             authored_span,
             recovery_extent,
@@ -210,24 +210,15 @@ impl Parser<'_> {
     }
 
     pub(super) fn parse_jump_statement(&mut self) -> JumpStatement {
-        let keyword = self.bump();
-        let has_line_break = self
-            .source
-            .slice(Span::new(
-                self.source.id,
-                keyword.span.end as usize,
-                self.current().span.start as usize,
-            ))
-            .bytes()
-            .any(|byte| matches!(byte, b'\n' | b'\r'));
-        let (label, label_span) = if !has_line_break && self.kind().is_identifier() {
+        self.bump();
+        let same_line = self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index);
+        let (label, label_span) = if same_line && self.kind().is_identifier() {
             let (label, span) = self.parse_name();
             (Some(label), Some(span))
         } else {
             (None, None)
         };
-        if !has_line_break && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index)
-        {
+        if same_line && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index) {
             self.observe_unmodeled_template_if_current();
         }
         self.eat(TokenKind::Semicolon);

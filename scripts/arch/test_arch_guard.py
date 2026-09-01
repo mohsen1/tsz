@@ -115,7 +115,31 @@ class ArchGuardTests(unittest.TestCase):
         )
         self.write(
             "crates/tsz-core/src/program.rs",
-            "let result = if options.no_check || missing { CheckResult { } };\n",
+            """
+            let CheckResult {
+                diagnostics: mut semantic_diagnostics,
+                type_count,
+                semantic_completion: mut checker_completion,
+                file_semantic_completions,
+                declaration_display_summaries,
+            } = if options.no_check || !has_checkable_file {
+                let declaration_display_summaries = summarize_program();
+                CheckResult {
+                    diagnostics: Vec::new(),
+                    type_count: 0,
+                    semantic_completion: SemanticCompletion::Complete,
+                    file_semantic_completions: Vec::new(),
+                    declaration_display_summaries,
+                }
+            } else {
+                check_program()
+            };
+            if !has_fatal_option_error
+                && !capabilities.semantic_diagnostics_are_claimed(options)
+            {
+                checker_completion = checker_completion.combine(SemanticCompletion::Deferred);
+            }
+            """,
         )
 
     def install_rewrite_compiler_size_manifest(self) -> None:
@@ -255,6 +279,44 @@ class ArchGuardTests(unittest.TestCase):
             "struct SourceUnit {}\n",
         )
         self.assertIn("architecture-ratchet", self.codes())
+
+    def test_rewrite_architecture_ratchet_fails_closed_without_check_owner(self) -> None:
+        self.install_rewrite_metric_sources()
+        baseline = arch_guard.rewrite_architecture_metrics(self.root)
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps(baseline, sort_keys=True),
+        )
+        path = self.root / "crates/tsz-core/src/program.rs"
+        source = path.read_text(encoding="utf-8").replace(
+            "let CheckResult {", "let RenamedCheckResult {", 1
+        )
+        path.write_text(source, encoding="utf-8")
+        violations = arch_guard.check_rewrite_architecture_ratchet(self.root)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("program_whole_check_skip_terms", violations[0].message)
+        self.assertIn("found 0", violations[0].message)
+
+    def test_rewrite_architecture_ratchet_fails_closed_without_completion_owner(
+        self,
+    ) -> None:
+        self.install_rewrite_metric_sources()
+        baseline = arch_guard.rewrite_architecture_metrics(self.root)
+        self.write(
+            arch_guard.ARCHITECTURE_RATCHET_PATH,
+            json.dumps(baseline, sort_keys=True),
+        )
+        path = self.root / "crates/tsz-core/src/program.rs"
+        source = path.read_text(encoding="utf-8").replace(
+            "capabilities.semantic_diagnostics_are_claimed(options)",
+            "capabilities.renamed_semantic_owner(options)",
+            1,
+        )
+        path.write_text(source, encoding="utf-8")
+        violations = arch_guard.check_rewrite_architecture_ratchet(self.root)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("program_completion_gate_terms", violations[0].message)
+        self.assertIn("found 0", violations[0].message)
 
     def test_merge_base_ratchet_rejects_same_change_baseline_growth(self) -> None:
         base = {"capability_owners": 4, "forcing_entry_points": 3}
@@ -513,16 +575,37 @@ class ArchGuardTests(unittest.TestCase):
         self.write(
             "crates/tsz-core/src/program.rs",
             """
-            let result = if options.no_check || missing || local_gap { CheckResult { } };
+            let CheckResult {
+                diagnostics: mut semantic_diagnostics,
+                type_count,
+                semantic_completion: mut checker_completion,
+                file_semantic_completions,
+                declaration_display_summaries,
+            } = if options.no_check || !has_checkable_file || local_gap {
+                let declaration_display_summaries = summarize_program();
+                CheckResult {
+                    diagnostics: Vec::new(),
+                    type_count: 0,
+                    semantic_completion: SemanticCompletion::Complete,
+                    file_semantic_completions: Vec::new(),
+                    declaration_display_summaries,
+                }
+            } else {
+                check_program()
+            };
             let skipped = CheckResult {
                 diagnostics: Vec::new(),
                 type_count: 0,
                 semantic_completion: SemanticCompletion::Complete,
             };
-            diagnostics.extend(semantic_diagnostics);
-            if first_gap || second_gap {
-                semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
+            if !has_fatal_option_error
+                && !capabilities.semantic_diagnostics_are_claimed(options)
+                || local_gap
+            {
+                checker_completion = checker_completion.combine(SemanticCompletion::Deferred);
             }
+            let mut semantic_completion = SemanticCompletion::Complete;
+            semantic_completion = semantic_completion.combine(SemanticCompletion::Deferred);
             """,
         )
         self.write(

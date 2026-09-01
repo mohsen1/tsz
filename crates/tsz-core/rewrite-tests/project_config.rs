@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tempfile::TempDir;
-use tsz::config::{ProjectRequest, ProjectSelection, resolve_project};
+use tsz::config::{CompilerOptionPatch, ProjectRequest, ProjectSelection, resolve_project};
 use tsz::host::{HostEntry, ProgramHost, SystemHost};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
@@ -81,6 +81,14 @@ fn relative_paths(root: &Path, paths: &[PathBuf]) -> Vec<String> {
 
 fn codes(project: &tsz::config::ResolvedProject) -> Vec<u32> {
     project
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect()
+}
+
+fn output_codes(output: &tsz::CompileOutput) -> Vec<u32> {
+    output
         .diagnostics
         .iter()
         .map(|diagnostic| diagnostic.code)
@@ -422,7 +430,7 @@ fn empty_selector_diagnostics_follow_typescript_precedence() {
         "{:?}",
         extended.diagnostics
     );
-    assert_eq!(extended.project_config_count(), 2);
+    assert_eq!(extended.project_config_count, 2);
 }
 
 #[test]
@@ -471,7 +479,7 @@ fn extends_arrays_merge_left_to_right_and_keep_selector_origin() {
     assert!(!project.options.strict);
     assert_eq!(project.options.target, "es2024");
     assert_eq!(project.options.module, "esnext");
-    assert_eq!(project.project_config_count(), 3);
+    assert_eq!(project.project_config_count, 3);
     assert_eq!(
         relative_paths(root, &project.root_files),
         ["bases/two/owned/literal.ts", "bases/two/owned/selected.ts"]
@@ -708,8 +716,8 @@ fn malformed_selected_config_remains_a_counted_project_attempt() {
     );
 
     assert_eq!(codes(&resolved), [5083]);
-    assert_eq!(resolved.project_config_count(), 1);
-    assert!(resolved.graph.entry.is_some());
+    assert_eq!(resolved.project_config_count, 1);
+    assert!(resolved.entry_config.is_some());
     let options = resolved.options.clone();
     let output = Compiler::new().compile_resolved(resolved, &options);
     assert_eq!(output.stats.project_configs, 1);
@@ -795,12 +803,11 @@ fn references_are_entry_metadata_and_do_not_union_referenced_roots() {
         resolved.diagnostics
     );
     assert!(resolved.root_files.is_empty());
-    assert_eq!(resolved.project_config_count(), 1);
-    assert_eq!(resolved.project_reference_count(), 1);
+    assert_eq!(resolved.project_config_count, 1);
+    assert_eq!(resolved.project_reference_count, 1);
     let options = resolved.options.clone();
     let output = Compiler::new().compile_resolved(resolved, &options);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert_eq!(output.stats.files, 0);
     assert_eq!(output.stats.root_files, 0);
     assert_eq!(output.stats.source_files, 0);
     assert_eq!(output.stats.project_configs, 1);
@@ -825,14 +832,14 @@ fn references_property_suppresses_no_input_and_missing_edges_report_6053() {
         &ProjectRequest::new(ProjectSelection::Project(root.join("empty.json"))),
     );
     assert!(empty.diagnostics.is_empty(), "{:?}", empty.diagnostics);
-    assert_eq!(empty.root_file_count(), 0);
+    assert_eq!(empty.root_files.len(), 0);
 
     let missing = resolve_project(
         &host,
         &ProjectRequest::new(ProjectSelection::Project(root.join("missing.json"))),
     );
     assert_eq!(codes(&missing), [6053]);
-    assert_eq!(missing.project_reference_count(), 1);
+    assert_eq!(missing.project_reference_count, 1);
     assert!(
         missing.diagnostics[0]
             .message_text
@@ -866,7 +873,7 @@ fn reference_targets_follow_json_config_resolution_and_retain_jsonc_spans() {
     );
 
     assert_eq!(codes(&project), [6053, 6053]);
-    assert_eq!(project.project_reference_count(), 3);
+    assert_eq!(project.project_reference_count, 3);
     assert_eq!(project.diagnostics[0].file, "tsconfig.json");
     assert_eq!(project.diagnostics[1].file, "tsconfig.json");
     assert_eq!(
@@ -920,7 +927,6 @@ fn missing_literal_roots_report_6053_and_stats_survive_config_errors() {
     );
     assert_eq!(output.stats.root_files, 1);
     assert_eq!(output.stats.source_files, 0);
-    assert_eq!(output.stats.files, output.stats.source_files);
     assert_eq!(output.stats.project_configs, 1);
 }
 
@@ -943,8 +949,8 @@ fn literal_root_extensions_are_validated_before_source_parsing() {
     );
 
     assert_eq!(codes(&resolved), [6053, 6054, 6504]);
-    assert_eq!(resolved.root_file_count(), 3);
-    assert_eq!(resolved.source_file_count(), 0);
+    assert_eq!(resolved.root_files.len(), 3);
+    assert_eq!(resolved.inputs.len(), 0);
     for diagnostic in &resolved.diagnostics {
         assert_eq!(diagnostic.related_information.len(), 2);
         assert_eq!(diagnostic.related_information[0].code, 1430);
@@ -975,7 +981,7 @@ fn literal_root_extensions_are_validated_before_source_parsing() {
         &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())),
     );
     assert!(allowed.diagnostics.is_empty(), "{:?}", allowed.diagnostics);
-    assert_eq!(allowed.source_file_count(), 1);
+    assert_eq!(allowed.inputs.len(), 1);
 
     write(
         root,
@@ -1006,7 +1012,7 @@ fn direct_roots_use_command_line_reason_chains() {
     );
 
     assert_eq!(codes(&unsupported), [6504, 6504]);
-    assert_eq!(unsupported.source_file_count(), 0);
+    assert_eq!(unsupported.inputs.len(), 0);
     assert!(unsupported.diagnostics.iter().all(|diagnostic| {
         diagnostic.related_information.len() == 2
             && diagnostic.related_information[1].code == 1427
@@ -1049,10 +1055,9 @@ fn default_output_excludes_and_allow_js_affect_only_discovery() {
         ["lone.js", "source.ts"]
     );
 
-    let overridden = resolve_project(
-        &host,
-        &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())).with_allow_js(false),
-    );
+    let mut request = ProjectRequest::new(ProjectSelection::Project(root.to_path_buf()));
+    request.overrides.allow_js = Some(false);
+    let overridden = resolve_project(&host, &request);
     assert_eq!(relative_paths(root, &overridden.root_files), ["source.ts"]);
 }
 
@@ -1065,12 +1070,10 @@ fn command_line_output_directories_affect_default_discovery() {
     write(root, "dist/old.ts", "export {};\n");
     write(root, "types/old.ts", "export {};\n");
     let host = SystemHost::new(root);
-    let project = resolve_project(
-        &host,
-        &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf()))
-            .with_out_dir("dist")
-            .with_declaration_dir("types"),
-    );
+    let mut request = ProjectRequest::new(ProjectSelection::Project(root.to_path_buf()));
+    request.overrides.out_dir = Some("dist".into());
+    request.overrides.declaration_dir = Some("types".into());
+    let project = resolve_project(&host, &request);
 
     assert!(project.diagnostics.is_empty(), "{:?}", project.diagnostics);
     assert_eq!(relative_paths(root, &project.root_files), ["source.ts"]);
@@ -1303,6 +1306,84 @@ fn emit_preflight_blocks_only_the_product_that_would_overwrite_an_input() {
 }
 
 #[test]
+fn syntax_selects_before_overwrite_preflight_when_emit_is_demanded() {
+    let fixture = TempDir::new().expect("tempdir");
+    let root = fixture.path();
+    write(
+        root,
+        "tsconfig.json",
+        r#"{"compilerOptions":{"allowJs":true},"files":["syntax.ts","input.js"]}"#,
+    );
+    write(root, "syntax.ts", "const broken = ;");
+    write(root, "input.js", "const value = 1;\n");
+    let host = SystemHost::new(root);
+    let compile = |no_emit, no_emit_on_error| {
+        let resolved = resolve_project(
+            &host,
+            &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())),
+        );
+        let mut options = resolved.options.clone();
+        options.no_emit = no_emit;
+        options.no_emit_on_error = no_emit_on_error;
+        Compiler::new().compile_resolved(resolved, &options)
+    };
+
+    for (no_emit, no_emit_on_error, expected) in [
+        (false, false, &[1109][..]),
+        (false, true, &[1109][..]),
+        (true, false, &[1109][..]),
+    ] {
+        let output = compile(no_emit, no_emit_on_error);
+        assert_eq!(output_codes(&output), expected);
+        if no_emit || no_emit_on_error {
+            assert!(output.emitted_files.is_empty());
+        }
+    }
+    write(root, "syntax.ts", "const missing: number;");
+    assert_eq!(output_codes(&compile(false, false)), [5055]);
+}
+
+#[test]
+fn syntax_selects_before_collision_and_root_dir_program_diagnostics() {
+    let fixture = TempDir::new().expect("tempdir");
+    let root = fixture.path();
+    write(root, "syntax.ts", "const broken = ;");
+    write(root, "same.ts", "export const from_ts = 1;\n");
+    write(root, "same.tsx", "export const from_tsx = 2;\n");
+    let host = SystemHost::new(root);
+    let compile = || {
+        let resolved = resolve_project(
+            &host,
+            &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())),
+        );
+        let options = resolved.options.clone();
+        Compiler::new().compile_resolved(resolved, &options)
+    };
+
+    write(
+        root,
+        "tsconfig.json",
+        r#"{"compilerOptions":{"rootDir":".","outDir":"dist"},"files":["syntax.ts","same.ts","same.tsx"]}"#,
+    );
+    let collision = compile();
+    assert_eq!(output_codes(&collision), [1109]);
+    assert!(
+        collision
+            .emitted_files
+            .iter()
+            .all(|file| file.path != root.join("dist/same.js"))
+    );
+
+    write(
+        root,
+        "tsconfig.json",
+        r#"{"compilerOptions":{"rootDir":"src","outDir":"dist"},"files":["syntax.ts"]}"#,
+    );
+    let root_dir = compile();
+    assert_eq!(output_codes(&root_dir), [1109]);
+}
+
+#[test]
 fn unsupported_map_options_withhold_products_before_collision_preflight() {
     let fixture = TempDir::new().expect("tempdir");
     let root = fixture.path();
@@ -1529,6 +1610,192 @@ fn config_option_origins_locate_ts5011_and_invalid_target() {
     assert_eq!(
         output.exit_status,
         tsz::CompileExitStatus::DiagnosticsPresentOutputsGenerated
+    );
+}
+
+#[test]
+fn program_option_diagnostics_use_entry_config_syntax() {
+    let fixture = TempDir::new().expect("tempdir");
+    let root = fixture.path();
+    write(root, "case.ts", "const missing: number;\n");
+    let compile = |patch: CompilerOptionPatch| {
+        let host = SystemHost::new(root);
+        let mut resolved = resolve_project(
+            &host,
+            &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())),
+        );
+        let options = resolved.apply_option_patch(&patch);
+        Compiler::new().compile_resolved(resolved, &options)
+    };
+    let location = |output: &tsz::CompileOutput| {
+        let diagnostic = output
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == 5108)
+            .expect("TS5108");
+        (diagnostic.file.clone(), diagnostic.start, diagnostic.length)
+    };
+
+    let own = r#"{"compilerOptions":{"target":"es5","noEmitOnError":false},"files":["case.ts"]}"#;
+    write(root, "tsconfig.json", own);
+    let output = compile(CompilerOptionPatch::default());
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [5108]
+    );
+    assert_eq!(output.stats.types, 0);
+    assert!(output.emitted_files.is_empty());
+    assert_eq!(
+        location(&output),
+        (
+            "tsconfig.json".to_string(),
+            own.find("\"es5\"").unwrap() as u32,
+            5,
+        )
+    );
+
+    let overridden = r#"{"compilerOptions":{"target":"es2022","noEmit":true},"files":["case.ts"]}"#;
+    write(root, "tsconfig.json", overridden);
+    let output = compile(CompilerOptionPatch {
+        target: Some("es5".to_string()),
+        ..CompilerOptionPatch::default()
+    });
+    assert_eq!(
+        location(&output),
+        (
+            "tsconfig.json".to_string(),
+            overridden.find("\"es2022\"").unwrap() as u32,
+            8,
+        )
+    );
+
+    let fallback = r#"{"compilerOptions":{"noEmit":true},"files":["case.ts"]}"#;
+    write(root, "tsconfig.json", fallback);
+    let output = compile(CompilerOptionPatch {
+        target: Some("es5".to_string()),
+        ..CompilerOptionPatch::default()
+    });
+    assert_eq!(
+        location(&output),
+        (
+            "tsconfig.json".to_string(),
+            fallback.find("\"compilerOptions\"").unwrap() as u32,
+            17,
+        )
+    );
+
+    let non_string = r#"{"compilerOptions":{"target":123,"noEmit":true},"files":["case.ts"]}"#;
+    write(root, "tsconfig.json", non_string);
+    let output = compile(CompilerOptionPatch {
+        target: Some("es5".to_string()),
+        ..CompilerOptionPatch::default()
+    });
+    assert_eq!(
+        location(&output),
+        (
+            "tsconfig.json".to_string(),
+            non_string.find("123").unwrap() as u32,
+            3,
+        )
+    );
+
+    let non_object = r#"{"compilerOptions":null,"files":["case.ts"]}"#;
+    write(root, "tsconfig.json", non_object);
+    let output = compile(CompilerOptionPatch {
+        target: Some("es5".to_string()),
+        ..CompilerOptionPatch::default()
+    });
+    assert_eq!(
+        location(&output),
+        (
+            "tsconfig.json".to_string(),
+            non_object.find("\"compilerOptions\"").unwrap() as u32,
+            17,
+        )
+    );
+
+    write(root, "base.json", r#"{"compilerOptions":{"target":"es5"}}"#);
+    let inherited =
+        r#"{"extends":"./base.json","compilerOptions":{"noEmit":true},"files":["case.ts"]}"#;
+    write(root, "tsconfig.json", inherited);
+    let output = compile(CompilerOptionPatch::default());
+    assert_eq!(
+        location(&output),
+        (
+            "tsconfig.json".to_string(),
+            inherited.find("\"compilerOptions\"").unwrap() as u32,
+            17,
+        )
+    );
+
+    let valid = r#"{"compilerOptions":{"target":"es2022","noEmit":true},"files":["case.ts"]}"#;
+    write(root, "tsconfig.json", valid);
+    let host = SystemHost::new(root);
+    let resolved = resolve_project(
+        &host,
+        &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())),
+    );
+    let mut options = resolved.options.clone();
+    options.target = "renamed-invalid".to_string();
+    let output = Compiler::new().compile_resolved(resolved, &options);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [6046]
+    );
+    assert!(output.diagnostics[0].file.is_empty());
+}
+
+#[test]
+fn config_target_parse_diagnostics_preserve_duplicate_occurrences() {
+    let fixture = TempDir::new().expect("tempdir");
+    let root = fixture.path();
+    write(root, "case.ts", "const missing: number;\n");
+    let compile = |config: &str| {
+        write(root, "tsconfig.json", config);
+        let host = SystemHost::new(root);
+        let resolved = resolve_project(
+            &host,
+            &ProjectRequest::new(ProjectSelection::Project(root.to_path_buf())),
+        );
+        let options = resolved.options.clone();
+        Compiler::new().compile_resolved(resolved, &options)
+    };
+    let starts = |output: &tsz::CompileOutput| {
+        output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 6046)
+            .map(|diagnostic| diagnostic.start)
+            .collect::<Vec<_>>()
+    };
+
+    let invalid_then_valid = r#"{"compilerOptions":{"target":"wat","target":"es2022","noEmit":true},"files":["case.ts"]}"#;
+    assert_eq!(
+        starts(&compile(invalid_then_valid)),
+        [invalid_then_valid.find("\"wat\"").unwrap() as u32]
+    );
+
+    let valid_then_invalid = r#"{"compilerOptions":{"target":"es2022","target":"wat","noEmit":true},"files":["case.ts"]}"#;
+    assert_eq!(
+        starts(&compile(valid_then_invalid)),
+        [valid_then_invalid.find("\"wat\"").unwrap() as u32]
+    );
+
+    let two_invalid = r#"{"compilerOptions":{"target":"wat","target":"future","noEmit":true},"files":["case.ts"]}"#;
+    assert_eq!(
+        starts(&compile(two_invalid)),
+        [
+            two_invalid.find("\"wat\"").unwrap() as u32,
+            two_invalid.find("\"future\"").unwrap() as u32,
+        ]
     );
 }
 

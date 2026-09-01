@@ -57,9 +57,6 @@ fn accessor_pairs_defer_declaration_emit_when_either_published_type_needs_infere
                     target,
                     scope: node,
                     reason: NonclaimReason::Semantic(SemanticGap::DeclarationAccessorSummary),
-                    deletion: DeletionCondition::SemanticOwner(
-                        SemanticGap::DeclarationAccessorSummary,
-                    ),
                 }],
             );
         }
@@ -341,9 +338,6 @@ fn bounded_accessor_bodies_are_owned_without_promoting_unmodeled_neighbors() {
                     target,
                     scope: node,
                     reason: NonclaimReason::Semantic(SemanticGap::DeclarationAccessorSummary),
-                    deletion: DeletionCondition::SemanticOwner(
-                        SemanticGap::DeclarationAccessorSummary,
-                    ),
                 }],
             );
         }
@@ -570,9 +564,6 @@ fn nested_static_and_private_accessors_keep_capability_locality() {
                     target,
                     scope,
                     reason: NonclaimReason::Semantic(SemanticGap::DeclarationAccessorSummary),
-                    deletion: DeletionCondition::SemanticOwner(
-                        SemanticGap::DeclarationAccessorSummary,
-                    ),
                 }],
             );
         }
@@ -756,7 +747,7 @@ fn reserved_class_member_names_and_constructor_extras_defer_only_semantics() {
                 reason.target == target
                     && reason.scope == scope
                     && reason.reason == NonclaimReason::Semantic(SemanticGap::ClassMemberSemantics)
-                    && reason.deletion
+                    && reason.deletion_condition()
                         == DeletionCondition::SemanticOwner(SemanticGap::ClassMemberSemantics)
             }));
         }
@@ -821,7 +812,7 @@ fn templates_in_skipped_class_hosts_defer_only_the_class_member_semantics_owner(
                 reason.target == target
                     && reason.scope == scope
                     && reason.reason == NonclaimReason::Semantic(SemanticGap::ClassMemberSemantics)
-                    && reason.deletion
+                    && reason.deletion_condition()
                         == DeletionCondition::SemanticOwner(SemanticGap::ClassMemberSemantics)
             }));
         }

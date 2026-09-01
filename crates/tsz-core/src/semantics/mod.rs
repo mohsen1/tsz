@@ -39,7 +39,4 @@ mod checker;
 mod relation;
 mod types;
 
-pub(crate) use checker::{
-    CheckResult, DeclarationDisplayParts, DeclarationDisplaySummaries, DeclarationDisplaySummary,
-    check_program, summarize_program,
-};
+pub(crate) use checker::{CheckResult, check_program, summarize_program};

@@ -15,6 +15,10 @@ if ! declare -F tsz_fingerprint_project_root >/dev/null 2>&1; then
   # shellcheck source=scripts/ci/lib/project-compile-fingerprint.sh
   source "$PROJECT_ROOT/scripts/ci/lib/project-compile-fingerprint.sh"
 fi
+if ! declare -F tsz_pin_checkout_evidence >/dev/null 2>&1; then
+  # shellcheck source=scripts/ci/lib/project-compat-evidence.sh
+  source "$PROJECT_ROOT/scripts/ci/lib/project-compat-evidence.sh"
+fi
 if ! declare -F tsz_diagnostic_multisets_agree >/dev/null 2>&1; then
   # shellcheck source=scripts/ci/lib/project-tsc-oracle.sh
   source "$PROJECT_ROOT/scripts/ci/lib/project-tsc-oracle.sh"
@@ -22,6 +26,9 @@ fi
 
 PROJECT_EVIDENCE_STATS_READER="${PROJECT_EVIDENCE_STATS_READER:-$PROJECT_ROOT/scripts/ci/project-compile-stats.mjs}"
 PROJECT_EVIDENCE_STUB_INVENTORY_READER="${PROJECT_EVIDENCE_STUB_INVENTORY_READER:-$PROJECT_ROOT/scripts/bench/lib/fixture-stub-inventory.mjs}"
+PROJECT_EVIDENCE_RUN_PROVENANCE_PINNED=false
+PROJECT_EVIDENCE_BINARY_STABLE=false
+PROJECT_EVIDENCE_TSZ_BINARY_PATH=""
 
 project_evidence_reset() {
   PROJECT_EVIDENCE_SCHEMA=""
@@ -45,10 +52,14 @@ project_evidence_reset() {
   PROJECT_EVIDENCE_TSC_DIAGNOSTIC_RECORDS=""
   PROJECT_EVIDENCE_TSZ_DIAGNOSTIC_FINGERPRINT=""
   PROJECT_EVIDENCE_TSC_DIAGNOSTIC_FINGERPRINT=""
+  PROJECT_EVIDENCE_ORACLE_FINGERPRINT=""
   PROJECT_EVIDENCE_STUB_INVENTORY_SCHEMA=""
   PROJECT_EVIDENCE_STUBBED_MODULES=""
   PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS=""
   PROJECT_EVIDENCE_STUB_INVENTORY_FINGERPRINT=""
+  PROJECT_EVIDENCE_STUB_INVENTORY_OWNERS="[]"
+  LAST_COMPILE_INPUT_FINGERPRINT=""
+  LAST_COMPILE_INPUT_STABLE=false
 }
 
 project_evidence_fail() {
@@ -69,9 +80,108 @@ project_evidence_tsc_lib_dir() {
   for word in "${PROJECT_EVIDENCE_TSC_CMD[@]}"; do
     if [[ "$word" == */bin/tsc && -e "$word" ]]; then
       candidate="$(dirname "$word")/../lib"
+    elif [[ "$word" == */lib/tsc.js && -f "$word" ]]; then
+      candidate="$(dirname "$word")"
     fi
   done
   [[ -n "$candidate" && -d "$candidate" ]] && (cd "$candidate" && pwd -P)
+}
+
+project_evidence_oracle_identity_fingerprint() {
+  local builtin_dir="$1" native_exe="${PROJECT_EVIDENCE_TSC_NATIVE_EXE:-}"
+  local package_root package_json get_exe
+  [[ -d "$builtin_dir" ]] || return 1
+  package_root="$(dirname "$builtin_dir")"
+  package_json="$package_root/package.json"
+  get_exe="$builtin_dir/getExePath.js"
+
+  if [[ -z "$native_exe" && -f "$get_exe" ]]; then
+    native_exe="$(node --input-type=module -e \
+      'import { pathToFileURL } from "node:url"; const m = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(m.default());' \
+      "$get_exe" 2>/dev/null || true)"
+  fi
+  if [[ -z "$native_exe" && "${#PROJECT_EVIDENCE_TSC_CMD[@]}" -eq 1 \
+    && -f "${PROJECT_EVIDENCE_TSC_CMD[0]}" ]]; then
+    native_exe="${PROJECT_EVIDENCE_TSC_CMD[0]}"
+  fi
+
+  tsz_oracle_identity_fingerprint \
+    single-threaded-stable-v3 \
+    "$builtin_dir" \
+    "$native_exe" \
+    "$PROJECT_ROOT/scripts/conformance/typescript-versions.json" \
+    "$package_json" \
+    "${PROJECT_EVIDENCE_TSC_CMD[@]}"
+}
+
+# Pin checkout, binary, build-manifest, and evidence-protocol identity once for
+# the benchmark run. A supplied TSZ override is valid only when its supplied or
+# adjacent manifest proves the same checkout and exact executable bytes.
+project_evidence_pin_run_provenance() {
+  if [[ "$PROJECT_EVIDENCE_RUN_PROVENANCE_PINNED" == "true" ]]; then
+    return 0
+  fi
+
+  local binary="${PROJECT_EVIDENCE_TSZ_BINARY:-${TSZ:-}}"
+  local manifest="${BENCH_BUILD_MANIFEST:-${TSZ_BENCH_BUILD_MANIFEST:-}}"
+  [[ -x "$binary" ]] || return 1
+  [[ -n "$manifest" ]] || manifest="$(dirname "$binary")/conformance-build-manifest.json"
+
+  local binary_hash protocol_hash
+  binary_hash="$(sha256_of_file "$binary")"
+  [[ "$binary_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+  # Pin the checkout before validating any source-derived provenance. Every
+  # later refresh is relative to this observation, so an edit between the
+  # manifest/protocol checks and the proof run cannot be mistaken for the
+  # build inputs that produced the binary.
+  tsz_pin_checkout_evidence "$PROJECT_ROOT" || return 1
+  tsz_verify_build_manifest "$PROJECT_ROOT" "$manifest" "$binary_hash" || return 1
+  protocol_hash="$(tsz_evidence_protocol_fingerprint "$PROJECT_ROOT" \
+    scripts/bench/lib/project-evidence.sh \
+    scripts/bench/lib/bench-vs-tsgo-results.sh 2>/dev/null || true)"
+  [[ "$protocol_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+
+  PROJECT_EVIDENCE_TSZ_BINARY_PATH="$binary"
+  PROJECT_EVIDENCE_BINARY_STABLE=true
+  TSZ_COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT="$protocol_hash"
+  export _TSZ_BINARY_HASH="$binary_hash"
+  export _TSZ_SOURCE_OVERLAY_HASH="$TSZ_COMPAT_INITIAL_SOURCE_TREE_FINGERPRINT"
+  export _TSZ_EVIDENCE_PROTOCOL_HASH="$protocol_hash"
+  PROJECT_EVIDENCE_RUN_PROVENANCE_PINNED=true
+}
+
+# Recheck mutable boundaries immediately before a row becomes timing-eligible
+# and again immediately before its compatibility record is published.
+project_evidence_refresh_publication() {
+  local name="$1" tsconfig="$2" src_dir="$3"
+  local FIXTURE_ROOT="${EXTERNAL_BENCH_DIR:-${FIXTURE_ROOT:-$(dirname "$tsconfig")}}"
+  PROJECT_EVIDENCE_BINARY_STABLE=false
+  tsz_refresh_checkout_evidence "$PROJECT_ROOT" || true
+  tsz_refresh_compile_input_evidence "$name" "$tsconfig" "$src_dir" || true
+  local observed_binary_hash=""
+  observed_binary_hash="$(sha256_of_file "$PROJECT_EVIDENCE_TSZ_BINARY_PATH")"
+  if [[ "$observed_binary_hash" =~ ^[0-9a-f]{64}$ \
+    && "$observed_binary_hash" == "${_TSZ_BINARY_HASH:-}" ]]; then
+    PROJECT_EVIDENCE_BINARY_STABLE=true
+  fi
+  [[ "$TSZ_COMPAT_SOURCE_STABLE" == "true" \
+    && "$LAST_COMPILE_INPUT_STABLE" == "true" \
+    && "$PROJECT_EVIDENCE_BINARY_STABLE" == "true" ]]
+}
+
+project_evidence_v3_provenance_ready() {
+  [[ "$TSZ_COMPAT_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ \
+    && "$TSZ_COMPAT_SOURCE_TREE_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
+    && "$TSZ_COMPAT_SOURCE_STABLE" == "true" \
+    && "$TSZ_COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
+    && "${_TSZ_BINARY_HASH:-}" =~ ^[0-9a-f]{64}$ \
+    && "$PROJECT_EVIDENCE_BINARY_STABLE" == "true" \
+    && "$TSZ_COMPAT_BUILD_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ \
+    && "$TSZ_COMPAT_BUILD_INPUTS_SHA256" =~ ^[0-9a-f]{64}$ \
+    && "$TSZ_COMPAT_BUILD_MANIFEST_BINARY_SHA256" == "${_TSZ_BINARY_HASH:-}" \
+    && "$LAST_COMPILE_INPUT_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
+    && "$LAST_COMPILE_INPUT_STABLE" == "true" \
+    && "$PROJECT_EVIDENCE_ORACLE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 }
 
 project_evidence_read_tsz_stats() {
@@ -110,7 +220,7 @@ project_evidence_ordinary_rc() {
 # collect_project_evidence <name> <tsconfig> <source-root> <tsz-log> <tsc-log>
 #
 # Callers provide PROJECT_EVIDENCE_TSZ_CMD and PROJECT_EVIDENCE_TSC_CMD arrays.
-# On success, PROJECT_EVIDENCE_SCHEMA=2 and every TSZ/TS7 count/fingerprint is
+# On success, PROJECT_EVIDENCE_SCHEMA=3 and every TSZ/TS7 count/fingerprint is
 # populated. On failure the reason/status globals describe a non-timing row.
 collect_project_evidence() {
   local name="$1" tsconfig="$2" src_dir="$3" tsz_log="$4" tsc_log="$5"
@@ -146,18 +256,21 @@ collect_project_evidence() {
   fi
   IFS=$'\t' read -r PROJECT_EVIDENCE_STUB_INVENTORY_SCHEMA \
     PROJECT_EVIDENCE_STUBBED_MODULES PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS \
-    PROJECT_EVIDENCE_STUB_INVENTORY_FINGERPRINT <<< "$stub_evidence"
-  if [[ "$PROJECT_EVIDENCE_STUB_INVENTORY_SCHEMA" != "1" \
+    PROJECT_EVIDENCE_STUB_INVENTORY_FINGERPRINT \
+    PROJECT_EVIDENCE_STUB_INVENTORY_OWNERS <<< "$stub_evidence"
+  if [[ "$PROJECT_EVIDENCE_STUB_INVENTORY_SCHEMA" != "2" \
     || ! "$PROJECT_EVIDENCE_STUBBED_MODULES" =~ ^(0|[1-9][0-9]*)$ \
     || ! "$PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS" =~ ^(0|[1-9][0-9]*)$ \
-    || ! "$PROJECT_EVIDENCE_STUB_INVENTORY_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+    || ! "$PROJECT_EVIDENCE_STUB_INVENTORY_FINGERPRINT" =~ ^[0-9a-f]{64}$ \
+    || ! "$PROJECT_EVIDENCE_STUB_INVENTORY_OWNERS" =~ ^\[.*\]$ ]]; then
     PROJECT_EVIDENCE_FILES_REACHED_REASON="fixture stub inventory unavailable"
     project_evidence_fail "fixture stub inventory malformed" \
       "runner error" "fixture stub inventory unavailable"
     return 1
   fi
   if [[ "$PROJECT_EVIDENCE_STUBBED_MODULES" -gt 0 \
-    || "$PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS" -gt 0 ]]; then
+    || "$PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS" -gt 0 \
+    || "$PROJECT_EVIDENCE_STUB_INVENTORY_OWNERS" != "[]" ]]; then
     PROJECT_EVIDENCE_FILES_REACHED_REASON="fixture dependency stubs present"
     project_evidence_fail \
       "fixture dependency stubs erase semantic coverage (modules=${PROJECT_EVIDENCE_STUBBED_MODULES}, any-members=${PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS})" \
@@ -175,6 +288,25 @@ collect_project_evidence() {
   tsc_lib_dir="$(project_evidence_tsc_lib_dir)"
   if [[ -z "$tsc_lib_dir" ]]; then
     project_evidence_fail "pinned TypeScript 7 built-in library identity unavailable"
+    return 1
+  fi
+  if ! project_evidence_pin_run_provenance; then
+    project_evidence_fail "TSZ binary/build provenance unavailable" \
+      "runner error" "compiler build provenance unavailable"
+    return 1
+  fi
+  PROJECT_EVIDENCE_ORACLE_FINGERPRINT="$(project_evidence_oracle_identity_fingerprint \
+    "$tsc_lib_dir" 2>/dev/null || true)"
+  if [[ ! "$PROJECT_EVIDENCE_ORACLE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+    project_evidence_fail "pinned TypeScript 7 oracle identity unavailable"
+    return 1
+  fi
+  export _TSZ_TSC_ORACLE_HASH="$PROJECT_EVIDENCE_ORACLE_FINGERPRINT"
+  LAST_COMPILE_INPUT_FINGERPRINT="$(tsz_compile_input_fingerprint \
+    "$name" "$tsconfig" "$src_dir" 2>/dev/null || true)"
+  if [[ ! "$LAST_COMPILE_INPUT_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+    project_evidence_fail "project compile-input identity unavailable" \
+      "runner error" "compile-input provenance unavailable"
     return 1
   fi
 
@@ -235,7 +367,7 @@ collect_project_evidence() {
   fi
   if [[ "$PROJECT_EVIDENCE_SEMANTIC_COMPLETION" != "complete" ]]; then
     rm -f "$show_file" "$list_file" "$stats_file"
-    # Valid telemetry is retained below, but schema 2 denotes exact admission
+    # Valid telemetry is retained below, but schema 3 denotes exact admission
     # proof and therefore remains unset for every incomplete completion.
     local incomplete_class="exit success"
     if [[ "$tsz_rc" -ne 0 ]]; then
@@ -327,7 +459,14 @@ collect_project_evidence() {
     return 1
   fi
 
-  PROJECT_EVIDENCE_SCHEMA=2
+  if ! project_evidence_refresh_publication "$name" "$tsconfig" "$src_dir" \
+    || ! project_evidence_v3_provenance_ready; then
+    project_evidence_fail "source, binary, or compile inputs changed during project evidence" \
+      "runner error" "project evidence provenance changed"
+    return 1
+  fi
+
+  PROJECT_EVIDENCE_SCHEMA=3
   PROJECT_EVIDENCE_EXIT_CLASS="exit success"
   PROJECT_EVIDENCE_DIAGNOSTIC_STATUS="none"
   PROJECT_EVIDENCE_DIAGNOSTIC_DELTA="$(tsc_and_tsz_oracle_delta "$tsz_log" "$tsc_log")"

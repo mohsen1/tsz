@@ -1,8 +1,20 @@
 use std::sync::Arc;
 
-use tsz::diagnostics::DiagnosticCategory;
-use tsz::service::LanguageService;
-use tsz::{Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+use tsz::diagnostics::{Diagnostic, DiagnosticCategory};
+use tsz::service::{LanguageService, ServiceQuery};
+use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+type DiagnosticIdentity = (String, u32, u32, u32, DiagnosticCategory, String, usize);
+type RelatedDiagnosticIdentity = (String, u32, u32, String, u32, u32);
+type FullDiagnosticIdentity = (
+    String,
+    u32,
+    u32,
+    u32,
+    DiagnosticCategory,
+    String,
+    Vec<RelatedDiagnosticIdentity>,
+);
 
 fn compile(source: &str) -> tsz::CompileOutput {
     compile_files(&[("case.ts", source)])
@@ -27,6 +39,65 @@ fn codes(output: &tsz::CompileOutput) -> Vec<u32> {
         .diagnostics
         .iter()
         .map(|diagnostic| diagnostic.code)
+        .collect()
+}
+
+fn service_for(files: &[(&str, &str)]) -> LanguageService {
+    let mut service = LanguageService::new(CompilerOptions {
+        no_emit: true,
+        strict: true,
+        ..CompilerOptions::default()
+    });
+    for (path, source) in files {
+        service.open(*path, Arc::<str>::from(*source));
+    }
+    service
+}
+
+fn diagnostic_identities(diagnostics: &[Diagnostic]) -> Vec<DiagnosticIdentity> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.file.clone(),
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.category,
+                diagnostic.message_text.clone(),
+                diagnostic.related_information.len(),
+            )
+        })
+        .collect()
+}
+
+fn full_diagnostic_identities(diagnostics: &[Diagnostic]) -> Vec<FullDiagnosticIdentity> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.file.clone(),
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.category,
+                diagnostic.message_text.clone(),
+                diagnostic
+                    .related_information
+                    .iter()
+                    .map(|related| {
+                        (
+                            related.file.clone(),
+                            related.start,
+                            related.length,
+                            related.message_text.clone(),
+                            related.code,
+                            related.depth,
+                        )
+                    })
+                    .collect(),
+            )
+        })
         .collect()
 }
 
@@ -69,16 +140,20 @@ fn nonclaimed_host_reenters_an_independent_arrow_required_type_owner() {
     };
     assert_eq!(parameter.code, 2304);
     assert_eq!(
-        parameter.start,
-        source.find("MissingArrowType").unwrap() as u32
+        (parameter.start, parameter.length),
+        (
+            source.find("MissingArrowType").unwrap() as u32,
+            "MissingArrowType".len() as u32,
+        ),
     );
-    assert_eq!(parameter.length, "MissingArrowType".len() as u32);
     assert_eq!(result.code, 2304);
     assert_eq!(
-        result.start,
-        source.find("MissingArrowReturn").unwrap() as u32
+        (result.start, result.length),
+        (
+            source.find("MissingArrowReturn").unwrap() as u32,
+            "MissingArrowReturn".len() as u32,
+        ),
     );
-    assert_eq!(result.length, "MissingArrowReturn".len() as u32);
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
 
@@ -112,18 +187,22 @@ fn class_heritage_defers_an_incomplete_value_producer() {
         "class Derived extends RenamedBase {}",
         "const independent: MissingIndependent = 1;",
     );
+    let service = service_for(&[("case.ts", source)]);
+    let semantic = service.semantic_diagnostics("case.ts");
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+    let expected = vec![(
+        "case.ts".to_string(),
+        2304,
+        source.find("MissingIndependent").unwrap() as u32,
+        "MissingIndependent".len() as u32,
+        DiagnosticCategory::Error,
+        "Cannot find name 'MissingIndependent'.".to_string(),
+        vec![],
+    )];
+    assert_eq!(full_diagnostic_identities(&semantic.diagnostics), expected,);
+
     let output = compile(source);
-    let [independent] = output.diagnostics.as_slice() else {
-        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
-    };
-    assert_eq!(independent.code, 2304);
-    assert_eq!(
-        (independent.start, independent.length),
-        (
-            source.find("MissingIndependent").unwrap() as u32,
-            "MissingIndependent".len() as u32,
-        )
-    );
+    assert_eq!(full_diagnostic_identities(&output.diagnostics), expected);
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
 
@@ -179,74 +258,103 @@ fn recovered_named_tuple_arrow_header_does_not_publish_label_lookup() {
         "values; const dependent: MissingTupleBody = 1; };",
         "const independent: MissingTupleSibling = 1;\n",
     );
+    let service = service_for(&[("case.ts", source)]);
+    let semantic = service.semantic_diagnostics("case.ts");
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+    let expected = ["MissingTupleBody", "MissingTupleSibling"]
+        .map(|name| {
+            (
+                "case.ts".to_string(),
+                2304,
+                source.find(name).unwrap() as u32,
+                name.len() as u32,
+                DiagnosticCategory::Error,
+                format!("Cannot find name '{name}'."),
+                vec![],
+            )
+        })
+        .to_vec();
+    assert_eq!(full_diagnostic_identities(&semantic.diagnostics), expected,);
+
     let output = compile(source);
-    let missing = output
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code == 2304)
-        .collect::<Vec<_>>();
-    let [body, sibling] = missing.as_slice() else {
-        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
-    };
-    assert_eq!(
-        (body.start, body.length),
-        (
-            source.find("MissingTupleBody").unwrap() as u32,
-            "MissingTupleBody".len() as u32,
-        )
-    );
-    assert_eq!(
-        (sibling.start, sibling.length),
-        (
-            source.find("MissingTupleSibling").unwrap() as u32,
-            "MissingTupleSibling".len() as u32,
-        )
-    );
+    assert_eq!(full_diagnostic_identities(&output.diagnostics), expected);
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
 
 #[test]
 fn recovered_named_tuple_arrow_keeps_same_call_siblings_independent() {
-    for source in [
-        concat!(
-            "declare const consume: (...values: any[]) => void;",
-            "consume((...values: [label: 'label', item: 'item']) => values, ",
-            "MissingSameCall);",
+    for (source, syntax) in [
+        (
+            concat!(
+                "declare const consume: (...values: any[]) => void;",
+                "consume((...values: [label: 'label', item: 'item']) => values, ",
+                "MissingSameCall);",
+            ),
+            None,
         ),
-        concat!(
-            "declare const consume: (...values: any[]) => void;",
-            "consume((renamed: ) => renamed, MissingSameCall);",
+        (
+            concat!(
+                "declare const consume: (...values: any[]) => void;",
+                "consume((renamed: ) => renamed, MissingSameCall);",
+            ),
+            Some((": )", 2, 1)),
         ),
-        concat!(
-            "declare const consume: (...values: any[]) => void;",
-            "consume((...values: [label?: 'label']) => values, MissingSameCall);",
+        (
+            concat!(
+                "declare const consume: (...values: any[]) => void;",
+                "consume((...values: [label?: 'label']) => values, MissingSameCall);",
+            ),
+            None,
         ),
-        concat!(
-            "declare const consume: (...values: any[]) => void;",
-            "consume((...values: [...items: string[]]) => values, MissingSameCall);",
+        (
+            concat!(
+                "declare const consume: (...values: any[]) => void;",
+                "consume((...values: [...items: string[]]) => values, MissingSameCall);",
+            ),
+            None,
         ),
-        concat!(
-            "declare const consume: (...values: any[]) => void;",
-            "consume((): => 1, MissingSameCall);",
+        (
+            concat!(
+                "declare const consume: (...values: any[]) => void;",
+                "consume((): => 1, MissingSameCall);",
+            ),
+            Some((": =>", 2, 2)),
         ),
     ] {
-        let output = compile(source);
-        let missing = output
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code == 2304)
-            .collect::<Vec<_>>();
-        let [diagnostic] = missing.as_slice() else {
-            panic!("unexpected diagnostics: {:#?}", output.diagnostics);
-        };
-        assert_eq!(
-            (diagnostic.start, diagnostic.length),
-            (
-                source.find("MissingSameCall").unwrap() as u32,
-                "MissingSameCall".len() as u32,
-            )
+        let service = service_for(&[("case.ts", source)]);
+        let semantic = service.semantic_diagnostics("case.ts");
+        assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+        let missing = (
+            "case.ts".to_string(),
+            2304,
+            source.find("MissingSameCall").unwrap() as u32,
+            "MissingSameCall".len() as u32,
+            DiagnosticCategory::Error,
+            "Cannot find name 'MissingSameCall'.".to_string(),
+            0,
         );
+        assert_eq!(
+            diagnostic_identities(&semantic.diagnostics),
+            vec![missing.clone()],
+        );
+
+        let output = compile(source);
+        let expected = if let Some((token, offset, length)) = syntax {
+            vec![(
+                "case.ts".to_string(),
+                1110,
+                source.find(token).unwrap() as u32 + offset,
+                length,
+                DiagnosticCategory::Error,
+                "Type expected.".to_string(),
+                0,
+            )]
+        } else {
+            vec![missing]
+        };
+        assert_eq!(diagnostic_identities(&output.diagnostics), expected);
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     }
 }
 
@@ -257,23 +365,38 @@ fn malformed_generic_arrow_keeps_same_call_siblings_independent() {
         "consume(<Cedar extends,>(renamed: Cedar) => renamed, MissingSameCall);",
     );
     for path in ["case.ts", "case.tsx"] {
-        let output = compile_files(&[(path, source)]);
-        let missing = output
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code == 2304)
-            .collect::<Vec<_>>();
-        let [diagnostic] = missing.as_slice() else {
-            panic!("{path}: unexpected diagnostics: {:#?}", output.diagnostics);
-        };
+        let service = service_for(&[(path, source)]);
+        let semantic = service.semantic_diagnostics(path);
+        assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+        let missing = (
+            path.to_string(),
+            2304,
+            source.find("MissingSameCall").unwrap() as u32,
+            "MissingSameCall".len() as u32,
+            DiagnosticCategory::Error,
+            "Cannot find name 'MissingSameCall'.".to_string(),
+            0,
+        );
         assert_eq!(
-            (diagnostic.start, diagnostic.length),
-            (
-                source.find("MissingSameCall").unwrap() as u32,
-                "MissingSameCall".len() as u32,
-            )
+            diagnostic_identities(&semantic.diagnostics),
+            vec![missing.clone()],
+        );
+
+        let output = compile_files(&[(path, source)]);
+        assert_eq!(
+            diagnostic_identities(&output.diagnostics),
+            vec![(
+                path.to_string(),
+                1110,
+                source.find("extends,>").unwrap() as u32 + "extends".len() as u32,
+                1,
+                DiagnosticCategory::Error,
+                "Type expected.".to_string(),
+                0,
+            ),],
         );
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     }
 }
 
@@ -284,66 +407,78 @@ fn rejected_generic_arrow_prefix_keeps_same_call_names_independent() {
             "{prefix}declare const consume: (...values: any[]) => void;\
              consume(<Cedar,>(): => 1, MissingSameCall);",
         );
-        let output = compile(&source);
-        let syntax = output
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code != 2304)
-            .map(|diagnostic| {
-                (
-                    diagnostic.code,
-                    diagnostic.start,
-                    diagnostic.length,
-                    diagnostic.message_text.as_str(),
-                )
-            })
-            .collect::<Vec<_>>();
+        let service = service_for(&[("case.ts", &source)]);
+        let semantic = service.semantic_diagnostics("case.ts");
+        assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+        let missing = (
+            "case.ts".to_string(),
+            2304,
+            source.find("MissingSameCall").unwrap() as u32,
+            "MissingSameCall".len() as u32,
+            DiagnosticCategory::Error,
+            "Cannot find name 'MissingSameCall'.".to_string(),
+            0,
+        );
         assert_eq!(
-            syntax,
+            diagnostic_identities(&semantic.diagnostics),
+            vec![missing.clone()],
+        );
+
+        let output = compile(&source);
+        // The TS1109 entries are current provisional parser output, not an
+        // oracle-parity claim; this assertion pins which phase owns the CLI aggregate.
+        assert_eq!(
+            diagnostic_identities(&output.diagnostics),
             vec![
-                (1005, source.find(",>").unwrap() as u32, 1, "'>' expected.",),
                 (
+                    "case.ts".to_string(),
+                    1005,
+                    source.find(",>").unwrap() as u32,
+                    1,
+                    DiagnosticCategory::Error,
+                    "'>' expected.".to_string(),
+                    0,
+                ),
+                (
+                    "case.ts".to_string(),
                     1109,
                     source.find(">()").unwrap() as u32,
                     1,
-                    "Expression expected.",
+                    DiagnosticCategory::Error,
+                    "Expression expected.".to_string(),
+                    0,
                 ),
                 (
+                    "case.ts".to_string(),
                     1109,
                     source.find("): =>").unwrap() as u32,
                     1,
-                    "Expression expected.",
+                    DiagnosticCategory::Error,
+                    "Expression expected.".to_string(),
+                    0,
                 ),
                 (
+                    "case.ts".to_string(),
                     1005,
                     source.find(": =>").unwrap() as u32,
                     1,
-                    "',' expected.",
+                    DiagnosticCategory::Error,
+                    "',' expected.".to_string(),
+                    0,
                 ),
                 (
+                    "case.ts".to_string(),
                     1135,
                     source.find("=> 1").unwrap() as u32,
                     2,
-                    "Argument expression expected.",
+                    DiagnosticCategory::Error,
+                    "Argument expression expected.".to_string(),
+                    0,
                 ),
             ],
         );
-        let missing = output
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code == 2304)
-            .collect::<Vec<_>>();
-        let [diagnostic] = missing.as_slice() else {
-            panic!("unexpected diagnostics: {:#?}", output.diagnostics);
-        };
-        assert_eq!(
-            (diagnostic.start, diagnostic.length),
-            (
-                source.find("MissingSameCall").unwrap() as u32,
-                "MissingSameCall".len() as u32,
-            ),
-        );
         assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     }
 }
 
@@ -405,15 +540,40 @@ fn generator_recovery_stops_at_independent_nested_execution_owners() {
             ],
         ),
     ] {
+        let service = service_for(&[(path, source)]);
+        let semantic = service.semantic_diagnostics(path);
+        assert_eq!(
+            semantic.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{path}",
+        );
+        let expected = expected
+            .map(|name| {
+                (
+                    path.to_string(),
+                    2304,
+                    source.find(name).unwrap() as u32,
+                    name.len() as u32,
+                    DiagnosticCategory::Error,
+                    format!("Cannot find name '{name}'."),
+                    vec![],
+                )
+            })
+            .to_vec();
+        assert_eq!(
+            full_diagnostic_identities(&semantic.diagnostics),
+            expected,
+            "{path}: {:#?}",
+            semantic.diagnostics,
+        );
+
         let output = compile_files(&[(path, source)]);
-        let actual = output
-            .diagnostics
-            .iter()
-            .map(|diagnostic| (diagnostic.code, diagnostic.start, diagnostic.length))
-            .collect::<Vec<_>>();
-        let expected =
-            expected.map(|name| (2304, source.find(name).unwrap() as u32, name.len() as u32));
-        assert_eq!(actual, expected, "{path}: {:#?}", output.diagnostics);
+        assert_eq!(
+            full_diagnostic_identities(&output.diagnostics),
+            expected,
+            "{path}: {:#?}",
+            output.diagnostics,
+        );
         assert_eq!(
             output.semantic_completion,
             SemanticCompletion::Deferred,
@@ -613,6 +773,15 @@ fn recovered_overload_hosts_do_not_publish_overload_or_duplicate_name_diagnostic
     ]
     .into_iter()
     .map(|source| {
+        let service = service_for(&[("case.ts", source)]);
+        let semantic = service.semantic_diagnostics("case.ts");
+        assert!(
+            semantic.diagnostics.is_empty(),
+            "{:#?}",
+            semantic.diagnostics
+        );
+        assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+
         let output = compile(source);
         assert!(output.diagnostics.iter().all(|diagnostic| {
             diagnostic.file == "case.ts"
@@ -621,41 +790,103 @@ fn recovered_overload_hosts_do_not_publish_overload_or_duplicate_name_diagnostic
         }));
         (
             output.semantic_completion,
-            output
-                .diagnostics
-                .iter()
-                .map(|diagnostic| {
-                    (
-                        diagnostic.code,
-                        diagnostic.start,
-                        diagnostic.length,
-                        diagnostic.message_text.clone(),
-                    )
-                })
-                .collect::<Vec<_>>(),
+            output.exit_status,
+            diagnostic_identities(&output.diagnostics),
         )
     })
     .collect::<Vec<_>>();
+    // These entries pin the raw syntax facts while keeping their product
+    // nonclaiming until the decorator/parser owners match the oracle.
     assert_eq!(
         recovered,
         vec![
-            (SemanticCompletion::Deferred, vec![]),
             (
                 SemanticCompletion::Deferred,
+                CompileExitStatus::SemanticIncomplete,
+                vec![],
+            ),
+            (
+                SemanticCompletion::Deferred,
+                CompileExitStatus::SemanticIncomplete,
                 vec![
-                    (1003, 22, 1, "Identifier expected.".to_string()),
-                    (1005, 23, 8, "')' expected.".to_string()),
-                    (1003, 44, 1, "Identifier expected.".to_string()),
-                    (1003, 46, 1, "Identifier expected.".to_string()),
-                    (1109, 49, 1, "Expression expected.".to_string()),
+                    (
+                        "case.ts".to_string(),
+                        1003,
+                        22,
+                        1,
+                        DiagnosticCategory::Error,
+                        "Identifier expected.".to_string(),
+                        0,
+                    ),
+                    (
+                        "case.ts".to_string(),
+                        1005,
+                        23,
+                        8,
+                        DiagnosticCategory::Error,
+                        "')' expected.".to_string(),
+                        0,
+                    ),
+                    (
+                        "case.ts".to_string(),
+                        1003,
+                        44,
+                        1,
+                        DiagnosticCategory::Error,
+                        "Identifier expected.".to_string(),
+                        0,
+                    ),
+                    (
+                        "case.ts".to_string(),
+                        1003,
+                        46,
+                        1,
+                        DiagnosticCategory::Error,
+                        "Identifier expected.".to_string(),
+                        0,
+                    ),
+                    (
+                        "case.ts".to_string(),
+                        1109,
+                        49,
+                        1,
+                        DiagnosticCategory::Error,
+                        "Expression expected.".to_string(),
+                        0,
+                    ),
                 ],
             ),
             (
                 SemanticCompletion::Deferred,
+                CompileExitStatus::SemanticIncomplete,
                 vec![
-                    (1003, 16, 1, "Identifier expected.".to_string()),
-                    (1003, 26, 3, "Identifier expected.".to_string()),
-                    (1003, 31, 4, "Identifier expected.".to_string()),
+                    (
+                        "case.ts".to_string(),
+                        1003,
+                        16,
+                        1,
+                        DiagnosticCategory::Error,
+                        "Identifier expected.".to_string(),
+                        0,
+                    ),
+                    (
+                        "case.ts".to_string(),
+                        1003,
+                        26,
+                        3,
+                        DiagnosticCategory::Error,
+                        "Identifier expected.".to_string(),
+                        0,
+                    ),
+                    (
+                        "case.ts".to_string(),
+                        1003,
+                        31,
+                        4,
+                        DiagnosticCategory::Error,
+                        "Identifier expected.".to_string(),
+                        0,
+                    ),
                 ],
             ),
         ]
@@ -942,7 +1173,7 @@ fn predicate_leaf_reduces_top_union_boolean_and_proven_intersection_types() {
         output.diagnostics,
     );
     assert!(
-        output.diagnostics[1].message_text.contains("B | A"),
+        output.diagnostics[1].message_text.contains("A | B"),
         "{:#?}",
         output.diagnostics[1],
     );
@@ -998,64 +1229,63 @@ fn recovered_conditional_returns_defer_only_dependent_instanceof_operands() {
         "if ((chooseValue(true)) instanceof Cedar) {}",
         "if ((new Cedar()) instanceof (chooseConstructor(false))) {}",
     ];
-    let diagnostic_identity = |output: &tsz::CompileOutput,
-                               declaration_source: &str,
-                               declaration_file: &str,
-                               independent_source: &str,
-                               independent_file: &str| {
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        let mut actual = output
-            .diagnostics
-            .iter()
-            .map(|diagnostic| {
-                (
-                    diagnostic.file.as_str(),
-                    diagnostic.code,
-                    diagnostic.start,
-                    diagnostic.length,
-                    diagnostic.category,
-                    diagnostic.message_text.as_str(),
-                    diagnostic.related_information.len(),
-                )
-            })
-            .collect::<Vec<_>>();
-        actual.sort_by_key(|identity| (identity.0, identity.2, identity.1));
-        let mut expected = ["? new Cedar", ": new Birch", "? Cedar", ": Birch"]
-            .map(|token| {
-                (
-                    declaration_file,
-                    1109,
-                    declaration_source.find(token).unwrap() as u32,
-                    1,
-                    DiagnosticCategory::Error,
-                    "Expression expected.",
-                    0,
-                )
-            })
-            .to_vec();
-        expected.push((
-            independent_file,
-            2322,
-            independent_source.find("independent").unwrap() as u32,
-            "independent".len() as u32,
-            DiagnosticCategory::Error,
-            "Type 'number' is not assignable to type 'string'.",
-            0,
-        ));
-        expected.sort_by_key(|identity| (identity.0, identity.2, identity.1));
+    let assert_products = |files: &[(&str, &str)],
+                           declaration_file: &str,
+                           independent_source: &str,
+                           independent_file: &str| {
+        let service = service_for(files);
+        let independent = service.semantic_diagnostics(independent_file);
         assert_eq!(
-            actual, expected,
-            "unexpected diagnostics: {:#?}",
-            output.diagnostics,
+            independent.semantic_completion,
+            SemanticCompletion::Deferred
         );
+        assert_eq!(
+            diagnostic_identities(&independent.diagnostics),
+            vec![(
+                independent_file.to_string(),
+                2322,
+                independent_source.find("independent").unwrap() as u32,
+                "independent".len() as u32,
+                DiagnosticCategory::Error,
+                "Type 'number' is not assignable to type 'string'.".to_string(),
+                0,
+            )],
+        );
+        if declaration_file != independent_file {
+            let declaration = service.semantic_diagnostics(declaration_file);
+            assert_eq!(
+                declaration.semantic_completion,
+                SemanticCompletion::Deferred
+            );
+            assert!(
+                declaration.diagnostics.is_empty(),
+                "{:#?}",
+                declaration.diagnostics
+            );
+        }
+
+        let output = compile_files(files);
+        assert_eq!(
+            diagnostic_identities(&output.diagnostics),
+            vec![(
+                independent_file.to_string(),
+                2322,
+                independent_source.find("independent").unwrap() as u32,
+                "independent".len() as u32,
+                DiagnosticCategory::Error,
+                "Type 'number' is not assignable to type 'string'.".to_string(),
+                0,
+            )],
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     };
 
     for condition in cases {
         let source = format!("{declarations}{condition}const independent:string=1;");
-        let first = compile(&source);
-        diagnostic_identity(&first, &source, "case.ts", &source, "case.ts");
-        let repeated = compile(&source);
-        diagnostic_identity(&repeated, &source, "case.ts", &source, "case.ts");
+        let files = [("case.ts", source.as_str())];
+        assert_products(&files, "case.ts", &source, "case.ts");
+        assert_products(&files, "case.ts", &source, "case.ts");
     }
 
     let consumer = concat!(
@@ -1066,14 +1296,7 @@ fn recovered_conditional_returns_defer_only_dependent_instanceof_operands() {
         [("producer.ts", declarations), ("consumer.ts", consumer)],
         [("consumer.ts", consumer), ("producer.ts", declarations)],
     ] {
-        let output = compile_files(&files);
-        diagnostic_identity(
-            &output,
-            declarations,
-            "producer.ts",
-            consumer,
-            "consumer.ts",
-        );
+        assert_products(&files, "producer.ts", consumer, "consumer.ts");
     }
 }
 
@@ -1084,24 +1307,32 @@ fn ordinary_and_annotated_returns_remain_classifiable_for_instanceof() {
         "function scalar(flag:boolean){return flag;}",
         "if ((scalar(true)) instanceof Cedar) {}",
     );
+    let service = service_for(&[("case.ts", ordinary)]);
+    let semantic = service.semantic_diagnostics("case.ts");
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Complete);
+    let ordinary_diagnostic = (
+        "case.ts".to_string(),
+        2358,
+        ordinary.find("(scalar(true))").unwrap() as u32,
+        "(scalar(true))".len() as u32,
+        DiagnosticCategory::Error,
+        "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.".to_string(),
+        0,
+    );
+    assert_eq!(
+        diagnostic_identities(&semantic.diagnostics),
+        vec![ordinary_diagnostic.clone()]
+    );
+
     let output = compile(ordinary);
-    let [diagnostic] = output.diagnostics.as_slice() else {
-        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
-    };
+    assert_eq!(
+        diagnostic_identities(&output.diagnostics),
+        vec![ordinary_diagnostic]
+    );
     assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
     assert_eq!(
-        (
-            diagnostic.code,
-            diagnostic.start,
-            diagnostic.length,
-            diagnostic.message_text.as_str(),
-        ),
-        (
-            2358,
-            ordinary.find("(scalar(true))").unwrap() as u32,
-            "(scalar(true))".len() as u32,
-            "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.",
-        )
+        output.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
     );
 
     let annotated = concat!(
@@ -1109,39 +1340,362 @@ fn ordinary_and_annotated_returns_remain_classifiable_for_instanceof() {
         "function typedFlag(flag:boolean):boolean{return flag ? true : false;}",
         "if ((typedFlag(true)) instanceof Birch) {}",
     );
-    let output = compile(annotated);
-    let [first, second, diagnostic] = output.diagnostics.as_slice() else {
-        panic!("unexpected diagnostics: {:#?}", output.diagnostics);
-    };
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    for (recovery, token) in [(first, "? true"), (second, ": false")] {
-        assert_eq!(
-            (
-                recovery.code,
-                recovery.start,
-                recovery.length,
-                recovery.message_text.as_str(),
-            ),
-            (
-                1109,
-                annotated.find(token).unwrap() as u32,
-                1,
-                "Expression expected.",
-            )
-        );
-    }
+    let service = service_for(&[("case.ts", annotated)]);
+    let semantic = service.semantic_diagnostics("case.ts");
+    let annotated_diagnostic = (
+        "case.ts".to_string(),
+        2358,
+        annotated.find("(typedFlag(true))").unwrap() as u32,
+        "(typedFlag(true))".len() as u32,
+        DiagnosticCategory::Error,
+        "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.".to_string(),
+        0,
+    );
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Complete);
     assert_eq!(
+        diagnostic_identities(&semantic.diagnostics),
+        vec![annotated_diagnostic.clone()]
+    );
+
+    let output = compile(annotated);
+    assert_eq!(
+        diagnostic_identities(&output.diagnostics),
+        vec![annotated_diagnostic]
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        output.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
+}
+
+#[test]
+fn parameter_annotation_completion_fences_declaration_value_overrides() {
+    let complete = concat!(
+        "const callback = function renamed(value: { kept: number }): unknown {",
+        "return value.absent; };",
+    );
+    let service = service_for(&[("case.ts", complete)]);
+    let semantic = service.semantic_diagnostics("case.ts");
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        diagnostic_identities(&semantic.diagnostics),
+        vec![(
+            "case.ts".to_string(),
+            2339,
+            complete.find("absent").unwrap() as u32,
+            "absent".len() as u32,
+            DiagnosticCategory::Error,
+            "Property 'absent' does not exist on type '{ kept: number; }'.".to_string(),
+            0,
+        )],
+    );
+
+    // Delete this fallback matrix when function-implementation `typeof`
+    // annotations become a claimed producer. Until then, their dependent
+    // parameter reads defer while independent demands remain definitive.
+    for callback in [
+        "const callback=function changed(value:typeof seed):unknown{return value.absent;};",
+        "const wrapper={callback:(renamed:typeof seed):unknown=>renamed.absent};",
+    ] {
+        let source = format!("const seed={{kept:1}};{callback}const independent:number='wrong';");
+        let service = service_for(&[("case.ts", source.as_str())]);
+        for _ in 0..2 {
+            let semantic = service.semantic_diagnostics("case.ts");
+            assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+            assert_eq!(
+                diagnostic_identities(&semantic.diagnostics),
+                vec![(
+                    "case.ts".to_string(),
+                    2322,
+                    source.find("independent").unwrap() as u32,
+                    "independent".len() as u32,
+                    DiagnosticCategory::Error,
+                    "Type 'string' is not assignable to type 'number'.".to_string(),
+                    0,
+                )],
+                "{source}: {:#?}",
+                semantic.diagnostics,
+            );
+        }
+
+        let output = compile(&source);
+        assert_eq!(
+            diagnostic_identities(&output.diagnostics),
+            vec![(
+                "case.ts".to_string(),
+                2322,
+                source.find("independent").unwrap() as u32,
+                "independent".len() as u32,
+                DiagnosticCategory::Error,
+                "Type 'string' is not assignable to type 'number'.".to_string(),
+                0,
+            )],
+            "{source}: {:#?}",
+            output.diagnostics,
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+
+    let missing = concat!(
+        "const callback = function changed(value: MissingParameter): unknown {",
+        "return value.absent; };",
+    );
+    let service = service_for(&[("case.ts", missing)]);
+    let semantic = service.semantic_diagnostics("case.ts");
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        diagnostic_identities(&semantic.diagnostics),
+        vec![(
+            "case.ts".to_string(),
+            2304,
+            missing.find("MissingParameter").unwrap() as u32,
+            "MissingParameter".len() as u32,
+            DiagnosticCategory::Error,
+            "Cannot find name 'MissingParameter'.".to_string(),
+            0,
+        )],
+    );
+}
+
+#[test]
+fn incomplete_binary_dependencies_publish_stable_string_results_without_claiming_completion() {
+    // TypeScript 7 publishes the independently stable string result even when
+    // the other operand is incomplete. TSZ still carries that dependency's
+    // completion through the declaration, service response, and process exit.
+    // Delete the Deferred/nonclaim assertions when conditional `Select<string>`
+    // evaluation becomes a claimed producer; retain the TS2322 product matrix.
+    let producer = concat!(
+        "type Select<Value>=Value extends string?string:number;",
+        "declare const deferred:Select<string>;",
+    );
+    let consumer = concat!(
+        "const leftProduced=((deferred))+'';",
+        "const leftDependent:number=((leftProduced));",
+        "const rightProduced=(''+(((deferred))))+'';",
+        "const rightDependent:number=rightProduced;",
+        "const completeLeft:number='left'+'';",
+        "const completeRight:number=''+('right');",
+        "const independent:MissingIndependent=1;",
+    );
+    let consumer_path = "binary-consumer.ts";
+    let expected = vec![
         (
-            diagnostic.code,
-            diagnostic.start,
-            diagnostic.length,
-            diagnostic.message_text.as_str(),
+            consumer_path.to_string(),
+            2322,
+            consumer.find("leftDependent").unwrap() as u32,
+            "leftDependent".len() as u32,
+            DiagnosticCategory::Error,
+            "Type 'string' is not assignable to type 'number'.".to_string(),
+            0,
         ),
         (
-            2358,
-            annotated.find("(typedFlag(true))").unwrap() as u32,
-            "(typedFlag(true))".len() as u32,
-            "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.",
-        )
+            consumer_path.to_string(),
+            2322,
+            consumer.find("rightDependent").unwrap() as u32,
+            "rightDependent".len() as u32,
+            DiagnosticCategory::Error,
+            "Type 'string' is not assignable to type 'number'.".to_string(),
+            0,
+        ),
+        (
+            consumer_path.to_string(),
+            2322,
+            consumer.find("completeLeft").unwrap() as u32,
+            "completeLeft".len() as u32,
+            DiagnosticCategory::Error,
+            "Type 'string' is not assignable to type 'number'.".to_string(),
+            0,
+        ),
+        (
+            consumer_path.to_string(),
+            2322,
+            consumer.find("completeRight").unwrap() as u32,
+            "completeRight".len() as u32,
+            DiagnosticCategory::Error,
+            "Type 'string' is not assignable to type 'number'.".to_string(),
+            0,
+        ),
+        (
+            consumer_path.to_string(),
+            2304,
+            consumer.find("MissingIndependent").unwrap() as u32,
+            "MissingIndependent".len() as u32,
+            DiagnosticCategory::Error,
+            "Cannot find name 'MissingIndependent'.".to_string(),
+            0,
+        ),
+    ];
+
+    for files in [
+        [("binary-producer.ts", producer), (consumer_path, consumer)],
+        [(consumer_path, consumer), ("binary-producer.ts", producer)],
+    ] {
+        for _ in 0..2 {
+            let output = compile_files(&files);
+            assert_eq!(diagnostic_identities(&output.diagnostics), expected);
+            assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        }
+
+        let service = service_for(&files);
+        for name in ["leftProduced", "rightProduced"] {
+            assert!(matches!(
+                service.quick_info(consumer_path, consumer.find(name).unwrap() as u32 + 1,),
+                ServiceQuery::Nonclaimed(_)
+            ));
+        }
+        for _ in 0..2 {
+            let semantic = service.semantic_diagnostics(consumer_path);
+            assert_eq!(diagnostic_identities(&semantic.diagnostics), expected);
+            assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+        }
+        let uncached = service.compile();
+        assert_eq!(diagnostic_identities(&uncached.diagnostics), expected);
+        assert_eq!(uncached.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(uncached.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+}
+
+#[test]
+fn stable_string_results_propagate_dependency_completion_without_artificial_limits() {
+    let cycle = concat!(
+        "type Loop=Loop;declare const loop:Loop;",
+        "const left=((loop))+'';const leftDependent:number=left;",
+        "const right=(''+((loop)))+'';const rightDependent:number=right;",
     );
+    let expected_cycle = vec![
+        (
+            "case.ts".to_string(),
+            2456,
+            cycle.find("Loop").unwrap() as u32,
+            "Loop".len() as u32,
+            DiagnosticCategory::Error,
+            "Type alias 'Loop' circularly references itself.".to_string(),
+            0,
+        ),
+        (
+            "case.ts".to_string(),
+            2322,
+            cycle.find("leftDependent").unwrap() as u32,
+            "leftDependent".len() as u32,
+            DiagnosticCategory::Error,
+            "Type 'string' is not assignable to type 'number'.".to_string(),
+            0,
+        ),
+        (
+            "case.ts".to_string(),
+            2322,
+            cycle.find("rightDependent").unwrap() as u32,
+            "rightDependent".len() as u32,
+            DiagnosticCategory::Error,
+            "Type 'string' is not assignable to type 'number'.".to_string(),
+            0,
+        ),
+    ];
+    for _ in 0..2 {
+        let output = compile(cycle);
+        assert_eq!(diagnostic_identities(&output.diagnostics), expected_cycle);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Cycle);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+
+    let mut left = "deferred".to_string();
+    let mut right = "deferred".to_string();
+    for _ in 0..=102 {
+        left = format!("({left}+'')");
+        right = format!("(''+{right})");
+    }
+    let stable = format!(
+        concat!(
+            "type Select<Value>=Value extends string?string:number;",
+            "declare const deferred:Select<string>;",
+            "const left={left};const leftDependent:number=left;",
+            "const right={right};const rightDependent:number=right;",
+        ),
+        left = left,
+        right = right,
+    );
+    // Delete the Deferred/nonclaim assertions when conditional `Select<string>`
+    // evaluation becomes a claimed producer; the deep stable path must remain
+    // free of an artificial evaluator Limit.
+    let expected_stable = ["leftDependent", "rightDependent"]
+        .map(|name| {
+            (
+                "case.ts".to_string(),
+                2322,
+                stable.find(name).unwrap() as u32,
+                name.len() as u32,
+                DiagnosticCategory::Error,
+                "Type 'string' is not assignable to type 'number'.".to_string(),
+                0,
+            )
+        })
+        .to_vec();
+    for _ in 0..2 {
+        let output = compile(&stable);
+        assert_eq!(diagnostic_identities(&output.diagnostics), expected_stable);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
+    let service = service_for(&[("case.ts", &stable)]);
+    for _ in 0..2 {
+        let semantic = service.semantic_diagnostics("case.ts");
+        assert_eq!(
+            diagnostic_identities(&semantic.diagnostics),
+            expected_stable
+        );
+        assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+    }
+    let uncached = service.compile();
+    assert_eq!(
+        diagnostic_identities(&uncached.diagnostics),
+        expected_stable
+    );
+    assert_eq!(uncached.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(uncached.exit_status, CompileExitStatus::SemanticIncomplete);
+
+    let mut left = "deferred".to_string();
+    let mut right = "deferred".to_string();
+    for _ in 0..=102 {
+        left = format!("({left}-1)");
+        right = format!("(1-{right})");
+    }
+    let limit = format!(
+        concat!(
+            "type Select<Value>=Value extends string?string:number;",
+            "declare const deferred:Select<string>;",
+            "const left={left};const leftDependent:number=left;",
+            "const right={right};const rightDependent:number=right;",
+        ),
+        left = left,
+        right = right,
+    );
+    let expected_limit = [
+        "Select",
+        "deferred",
+        "left",
+        "leftDependent",
+        "right",
+        "rightDependent",
+    ]
+    .map(|name| {
+        (
+            "case.ts".to_string(),
+            2589,
+            limit.find(name).unwrap() as u32,
+            name.len() as u32,
+            DiagnosticCategory::Error,
+            "Type instantiation is excessively deep and possibly infinite.".to_string(),
+            0,
+        )
+    })
+    .to_vec();
+    for _ in 0..2 {
+        let output = compile(&limit);
+        assert_eq!(diagnostic_identities(&output.diagnostics), expected_limit);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Limit);
+        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+    }
 }

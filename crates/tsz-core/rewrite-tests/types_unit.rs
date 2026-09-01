@@ -45,6 +45,13 @@ fn literal_array(store: &mut TypeStore, value: &str) -> TypeId {
     store.intern(TypeKind::Array(literal))
 }
 
+fn displayed(store: &TypeStore, ty: TypeId) -> String {
+    let Completion::Complete(display) = store.display(ty) else {
+        panic!("expected a complete materialized display");
+    };
+    display
+}
+
 #[test]
 fn string_literal_display_escapes_diagnostic_line_breaks_and_delimiters() {
     let mut store = TypeStore::new();
@@ -53,7 +60,7 @@ fn string_literal_display_escapes_diagnostic_line_breaks_and_delimiters() {
         LiteralProvenance::Regular,
     ));
     assert_eq!(
-        store.display(literal),
+        displayed(&store, literal),
         "\"line\\nbreak\\r\\t\\\"quoted\\\"\\\\tail\"",
     );
 }
@@ -66,7 +73,7 @@ fn string_literal_display_matches_typescript_escape_string_edges() {
         LiteralProvenance::Regular,
     ));
     assert_eq!(
-        store.display(literal),
+        displayed(&store, literal),
         "\"\\0x\\x007\\b\\v\\f\\u000E\\u001F\\u0085\\u2028\\u2029\u{7f}\\\\\\\"'é😀\"",
     );
 }
@@ -84,12 +91,12 @@ fn union_order_follows_typed_structure_not_allocation_or_input_order() {
     let forward_union = forward_allocation.union([forward_b, forward_a], UnionPolicy::Canonical);
 
     assert_eq!(
-        reverse_allocation.display(reverse_union),
+        displayed(&reverse_allocation, reverse_union),
         "\"a\"[] | \"b\"[]"
     );
     assert_eq!(
-        reverse_allocation.display(reverse_union),
-        forward_allocation.display(forward_union)
+        displayed(&reverse_allocation, reverse_union),
+        displayed(&forward_allocation, forward_union)
     );
 }
 
@@ -104,7 +111,7 @@ fn deferred_conditional(store: &mut TypeStore, value: &str) -> TypeId {
 }
 
 #[test]
-fn deferred_union_order_preserves_variant_field_and_nested_type_order() {
+fn deferred_types_cannot_be_rendered_as_definitive_products() {
     let mut reverse_allocation = TypeStore::new();
     let reverse_b = deferred_conditional(&mut reverse_allocation, "b");
     let reverse_a = deferred_conditional(&mut reverse_allocation, "a");
@@ -117,11 +124,11 @@ fn deferred_union_order_preserves_variant_field_and_nested_type_order() {
 
     assert_eq!(
         reverse_allocation.display(reverse_union),
-        "\"a\"[] extends string ? number : boolean | \"b\"[] extends string ? number : boolean"
+        Completion::Deferred
     );
     assert_eq!(
-        reverse_allocation.display(reverse_union),
-        forward_allocation.display(forward_union)
+        forward_allocation.display(forward_union),
+        Completion::Deferred
     );
 }
 
@@ -191,12 +198,12 @@ fn numeric_order_is_value_order_and_authored_structural_order_is_explicit() {
     let ten = store.numeric_literal("10", LiteralProvenance::Regular);
     let two = store.numeric_literal("2", LiteralProvenance::Regular);
     let numeric = store.union([ten, two], UnionPolicy::Canonical);
-    assert_eq!(store.display(numeric), "2 | 10");
+    assert_eq!(displayed(&store, numeric), "2 | 10");
 
     let exponent = store.numeric_literal("1e3", LiteralProvenance::Regular);
     let unsafe_integer = store.numeric_literal("9007199254740993", LiteralProvenance::Regular);
     let rounded_integer = store.numeric_literal("9007199254740992", LiteralProvenance::Regular);
-    assert_eq!(store.display(exponent), "1000");
+    assert_eq!(displayed(&store, exponent), "1000");
     assert_eq!(unsafe_integer, rounded_integer);
 
     let format_edges = [
@@ -211,7 +218,7 @@ fn numeric_order_is_value_order_and_authored_structural_order_is_explicit() {
     ];
     for (source, expected) in format_edges {
         let literal = store.numeric_literal(source, LiteralProvenance::Regular);
-        assert_eq!(store.display(literal), expected, "source: {source}");
+        assert_eq!(displayed(&store, literal), expected, "source: {source}");
     }
 
     let radix_edges = [
@@ -225,7 +232,7 @@ fn numeric_order_is_value_order_and_authored_structural_order_is_explicit() {
     ];
     for (source, expected) in radix_edges {
         let literal = store.numeric_literal(source, LiteralProvenance::Regular);
-        assert_eq!(store.display(literal), expected, "source: {source}");
+        assert_eq!(displayed(&store, literal), expected, "source: {source}");
     }
 
     let before_invalid = store.len();
@@ -258,7 +265,35 @@ fn numeric_order_is_value_order_and_authored_structural_order_is_explicit() {
         UnionPolicy::PreserveAuthoredStructuralOrder,
     );
     assert_eq!(
-        store.display(authored),
+        displayed(&store, authored),
         "{ right: string; } | { left: string; }"
     );
+}
+
+#[test]
+fn object_interning_preserves_authored_property_order_in_identity_and_display() {
+    let mut store = TypeStore::new();
+    let string = store.builtins.string;
+    let number = store.builtins.number;
+    let property = |name: &str, ty| Property {
+        name: name.to_string(),
+        ty,
+        optional: false,
+        readonly: false,
+    };
+    let authored = store.object(vec![property("zeta", string), property("alpha", number)]);
+    let reordered = store.object(vec![property("alpha", number), property("zeta", string)]);
+    assert_ne!(authored, reordered);
+    assert_eq!(
+        displayed(&store, authored),
+        "{ zeta: string; alpha: number; }"
+    );
+    assert_eq!(
+        displayed(&store, reordered),
+        "{ alpha: number; zeta: string; }"
+    );
+
+    let duplicates = store.object(vec![property("same", string), property("same", number)]);
+    let reversed = store.object(vec![property("same", number), property("same", string)]);
+    assert_ne!(duplicates, reversed);
 }

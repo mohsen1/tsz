@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::bind::{Meaning, ScopeId, bind_source};
+use crate::bind::{Meaning, ScopeId, bind_source_with_kind};
 use crate::source::FileId;
 use crate::syntax::{ExpressionKind, StatementKind, TypeNodeKind, parse_source};
 use crate::{Compiler, CompilerOptions, SourceInput};
@@ -39,7 +39,7 @@ fn checked_contextual_diagnostics(
                 ..CompilerOptions::default()
             },
         )
-        .diagnostics
+        .semantic_diagnostics
 }
 
 fn assert_one(text: &str, expected: TokenKind) {
@@ -372,6 +372,105 @@ fn rejects_each_fixed_width_surrogate_and_non_identifier_escape_independently() 
         ]
     );
     assert!(output.identifier_values.is_empty());
+}
+
+#[test]
+fn unicode_identifier_classification_rejects_symbols_and_keeps_letters_and_joiners() {
+    let text = "function f(a,¬) {} const λ=1; const joined=λ\u{200c}x;";
+    let (source, output) = scan(text);
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![(1127, 13, 1, "Invalid character.")]
+    );
+    assert!(
+        output.tokens.iter().any(|token| {
+            token.kind == TokenKind::Identifier && source.slice(token.span) == "λ"
+        })
+    );
+    assert!(output.tokens.iter().any(|token| {
+        token.kind == TokenKind::Identifier && source.slice(token.span) == "λ\u{200c}x"
+    }));
+}
+
+#[test]
+fn unicode_15_1_identifier_ranges_match_raw_and_escaped_typescript_names() {
+    // U+037A is ID_Start but not XID_Start. U+088F was unassigned in Unicode
+    // 15.1, so newer Unicode tables must not silently admit it.
+    for text in ["\u{037a}x", "x\u{037a}", r"\u037Ax", r"x\u037A"] {
+        assert_one(text, TokenKind::Identifier);
+    }
+
+    let (source, raw) = scan("\u{088f}x x\u{088f}");
+    assert_eq!(
+        raw.diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (1127, 0, 1, "Invalid character."),
+            (1127, 4, 1, "Invalid character.")
+        ],
+    );
+    assert_eq!(
+        raw.tokens
+            .iter()
+            .map(|token| (token.kind, source.slice(token.span)))
+            .collect::<Vec<_>>(),
+        vec![
+            (TokenKind::InvalidCharacter, "\u{088f}"),
+            (TokenKind::Identifier, "x"),
+            (TokenKind::Identifier, "x"),
+            (TokenKind::InvalidCharacter, "\u{088f}"),
+            (TokenKind::EndOfFile, ""),
+        ],
+    );
+
+    let (source, escaped) = scan(r"\u088Fx x\u088F");
+    assert_eq!(
+        escaped
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (1127, 0, 0, "Invalid character."),
+            (1127, 9, 0, "Invalid character.")
+        ],
+    );
+    assert_eq!(
+        escaped
+            .tokens
+            .iter()
+            .map(|token| (token.kind, source.slice(token.span)))
+            .collect::<Vec<_>>(),
+        vec![
+            (TokenKind::InvalidCharacter, "\\"),
+            (TokenKind::Identifier, "u088Fx"),
+            (TokenKind::Identifier, "x"),
+            (TokenKind::InvalidCharacter, "\\"),
+            (TokenKind::Identifier, "u088F"),
+            (TokenKind::EndOfFile, ""),
+        ],
+    );
 }
 
 #[test]
@@ -1013,7 +1112,11 @@ fn cooked_identifier_names_reach_binder_identity_without_losing_raw_spans() {
     assert_eq!(source.slice(*plain_span), "Row");
     assert_eq!(source.slice(*escaped_span), r"\u{0052}ow");
 
-    let bindings = bind_source(source.id, &parsed.unit);
+    let bindings = bind_source_with_kind(
+        source.id,
+        crate::source::SourceKind::TypeScript,
+        &parsed.unit,
+    );
     let declaration = bindings
         .resolve(ScopeId(0), "Row", Meaning::Type)
         .and_then(|declaration| bindings.declaration(declaration))

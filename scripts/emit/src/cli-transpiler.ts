@@ -11,8 +11,19 @@ import * as os from 'os';
 import { execFile as execFileCb, execSync, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import {
+  API as TypeScriptAPI,
+  type Diagnostic as TypeScriptDiagnostic,
+} from 'typescript/unstable/sync';
 import { targetToCliArg, moduleToCliArg } from './ts-enums.js';
 import type { CompilerOutcome, EmitProduct } from './canonical-products.js';
+import {
+  canonicalizeTszDiagnosticsJson,
+  canonicalizeTypeScriptDiagnostics,
+  witnessCodesMatch,
+  type DiagnosticNormalizationScope,
+  type DiagnosticWitness,
+} from './diagnostic-witness.js';
 import {
   corpusPhysicalPath,
   corpusRelativePath,
@@ -38,6 +49,8 @@ export interface TranspileResult {
 export interface CompilerExecutable {
   binaryPath: string;
   label: string;
+  /** Real compiler evidence provider. Omit for fake/test CLIs. */
+  diagnosticWitnessProvider?: 'tsz-json' | 'typescript-7-api';
 }
 
 interface SourceInputFile {
@@ -70,6 +83,12 @@ interface CompilerFlagOptions {
   strict?: boolean;
   allowJs?: boolean;
   allowUnreachableCode?: boolean;
+  checkJs?: boolean;
+  noImplicitAny?: boolean;
+  noUnusedLocals?: boolean;
+  noUnusedParameters?: boolean;
+  skipLibCheck?: boolean;
+  strictPropertyInitialization?: boolean;
   importHelpers?: boolean;
   esModuleInterop?: boolean;
   useDefineForClassFields?: boolean;
@@ -97,6 +116,163 @@ interface CompilerFlagOptions {
   declarationDir?: string;
   rootDir?: string;
   emitDeclarationOnly?: boolean;
+}
+
+function definedCompilerOptions(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+}
+
+function diagnosticApiCompilerOptions(
+  testDir: string,
+  target: number | undefined,
+  module: number | undefined,
+  lib: string[] | undefined,
+  opts: CompilerFlagOptions,
+): Record<string, unknown> {
+  return definedCompilerOptions({
+    declaration: opts.declaration,
+    noCheck: opts.noCheck,
+    noLib: opts.noLib,
+    noEmit: opts.noEmit,
+    alwaysStrict: opts.alwaysStrict,
+    sourceMap: opts.sourceMap,
+    inlineSourceMap: opts.inlineSourceMap,
+    declarationMap: opts.declarationMap,
+    downlevelIteration: opts.downlevelIteration,
+    noEmitHelpers: opts.noEmitHelpers,
+    noEmitOnError: opts.noEmitOnError,
+    strict: opts.strict,
+    allowJs: opts.allowJs,
+    allowUnreachableCode: opts.allowUnreachableCode,
+    checkJs: opts.checkJs,
+    noImplicitAny: opts.noImplicitAny,
+    noUnusedLocals: opts.noUnusedLocals,
+    noUnusedParameters: opts.noUnusedParameters,
+    skipLibCheck: opts.skipLibCheck,
+    strictPropertyInitialization: opts.strictPropertyInitialization,
+    importHelpers: opts.importHelpers,
+    esModuleInterop: opts.esModuleInterop,
+    useDefineForClassFields: opts.useDefineForClassFields,
+    experimentalDecorators: opts.experimentalDecorators,
+    emitDecoratorMetadata: opts.emitDecoratorMetadata,
+    strictNullChecks: opts.strictNullChecks,
+    exactOptionalPropertyTypes: opts.exactOptionalPropertyTypes,
+    jsx: opts.jsx,
+    jsxFactory: opts.jsxFactory,
+    jsxFragmentFactory: opts.jsxFragmentFactory,
+    jsxImportSource: opts.jsxImportSource,
+    moduleResolution: opts.moduleResolution,
+    moduleDetection: opts.moduleDetection,
+    preserveConstEnums: opts.preserveConstEnums,
+    verbatimModuleSyntax: opts.verbatimModuleSyntax,
+    rewriteRelativeImportExtensions: opts.rewriteRelativeImportExtensions,
+    isolatedModules: opts.isolatedModules,
+    importsNotUsedAsValues: opts.importsNotUsedAsValues,
+    preserveValueImports: opts.preserveValueImports,
+    removeComments: opts.removeComments,
+    stripInternal: opts.stripInternal,
+    baseUrl: opts.baseUrl === undefined ? undefined : corpusPhysicalPath(testDir, opts.baseUrl),
+    outFile: opts.outFile === undefined
+      ? undefined
+      : corpusPhysicalPath(testDir, opts.outFile.replace(/^[/\\]+/, '')),
+    outDir: opts.outDir,
+    declarationDir: opts.declarationDir,
+    rootDir: opts.rootDir,
+    emitDeclarationOnly: opts.emitDeclarationOnly,
+    target: target === undefined ? undefined : targetToCliArg(target),
+    module: module === undefined ? undefined : moduleToCliArg(module),
+    lib,
+  });
+}
+
+class PinnedTypeScriptDiagnosticSession {
+  private api: TypeScriptAPI | undefined;
+
+  constructor(
+    private readonly binaryPath: string,
+    private readonly workingDirectory: string,
+  ) {}
+
+  private client(): TypeScriptAPI {
+    this.api ??= new TypeScriptAPI({
+      cwd: this.workingDirectory,
+      tsserverPath: this.binaryPath,
+    });
+    return this.api;
+  }
+
+  collect(
+    configPath: string,
+    rootFiles: readonly string[],
+    compilerOptions: Readonly<Record<string, unknown>>,
+    scope: DiagnosticNormalizationScope,
+    renderedCodes: readonly string[],
+  ): DiagnosticWitness[] | undefined {
+    let snapshot: ReturnType<TypeScriptAPI['updateSnapshot']> | undefined;
+    try {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        `${JSON.stringify({ compilerOptions, files: rootFiles })}\n`,
+        'utf8',
+      );
+      const api = this.client();
+      snapshot = api.updateSnapshot({
+        openProjects: [configPath],
+        fileChanges: { invalidateAll: true },
+      });
+      const project = snapshot.getProject(configPath) ?? snapshot.getProjects().find(candidate =>
+        path.resolve(candidate.configFileName) === path.resolve(configPath)
+      );
+      if (project === undefined) return undefined;
+
+      const program = project.program;
+      const selected: TypeScriptDiagnostic[] = [...program.getConfigFileParsingDiagnostics()];
+      const syntactic = [...program.getSyntacticDiagnostics()];
+      selected.push(...syntactic);
+      if (syntactic.length === 0) {
+        const programDiagnostics = [...program.getProgramDiagnostics()];
+        const global = [...program.getGlobalDiagnostics()];
+        selected.push(...programDiagnostics, ...global);
+        if (programDiagnostics.length === 0 && global.length === 0) {
+          selected.push(...program.getSemanticDiagnostics());
+        }
+
+        const declarationRequested = compilerOptions.declaration === true ||
+          compilerOptions.emitDeclarationOnly === true;
+        const hasEarlierDiagnostics = selected.length > 0;
+        const declarationCanRun = compilerOptions.noEmit === true
+          ? !hasEarlierDiagnostics
+          : compilerOptions.noEmitOnError !== true || !hasEarlierDiagnostics;
+        if (declarationRequested && declarationCanRun) {
+          selected.push(...program.getDeclarationDiagnostics());
+        }
+      }
+
+      const witnesses = canonicalizeTypeScriptDiagnostics(selected, scope);
+      if (witnesses === undefined || !witnessCodesMatch(witnesses, renderedCodes)) {
+        return undefined;
+      }
+      return witnesses;
+    } catch {
+      return undefined;
+    } finally {
+      snapshot?.dispose();
+      if (this.api !== undefined) {
+        try {
+          const closed = this.api.updateSnapshot({ closeProjects: [configPath] });
+          closed.dispose();
+        } catch {
+          // A failed API request cannot create a witness; close() still owns cleanup.
+        }
+      }
+    }
+  }
+
+  close(): void {
+    this.api?.close();
+    this.api = undefined;
+  }
 }
 
 // Longest common directory of a set of POSIX-style relative file paths,
@@ -135,6 +311,12 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   booleanFlag('--strict', opts.strict);
   booleanFlag('--allowJs', opts.allowJs);
   booleanFlag('--allowUnreachableCode', opts.allowUnreachableCode);
+  booleanFlag('--checkJs', opts.checkJs);
+  booleanFlag('--noImplicitAny', opts.noImplicitAny);
+  booleanFlag('--noUnusedLocals', opts.noUnusedLocals);
+  booleanFlag('--noUnusedParameters', opts.noUnusedParameters);
+  booleanFlag('--skipLibCheck', opts.skipLibCheck);
+  booleanFlag('--strictPropertyInitialization', opts.strictPropertyInitialization);
   booleanFlag('--importHelpers', opts.importHelpers);
   booleanFlag('--esModuleInterop', opts.esModuleInterop);
   booleanFlag('--useDefineForClassFields', opts.useDefineForClassFields);
@@ -211,11 +393,22 @@ export class CliTranspiler {
   private tempDir: string;
   private timeoutMs: number;
   private activeChildren = new Set<ChildProcess>();
+  private typescriptDiagnostics: PinnedTypeScriptDiagnosticSession | undefined;
 
   constructor(timeoutMs: number = DEFAULT_TIMEOUT_MS, compiler?: CompilerExecutable) {
-    this.compiler = compiler ?? { binaryPath: findTszBinary(), label: 'tsz' };
+    this.compiler = compiler ?? {
+      binaryPath: findTszBinary(),
+      label: 'tsz',
+      diagnosticWitnessProvider: 'tsz-json',
+    };
     this.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${this.compiler.label}-emit-`));
     this.timeoutMs = timeoutMs;
+    if (this.compiler.diagnosticWitnessProvider === 'typescript-7-api') {
+      this.typescriptDiagnostics = new PinnedTypeScriptDiagnosticSession(
+        this.compiler.binaryPath,
+        this.tempDir,
+      );
+    }
   }
 
   /**
@@ -242,6 +435,12 @@ export class CliTranspiler {
       strict?: boolean;
       allowJs?: boolean;
       allowUnreachableCode?: boolean;
+      checkJs?: boolean;
+      noImplicitAny?: boolean;
+      noUnusedLocals?: boolean;
+      noUnusedParameters?: boolean;
+      skipLibCheck?: boolean;
+      strictPropertyInitialization?: boolean;
       importHelpers?: boolean;
       esModuleInterop?: boolean;
       useDefineForClassFields?: boolean;
@@ -291,6 +490,12 @@ export class CliTranspiler {
       strict,
       allowJs,
       allowUnreachableCode,
+      checkJs,
+      noImplicitAny,
+      noUnusedLocals,
+      noUnusedParameters,
+      skipLibCheck,
+      strictPropertyInitialization,
       importHelpers,
       esModuleInterop,
       useDefineForClassFields,
@@ -496,7 +701,7 @@ export class CliTranspiler {
         declarationDir,
         rootDir,
       });
-      appendCompilerOptionFlags(args, {
+      const compilerFlags: CompilerFlagOptions = {
         declaration,
         noCheck,
         noLib,
@@ -511,6 +716,12 @@ export class CliTranspiler {
         strict,
         allowJs,
         allowUnreachableCode,
+        checkJs,
+        noImplicitAny,
+        noUnusedLocals,
+        noUnusedParameters,
+        skipLibCheck,
+        strictPropertyInitialization,
         importHelpers,
         esModuleInterop,
         useDefineForClassFields,
@@ -536,9 +747,14 @@ export class CliTranspiler {
         outFile,
         emitDeclarationOnly,
         ...physicalDirectories,
-      });
+      };
+      appendCompilerOptionFlags(args, compilerFlags);
       if (target !== undefined) args.push('--target', targetToCliArg(target));
       if (module !== undefined) args.push('--module', moduleToCliArg(module));
+      const diagnosticsJsonPath = path.join(testScopeDir, '.tsz-diagnostics.json');
+      if (this.compiler.diagnosticWitnessProvider === 'tsz-json') {
+        args.push('--diagnostics-json', diagnosticsJsonPath);
+      }
       args.push(...rootInputFiles);
 
       const normalizeOutputRelPath = (filePath: string): string => {
@@ -607,12 +823,47 @@ export class CliTranspiler {
         const text = `${typeof stdout === 'string' ? stdout : ''}\n${typeof stderr === 'string' ? stderr : ''}`;
         return [...text.matchAll(/\bTS(\d{4,5})\b/g)].map(match => `TS${match[1]}`);
       };
+      const diagnosticScope: DiagnosticNormalizationScope = {
+        invocationDirectory: testDir,
+        scopeDirectory: testScopeDir,
+      };
+      const outcomeWithWitnesses = (
+        exitCode: number,
+        stdout: unknown,
+        stderr: unknown,
+      ): CompilerOutcome => {
+        const codes = diagnosticCodes(stdout, stderr);
+        const outcome: CompilerOutcome = { exitCode, diagnosticCodes: codes };
+        if (this.compiler.diagnosticWitnessProvider === 'tsz-json') {
+          try {
+            const json = JSON.parse(fs.readFileSync(diagnosticsJsonPath, 'utf8')) as unknown;
+            const witnesses = canonicalizeTszDiagnosticsJson(json, diagnosticScope);
+            if (witnesses !== undefined && witnessCodesMatch(witnesses, codes)) {
+              outcome.diagnosticWitnesses = witnesses;
+            }
+          } catch {
+            // Missing or malformed JSON leaves the ordinary nonzero outcome red.
+          }
+        } else if (this.compiler.diagnosticWitnessProvider === 'typescript-7-api') {
+          if (exitCode === 0 && codes.length === 0) {
+            outcome.diagnosticWitnesses = [];
+          } else if (codes.length > 0) {
+            const apiConfigPath = path.join(testScopeDir, '.typescript-api', 'tsconfig.json');
+            const witnesses = this.typescriptDiagnostics?.collect(
+              apiConfigPath,
+              rootInputFiles,
+              diagnosticApiCompilerOptions(testDir, target, module, lib, compilerFlags),
+              { ...diagnosticScope, forbiddenFile: apiConfigPath },
+              codes,
+            );
+            if (witnesses !== undefined) outcome.diagnosticWitnesses = witnesses;
+          }
+        }
+        return outcome;
+      };
       try {
         const completed = await runWithArgs(args);
-        return collectResult({
-          exitCode: 0,
-          diagnosticCodes: diagnosticCodes(completed.stdout, completed.stderr),
-        });
+        return collectResult(outcomeWithWitnesses(0, completed.stdout, completed.stderr));
       } catch (error) {
         const failure = error as {
           code?: number | string;
@@ -626,10 +877,11 @@ export class CliTranspiler {
         }
         if (failure.signal) throw new Error(`CRASH:${this.compiler.label}:${failure.signal}`);
         if (typeof failure.code !== 'number') throw error;
-        return collectResult({
-          exitCode: failure.code,
-          diagnosticCodes: diagnosticCodes(failure.stdout, failure.stderr),
-        });
+        return collectResult(outcomeWithWitnesses(
+          failure.code,
+          failure.stdout,
+          failure.stderr,
+        ));
       }
     } catch (e) {
       // Handle timeout (execFile sends SIGKILL on timeout)
@@ -650,6 +902,8 @@ export class CliTranspiler {
       try { child.kill('SIGKILL'); } catch {}
     }
     this.activeChildren.clear();
+    this.typescriptDiagnostics?.close();
+    this.typescriptDiagnostics = undefined;
 
     if (fs.existsSync(this.tempDir)) {
       fs.rmSync(this.tempDir, { recursive: true, force: true });

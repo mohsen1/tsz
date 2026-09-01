@@ -1,14 +1,14 @@
-use crate::source::{NodeId, Span};
-
 use super::{
     CommentTrivia, RegularExpressionLiteral, SourceCheckDirective, TokenKind, Utf16String,
     descendant_walk::for_each_statement_in,
 };
-
+use crate::source::{NodeId, Span};
 #[derive(Debug, Clone)]
 pub struct SourceUnit {
     pub statements: Vec<Statement>,
     pub span: Span,
+    /// Scanner-authored identifier-shaped token spans.
+    pub(crate) identifier_token_spans: Vec<Span>,
     pub(crate) authored_literal_facts: Vec<AuthoredLiteralFact>,
     pub(crate) parser_recovery_facts: Vec<ParserRecoveryFact>,
     pub(crate) unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
@@ -18,7 +18,6 @@ pub struct SourceUnit {
     pub(crate) comments: Vec<CommentTrivia>,
     pub(crate) has_unicode_line_comment_terminator: bool,
 }
-
 /// Authored contextual grammar whose diagnostics are produced by semantic
 /// checking and therefore suppressed by `--noCheck`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +25,6 @@ pub(crate) struct ContextualGrammarFact {
     pub(crate) span: Span,
     pub(crate) kind: ContextualGrammarKind,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ContextualGrammarKind {
     AccessorTypeParameters,
@@ -35,7 +33,6 @@ pub(crate) enum ContextualGrammarKind {
     StrictYieldBinding,
     ClassStrictYieldBinding,
 }
-
 /// Positive parser observations that cannot be reconstructed from the current
 /// AST. Product capability analysis maps these authored facts to consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -43,6 +40,7 @@ pub(crate) enum SourceSyntaxFact {
     AsyncClassModifier,
     AuthoredFunctionExpressionModifier,
     AuthoredRegularExpression,
+    DecoratorRecovery,
     DefaultExportOnUnsupportedHost,
     ExplicitCallTypeArguments,
     ExplicitNewTypeArguments,
@@ -50,50 +48,41 @@ pub(crate) enum SourceSyntaxFact {
     JavaScriptJSDocCast(NodeId, JavaScriptJSDocCastKind),
     LiteralBoundary(AuthoredLiteralKind, LiteralSyntaxBoundary),
     ModuleExport,
+    NumericRecoveryEmit(NodeId),
     TemplateExpression,
     TemplateExpressionIdentifier,
     UnsignedRightShiftAssignmentRecovery,
     UnsignedRightShiftOperandRecovery,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum JavaScriptJSDocCastKind {
     Type,
     Satisfies,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum LiteralSyntaxBoundary {
     LexicalRecovery,
     SemanticValidation,
     UnsupportedHost,
 }
-
-/// Scanner-authored literal occurrence retained for downstream ownership
-/// analysis. This is syntax provenance, not a product-support decision.
+/// Scanner-authored syntax provenance retained for downstream ownership analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AuthoredLiteralFact {
     pub(crate) span: Span,
-    /// Parser-owned syntax extent whose statements may belong to the same
-    /// recovered literal. This stays separate from the authored token span so
-    /// capability analysis never has to infer recovery boundaries from text.
+    /// Parser-owned extent; separate from the token so policy never infers text boundaries.
     pub(crate) recovery_extent: Span,
     pub(crate) kind: AuthoredLiteralKind,
-    /// Stable syntax identity for the smallest represented statement that
-    /// owns this scanner-authored literal and its SourceUnit-root wrapper.
+    /// Stable identity for the smallest represented owner and its `SourceUnit` root.
     pub(crate) owner: ParserRecoveryOwner,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AuthoredLiteralKind {
     RegularExpression,
     NumericRecovery,
     NumericSeparator,
 }
-
-/// Parser-owned extent for syntax whose recovered AST is not a complete
-/// semantic producer. The authored token remains separate from the dependent
-/// recovery extent so capability analysis does not infer parser boundaries.
+/// Parser-owned extent for syntax whose recovered AST is not a complete producer.
+/// The authored token remains separate so policy never infers parser boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ParserRecoveryFact {
     pub(crate) authored_span: Span,
@@ -101,34 +90,30 @@ pub(crate) struct ParserRecoveryFact {
     pub(crate) kind: ParserRecoveryKind,
     pub(crate) owner: ParserRecoveryOwner,
 }
-
-/// Stable syntax owners attached after the parser has built the recovered AST.
-/// `statement` is the smallest represented statement containing the authored
-/// recovery token; `root_statement` retains its SourceUnit-root attribution.
+/// Stable syntax owners attached after recovery: the smallest statement and `SourceUnit` root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ParserRecoveryOwner {
     pub(crate) root_statement: NodeId,
     pub(crate) statement: NodeId,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ParserRecoveryKind {
     Declaration,
     GeneratorFunctionLike,
     Expression,
+    MissingExpression,
     ObjectMember,
     ForStatement,
     ComputedPropertyName,
+    ClassMember,
     ClassExpression,
     AngleAssertion,
     RejectedGenericArrowPrefix,
+    ConditionalExpression,
     Type,
+    MissingType,
     Template,
 }
-
-/// Parser-retained identity for a declaration whose body is not represented
-/// yet. The binder publishes only this authored name; every semantic demand
-/// on the declaration remains nonclaiming until the host grammar is owned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UnmodeledDeclarationHostFact {
     pub(crate) owner_start: u32,
@@ -136,9 +121,17 @@ pub(crate) struct UnmodeledDeclarationHostFact {
     pub(crate) name: Option<String>,
     pub(crate) name_span: Option<Span>,
     pub(crate) kind: UnmodeledDeclarationHostKind,
+    pub(crate) body: DeclarationHostBodyRepresentation,
+    pub(crate) declared: bool,
     pub(crate) exported: bool,
 }
-
+/// Whether declaration-host recovery retained the authored body as ordinary
+/// statements. Semantic ownership remains a separate program capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeclarationHostBodyRepresentation {
+    Omitted,
+    ParsedStatements,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnmodeledDeclarationHostKind {
     Enum,
@@ -148,17 +141,14 @@ pub(crate) enum UnmodeledDeclarationHostKind {
     Global,
     Using,
 }
-
 impl SourceUnit {
     #[must_use]
     pub(crate) fn has_source_syntax_fact(&self, fact: SourceSyntaxFact) -> bool {
         self.source_syntax_facts.binary_search(&fact).is_ok()
     }
-
     pub(crate) fn contextual_grammar_facts(&self) -> &[ContextualGrammarFact] {
         &self.contextual_grammar_facts
     }
-
     /// Whether this file owns a module-local root scope rather than
     /// contributing declarations to the program's global script scope.
     #[must_use]
@@ -191,7 +181,6 @@ impl SourceUnit {
                     | StatementKind::Unknown => false,
                 })
     }
-
     /// Whether emit would need function-modifier product ownership that the
     /// syntax printer does not yet provide for every module target.
     #[must_use]
@@ -199,24 +188,20 @@ impl SourceUnit {
         let mut unmodeled = false;
         for_each_statement_in(&self.statements, &mut |statement| {
             unmodeled |= matches!(&statement.kind, StatementKind::Function(function)
-                if function.default_export || function.abstract_declaration
-                    || !function.overload_completion_supported);
+                if function.abstract_declaration || !function.overload_completion_supported);
         });
         unmodeled
     }
-
     pub(crate) fn comments(&self) -> &[CommentTrivia] {
         &self.comments
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct Statement {
     pub id: NodeId,
     pub span: Span,
     pub kind: StatementKind,
 }
-
 #[derive(Debug, Clone)]
 pub enum StatementKind {
     Import(ImportDeclaration),
@@ -236,40 +221,34 @@ pub enum StatementKind {
     Empty,
     Unknown,
 }
-
 #[derive(Debug, Clone)]
 pub struct IfStatement {
     pub condition: Expression,
     pub then_statement: Box<Statement>,
     pub else_statement: Option<Box<Statement>>,
 }
-
 #[derive(Debug, Clone)]
 pub struct SwitchStatement {
     pub expression: Expression,
     pub clauses: Vec<SwitchClause>,
     pub recovered_discriminant: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct SwitchClause {
     pub span: Span,
     pub kind: SwitchClauseKind,
     pub statements: Vec<Statement>,
 }
-
 #[derive(Debug, Clone)]
 pub enum SwitchClauseKind {
     Case(Expression),
     Default,
 }
-
 #[derive(Debug, Clone)]
 pub struct JumpStatement {
     pub label: Option<String>,
     pub label_span: Option<Span>,
 }
-
 #[derive(Debug, Clone)]
 pub struct ImportDeclaration {
     pub bindings: Vec<ImportBinding>,
@@ -278,7 +257,6 @@ pub struct ImportDeclaration {
     pub type_only: bool,
     pub side_effect_only: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct ImportBinding {
     pub imported: Option<String>,
@@ -288,7 +266,6 @@ pub struct ImportBinding {
     pub type_only: bool,
     pub namespace: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct ExportDeclaration {
     pub specifiers: Vec<ExportSpecifier>,
@@ -299,7 +276,6 @@ pub struct ExportDeclaration {
     pub default_export: bool,
     pub assignment: Option<Expression>,
 }
-
 #[derive(Debug, Clone)]
 pub struct ExportSpecifier {
     pub local: String,
@@ -308,14 +284,12 @@ pub struct ExportSpecifier {
     pub exported_span: Span,
     pub type_only: bool,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VariableKind {
     Let,
     Const,
     Var,
 }
-
 #[derive(Debug, Clone)]
 pub struct VariableStatement {
     pub declaration_kind: VariableKind,
@@ -325,7 +299,6 @@ pub struct VariableStatement {
     pub exported: bool,
     pub declared: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct VariableDeclarator {
     pub name: String,
@@ -334,7 +307,6 @@ pub struct VariableDeclarator {
     pub annotation: Option<TypeNode>,
     pub initializer: Option<Expression>,
 }
-
 /// An authored binding identity retained independently from its declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthoredBindingName {
@@ -342,7 +314,6 @@ pub struct AuthoredBindingName {
     pub span: Span,
     pub token_kind: TokenKind,
 }
-
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub name: String,
@@ -363,17 +334,14 @@ pub struct FunctionDeclaration {
     pub abstract_declaration: bool,
     pub overload_completion_supported: bool,
 }
-
 impl FunctionDeclaration {
     pub(crate) const fn overload_context_is_recovery_free(&self) -> bool {
         self.overload_completion_supported
     }
-
     pub(crate) const fn bodyless_overload_is_recovery_free(&self) -> bool {
         !self.has_body && self.overload_context_is_recovery_free()
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct ClassDeclaration {
     pub name: String,
@@ -382,6 +350,8 @@ pub struct ClassDeclaration {
     pub extends: Option<TypeNode>,
     pub implements: Vec<TypeNode>,
     pub members: Vec<ClassMember>,
+    /// Authored standalone semicolon class elements, in source order.
+    pub empty_elements: Vec<Span>,
     /// Parser-authored span from the opening through closing class-body brace.
     pub body_span: Option<Span>,
     pub exported: bool,
@@ -390,7 +360,6 @@ pub struct ClassDeclaration {
     pub abstract_class: bool,
     pub member_syntax_recovery_free: bool,
 }
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClassMemberModifiers {
     pub public: bool,
@@ -404,7 +373,6 @@ pub struct ClassMemberModifiers {
     pub unsupported_for_overload_completion: bool,
     pub unsupported_for_emit_products: bool,
 }
-
 impl ClassMemberModifiers {
     pub(crate) const fn observe(&mut self, modifier: ParameterModifier) {
         let slot = match modifier {
@@ -433,7 +401,6 @@ impl ClassMemberModifiers {
         }
         *slot = true;
     }
-
     pub(crate) const fn constructor_modifiers_are_modeled(&self) -> bool {
         !self.unsupported_for_emit_products
             && !self.readonly
@@ -442,14 +409,12 @@ impl ClassMemberModifiers {
             && !self.declared
             && !self.async_member
     }
-
     pub(crate) const fn method_modifiers_are_modeled(&self) -> bool {
         !self.unsupported_for_emit_products
             && !self.readonly
             && !self.abstract_member
             && !self.declared
     }
-
     pub(crate) const fn property_modifiers_are_modeled(&self) -> bool {
         !self.unsupported_for_emit_products
             && !self.abstract_member
@@ -457,7 +422,6 @@ impl ClassMemberModifiers {
             && !self.async_member
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct ClassMember {
     pub id: NodeId,
@@ -469,18 +433,18 @@ pub struct ClassMember {
     /// UTF-16 surrogate units remain representable.
     pub string_name_value: Option<Utf16String>,
     pub span: Span,
+    /// Whether authored JSDoc is attached to the member's leading token.
+    pub has_leading_jsdoc: bool,
     pub modifiers: ClassMemberModifiers,
     pub overload_completion_supported: bool,
     pub emit_products_supported: bool,
     pub kind: ClassMemberKind,
 }
-
 impl ClassMember {
     pub(crate) const fn overload_context_is_recovery_free(&self) -> bool {
         self.overload_completion_supported
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyNameKind {
     Identifier,
@@ -490,7 +454,6 @@ pub enum PropertyNameKind {
     Computed,
     Unsupported,
 }
-
 #[derive(Debug, Clone)]
 pub enum ClassMemberKind {
     Constructor {
@@ -517,13 +480,11 @@ pub enum ClassMemberKind {
         accessor: Option<AccessorKind>,
     },
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessorKind {
     Get,
     Set,
 }
-
 #[derive(Debug, Clone)]
 pub struct TypeAliasDeclaration {
     pub name: String,
@@ -532,7 +493,6 @@ pub struct TypeAliasDeclaration {
     pub ty: TypeNode,
     pub exported: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct InterfaceDeclaration {
     pub name: String,
@@ -542,7 +502,6 @@ pub struct InterfaceDeclaration {
     pub members: Vec<TypeMember>,
     pub exported: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct Parameter {
     pub name: String,
@@ -560,36 +519,30 @@ pub struct Parameter {
     pub function_implementation_completion_supported: bool,
     pub span: Span,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParameterNameKind {
     Binding,
     BindingPattern,
     This,
 }
-
 impl Parameter {
     pub(crate) fn is_property(&self) -> bool {
         self.modifiers
             .iter()
             .any(|modifier| modifier.kind.is_property())
     }
-
     pub(crate) const fn overload_context_is_recovery_free(&self) -> bool {
         self.overload_completion_supported
     }
-
     pub(crate) const fn implementation_name_is_recovery_free(&self) -> bool {
         self.function_implementation_completion_supported
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParameterModifierNode {
     pub kind: ParameterModifier,
     pub span: Span,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParameterModifier {
     Abstract,
@@ -608,7 +561,6 @@ pub enum ParameterModifier {
     Readonly,
     Static,
 }
-
 impl ParameterModifier {
     pub(crate) const fn is_property(self) -> bool {
         matches!(
@@ -617,7 +569,6 @@ impl ParameterModifier {
         )
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct TypeParameterDeclaration {
     pub name: String,
@@ -629,7 +580,6 @@ pub struct TypeParameterDeclaration {
     pub in_variance: bool,
     pub out_variance: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct TypeMember {
     pub id: NodeId,
@@ -639,42 +589,33 @@ pub struct TypeMember {
     pub modifiers: TypeMemberModifiers,
     pub kind: TypeMemberKind,
 }
-
 #[derive(Debug, Clone)]
 pub struct TypeMemberName {
     pub span: Span,
     pub kind: TypeMemberNameKind,
 }
-
 #[derive(Debug, Clone)]
 pub enum TypeMemberNameKind {
     Identifier(String),
-    StringLiteral(String),
+    StringLiteral(String, Option<Utf16String>),
     NumericLiteral(String),
     BigIntLiteral(String),
     Computed(Expression),
 }
-
 impl TypeMemberName {
-    /// Canonical named-member spelling when syntax already supplies one.
-    ///
-    /// String and numeric literals need scanner-cooked/canonical property-key
-    /// values before they can safely participate in semantic identity. Until
-    /// that boundary exists, they remain typed syntax and force the object
-    /// shape query to defer. Computed expressions likewise never become a key
-    /// by rendering or slicing their source.
+    /// Canonical spelling for scalar syntax names. Literal keys use the binder's UTF-16
+    /// identity; computed expressions never become keys by rendering or source slicing.
     #[must_use]
     pub fn semantic_name(&self) -> Option<&str> {
         match &self.kind {
             TypeMemberNameKind::Identifier(name) => Some(name),
-            TypeMemberNameKind::StringLiteral(_)
+            TypeMemberNameKind::StringLiteral(..)
             | TypeMemberNameKind::NumericLiteral(_)
             | TypeMemberNameKind::BigIntLiteral(_)
             | TypeMemberNameKind::Computed(_) => None,
         }
     }
 }
-
 #[derive(Debug, Clone, Default)]
 pub struct TypeMemberModifiers {
     pub nodes: Vec<TypeMemberModifierNode>,
@@ -694,13 +635,11 @@ pub struct TypeMemberModifiers {
     pub out_variance: bool,
     pub override_member: bool,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TypeMemberModifierNode {
     pub kind: TypeMemberModifier,
     pub span: Span,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeMemberModifier {
     Public,
@@ -719,7 +658,6 @@ pub enum TypeMemberModifier {
     Out,
     Override,
 }
-
 #[derive(Debug, Clone)]
 pub enum TypeMemberKind {
     Property {
@@ -756,14 +694,12 @@ pub enum TypeMemberKind {
         value_type: Option<TypeNode>,
     },
 }
-
 type TypeMemberSignature<'a> = (
     Option<&'a TypeMemberName>,
     &'a [TypeParameterDeclaration],
     &'a [Parameter],
     Option<&'a TypeNode>,
 );
-
 impl TypeMemberKind {
     pub(crate) fn signature(&self) -> Option<TypeMemberSignature<'_>> {
         match self {
@@ -803,13 +739,11 @@ impl TypeMemberKind {
         }
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct TypeNode {
     pub span: Span,
     pub kind: TypeNodeKind,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeywordType {
     Any,
@@ -826,7 +760,6 @@ pub enum KeywordType {
     Symbol,
     UniqueSymbol,
 }
-
 #[derive(Debug, Clone)]
 pub enum TypeNodeKind {
     Keyword(KeywordType),
@@ -898,7 +831,6 @@ pub enum TypeNodeKind {
     Parenthesized(Box<TypeNode>),
     Missing,
 }
-
 impl TypeNode {
     pub(super) fn blocks_arrow_parse(&self) -> bool {
         match &self.kind {
@@ -917,7 +849,6 @@ impl TypeNode {
             _ => false,
         }
     }
-
     /// Whether this written type contains a value-space `typeof` query.
     /// Function implementations need a symbol-kind-aware lookup filter for
     /// these positions; callers that do not own that filter fail closed.
@@ -936,7 +867,6 @@ impl TypeNode {
             },
         )
     }
-
     /// Visit the `infer` declarations introduced by one conditional extends
     /// pattern. Nested conditionals own their declarations, so their subtrees
     /// are deliberately pruned. Children otherwise retain authored order.
@@ -961,7 +891,6 @@ impl TypeNode {
             },
         );
     }
-
     /// Tests authored type members while walking every nested type position.
     /// The predicate owns any product or semantic policy; syntax only owns the
     /// immutable traversal of written type structure.
@@ -978,7 +907,6 @@ impl TypeNode {
         )
     }
 }
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthoredTypeEdge {
     Nested,
@@ -986,20 +914,17 @@ pub(crate) enum AuthoredTypeEdge {
     ConditionalTrue,
     MappedConstraint,
 }
-
 #[derive(Clone, Copy)]
 enum TypeWalkControl {
     Continue,
     Prune,
     Stop,
 }
-
 #[derive(Clone, Copy)]
 pub(crate) enum AuthoredTypeItem<'a> {
     Type(&'a TypeNode, AuthoredTypeEdge),
     Member(&'a TypeMember),
 }
-
 fn walk_authored_item<'a>(
     root: AuthoredTypeItem<'a>,
     visit: &mut impl FnMut(AuthoredTypeItem<'a>) -> TypeWalkControl,
@@ -1018,7 +943,6 @@ fn walk_authored_item<'a>(
     }
     false
 }
-
 impl TypeNode {
     pub(crate) fn push_authored_children<'a>(&'a self, pending: &mut Vec<AuthoredTypeItem<'a>>) {
         let nested = |node| AuthoredTypeItem::Type(node, AuthoredTypeEdge::Nested);
@@ -1102,7 +1026,6 @@ impl TypeNode {
         }
     }
 }
-
 impl TypeMember {
     pub(crate) fn push_authored_children<'a>(&'a self, pending: &mut Vec<AuthoredTypeItem<'a>>) {
         if let TypeMemberKind::Property { ty, .. } = &self.kind {
@@ -1117,7 +1040,6 @@ impl TypeMember {
         }
     }
 }
-
 fn push_authored_signature_children<'a>(
     type_parameters: &'a [TypeParameterDeclaration],
     parameters: &'a [Parameter],
@@ -1148,26 +1070,22 @@ fn push_authored_signature_children<'a>(
         );
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub id: NodeId,
     pub span: Span,
     pub kind: ExpressionKind,
 }
-
 #[derive(Debug, Clone)]
 pub struct TemplateExpression {
     pub head: String,
     pub spans: Vec<TemplateSpan>,
 }
-
 #[derive(Debug, Clone)]
 pub struct TemplateSpan {
     pub expression: Expression,
     pub literal: String,
 }
-
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
     Identifier {
@@ -1209,6 +1127,13 @@ pub enum ExpressionKind {
         operator_span: Span,
         right: Box<Expression>,
     },
+    Conditional {
+        condition: Box<Expression>,
+        question_span: Span,
+        when_true: Box<Expression>,
+        colon_span: Option<Span>,
+        when_false: Box<Expression>,
+    },
     Unary {
         operator: UnaryOperator,
         operand: Box<Expression>,
@@ -1229,7 +1154,6 @@ pub enum ExpressionKind {
     Parenthesized(Box<Expression>),
     Missing,
 }
-
 impl Expression {
     pub(crate) fn peel_parentheses(&self) -> &Self {
         let mut expression = self;
@@ -1238,7 +1162,6 @@ impl Expression {
         }
         expression
     }
-
     pub(crate) fn peel_parentheses_and_assertions(&self) -> &Self {
         let mut expression = self;
         while let ExpressionKind::Parenthesized(inner)
@@ -1252,7 +1175,6 @@ impl Expression {
         expression
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct FunctionLikeExpression {
     pub type_parameters: Vec<TypeParameterDeclaration>,
@@ -1264,7 +1186,6 @@ pub struct FunctionLikeExpression {
     pub has_leading_jsdoc: bool,
     pub syntax: FunctionLikeSyntax,
 }
-
 #[derive(Debug, Clone)]
 pub enum FunctionLikeSyntax {
     Arrow(ArrowBody),
@@ -1274,19 +1195,16 @@ pub enum FunctionLikeSyntax {
         body: Vec<Statement>,
     },
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FunctionLikeFunctionKind {
     Expression,
     ObjectMethod,
 }
-
 #[derive(Clone, Copy)]
 pub(crate) enum FunctionLikeBody<'a> {
     Expression(&'a Expression),
     Statements(&'a [Statement]),
 }
-
 impl FunctionLikeSyntax {
     pub(crate) fn body(&self) -> FunctionLikeBody<'_> {
         match self {
@@ -1296,14 +1214,12 @@ impl FunctionLikeSyntax {
             }
         }
     }
-
     pub(crate) fn function(&self) -> Option<(&Option<AuthoredBindingName>, &[Statement])> {
         match self {
             Self::Function { name, body, .. } => Some((name, body)),
             Self::Arrow(_) => None,
         }
     }
-
     pub(crate) const fn is_object_method(&self) -> bool {
         matches!(
             self,
@@ -1314,13 +1230,11 @@ impl FunctionLikeSyntax {
         )
     }
 }
-
 #[derive(Debug, Clone)]
 pub enum ArrowBody {
     Expression(Box<Expression>),
     Block(Vec<Statement>),
 }
-
 #[derive(Debug, Clone)]
 pub struct ObjectProperty {
     pub name: String,
@@ -1334,7 +1248,6 @@ pub struct ObjectProperty {
     pub trailing_comma: bool,
     pub closing_brace_on_new_line: bool,
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     String(super::StringLiteral),
@@ -1344,9 +1257,9 @@ pub enum Literal {
     Boolean(bool),
     Null,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
+    Comma,
     Add,
     Subtract,
     Multiply,
@@ -1372,13 +1285,11 @@ pub enum BinaryOperator {
     In,
     InstanceOf,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssignmentOperator {
     Assign,
     AddAssign,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     Plus,

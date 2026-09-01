@@ -127,15 +127,15 @@ impl Checker<'_> {
                 self.infer_deferred_call_arguments(file, scope, arguments);
                 return self.deferred_call_type(callee_type, arguments.len());
             }
-            if self.authored_shape_display_is_unavailable(callee_type) {
+            let display = self.store.display(callee_type);
+            let Completion::Complete(name) = self.require_file_completion(file, display) else {
                 self.infer_deferred_call_arguments(file, scope, arguments);
                 return self.deferred_call_type(callee_type, arguments.len());
-            }
+            };
             if !matches!(
                 self.store.kind(callee_type),
                 TypeKind::Any | TypeKind::Error
             ) {
-                let name = self.store.display(callee_type);
                 self.push_diagnostic(
                     file,
                     callee.span,
@@ -148,6 +148,11 @@ impl Checker<'_> {
             self.infer_deferred_call_arguments(file, scope, arguments);
             return self.store.builtins.any;
         };
+        let diagnostic_parameters = signature
+            .parameters
+            .iter()
+            .map(|parameter| (parameter.ty, parameter.rest))
+            .collect::<Vec<_>>();
         let signature_owner = match self.store.kind(callee_type) {
             TypeKind::Function(signature) => signature.generic_declaration,
             _ => None,
@@ -239,6 +244,23 @@ impl Checker<'_> {
             } else {
                 parameter.ty
             };
+            let diagnostic_expected = diagnostic_parameters
+                .get(index)
+                .or_else(|| rest_index.and_then(|rest_index| diagnostic_parameters.get(rest_index)))
+                .map_or(expected, |(ty, rest)| {
+                    if !rest {
+                        return *ty;
+                    }
+                    match self.store.kind(*ty) {
+                        TypeKind::Array(element) => *element,
+                        TypeKind::Tuple(elements) => rest_index
+                            .and_then(|rest_index| index.checked_sub(rest_index))
+                            .and_then(|index| elements.get(index))
+                            .copied()
+                            .unwrap_or(expected),
+                        _ => expected,
+                    }
+                });
             if let Some(instantiation) = &mut generic_instantiation
                 && signature_owner.is_some_and(|owner| {
                     !self.store.type_parameters_from(expected, owner).is_empty()
@@ -289,16 +311,14 @@ impl Checker<'_> {
                     }
                 }
             }
-            let target_order =
-                self.relation_order_for_call_argument(file, scope, callee, index, parameter.rest);
             if !stopped_argument_relations {
                 stopped_argument_relations = !matches!(
-                    self.report_relation(
+                    self.report_relation_with_diagnostic_target(
                         actual,
                         expected,
+                        diagnostic_expected,
                         argument.span,
                         Some(argument),
-                        target_order,
                         RelationMode::Assignment,
                         RelationDiagnosticStyle::Argument,
                     ),

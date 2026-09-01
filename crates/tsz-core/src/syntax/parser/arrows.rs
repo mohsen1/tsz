@@ -23,7 +23,7 @@ impl Parser<'_> {
             (ArrowBody::Block(statements), span)
         } else {
             (
-                ArrowBody::Expression(Box::new(self.parse_expression())),
+                ArrowBody::Expression(Box::new(self.parse_assignment_expression())),
                 None,
             )
         };

@@ -1,44 +1,36 @@
 //! Structured diagnostics. Rendering is a process-adapter concern.
-
-use std::sync::Arc;
-
-use serde::{Deserialize, Serialize};
-
 use crate::source::{FileId, SourceCoordinateIndex, SourceText, Span};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DiagnosticCategory {
-    Warning,
-    Error,
-    Suggestion,
-    Message,
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DiagnosticPhase {
+    #[default]
+    Config,
+    Program,
+    Both,
 }
-
-impl DiagnosticCategory {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Warning => "warning",
-            Self::Error => "error",
-            Self::Suggestion => "suggestion",
-            Self::Message => "message",
+macro_rules! diagnostic_categories {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(rename_all = "lowercase")]
+        pub enum DiagnosticCategory { $($variant),+ }
+        impl DiagnosticCategory {
+            #[must_use]
+            pub const fn as_str(self) -> &'static str { match self { $(Self::$variant => $name),+ } }
         }
-    }
+    };
 }
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+diagnostic_categories! { Warning => "warning", Error => "error", Suggestion => "suggestion", Message => "message" }
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RelatedInformation {
     pub file: String,
     pub start: u32,
     pub length: u32,
     pub message_text: String,
     pub code: u32,
-    /// One-based nesting within the primary diagnostic's message chain.
     #[serde(default)]
     pub depth: u32,
 }
-
 impl RelatedInformation {
     #[must_use]
     pub fn unlocated(message_text: impl Into<String>, code: u32, depth: u32) -> Self {
@@ -50,13 +42,10 @@ impl RelatedInformation {
         }
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub file: String,
-    /// Absolute TypeScript source position in UTF-16 code units.
     pub start: u32,
-    /// Diagnostic extent in UTF-16 code units.
     pub length: u32,
     pub message_text: String,
     pub category: DiagnosticCategory,
@@ -65,21 +54,37 @@ pub struct Diagnostic {
     pub related_information: Vec<RelatedInformation>,
     #[serde(skip)]
     pub(crate) file_id: Option<FileId>,
-    /// Text for a diagnostic owned by a non-program input such as
-    /// `tsconfig.json`. This keeps byte spans structured while still allowing
-    /// the process adapter to render line and column information.
+    #[serde(skip)]
+    pub(crate) phase: DiagnosticPhase,
     #[serde(skip)]
     external_source: Option<Arc<str>>,
 }
-
 impl Diagnostic {
+    fn identity(
+        &self,
+    ) -> (
+        &str,
+        u32,
+        u32,
+        u32,
+        &str,
+        DiagnosticCategory,
+        &[RelatedInformation],
+    ) {
+        (
+            &self.file,
+            self.start,
+            self.length,
+            self.code,
+            &self.message_text,
+            self.category,
+            &self.related_information,
+        )
+    }
     #[must_use]
     pub const fn source_file_id(&self) -> Option<FileId> {
         self.file_id
     }
-
-    /// Construct a diagnostic whose coordinates are already public UTF-16
-    /// units, or whose location is global when `file` is empty.
     #[must_use]
     pub const fn error(
         file: String,
@@ -97,12 +102,10 @@ impl Diagnostic {
             code,
             related_information: Vec::new(),
             file_id: None,
+            phase: DiagnosticPhase::Config,
             external_source: None,
         }
     }
-
-    /// Construct a diagnostic from byte offsets in retained external source
-    /// text, such as `tsconfig.json`.
     #[must_use]
     pub fn error_at_text(
         file: String,
@@ -119,7 +122,6 @@ impl Diagnostic {
         diagnostic.external_source = Some(source_text);
         diagnostic
     }
-
     #[must_use]
     pub fn at(source: &SourceText, span: Span, message_text: String, code: u32) -> Self {
         let (start, length) = source.utf16_span(span);
@@ -133,12 +135,10 @@ impl Diagnostic {
         diagnostic.file_id = Some(source.id);
         diagnostic
     }
-
     #[must_use]
     pub const fn global(message_text: String, code: u32) -> Self {
         Self::error(String::new(), 0, 0, message_text, code)
     }
-
     #[must_use]
     pub fn with_related_information(
         mut self,
@@ -147,7 +147,6 @@ impl Diagnostic {
         self.related_information = related_information;
         self
     }
-
     #[must_use]
     pub fn render(&self, source: Option<&SourceText>) -> String {
         let suffix = format!(
@@ -164,7 +163,7 @@ impl Diagnostic {
             )
         } else if let Some(source_text) = &self.external_source {
             let (line, column) =
-                SourceCoordinateIndex::new(source_text).line_and_column(self.start);
+                SourceCoordinateIndex::new(source_text).position_from_utf16(self.start);
             format!("{}({line},{column}): {suffix}", self.file)
         } else if self.file.is_empty() {
             suffix
@@ -180,41 +179,36 @@ impl Diagnostic {
         rendered
     }
 }
-
-/// Merge worker-private diagnostic buffers under one deterministic total key.
 pub fn sort_and_deduplicate(diagnostics: &mut Vec<Diagnostic>) {
     diagnostics.sort_by(|left, right| {
-        let left_key = (
-            left.file_id,
-            &left.file,
-            left.start,
-            left.code,
-            left.category,
-            &left.message_text,
-        );
-        let right_key = (
-            right.file_id,
-            &right.file,
-            right.start,
-            right.code,
-            right.category,
-            &right.message_text,
-        );
-        left_key
-            .cmp(&right_key)
-            .then_with(|| left.length.cmp(&right.length))
+        left.identity()
+            .cmp(&right.identity())
+            .then_with(|| left.file_id.cmp(&right.file_id))
     });
-    diagnostics.dedup_by(|left, right| {
-        left.file == right.file
-            && left.start == right.start
-            && left.length == right.length
-            && left.code == right.code
-            && left.category == right.category
-            && left.message_text == right.message_text
-            && left.related_information == right.related_information
-    });
+    diagnostics.dedup_by(merge_duplicate_diagnostics);
 }
-
+pub(crate) fn sort_and_deduplicate_by_path(diagnostics: &mut Vec<Diagnostic>) {
+    sort_and_deduplicate(diagnostics);
+    diagnostics.sort_by(|left, right| left.file.cmp(&right.file));
+}
+pub(crate) fn sort_and_deduplicate_for_cli(diagnostics: &mut Vec<Diagnostic>) {
+    sort_and_deduplicate(diagnostics);
+    let bucket = |diagnostic: &Diagnostic| match diagnostic.file_id {
+        _ if diagnostic.file.is_empty() => 0,
+        Some(FileId(u32::MAX)) => 2,
+        _ => 1,
+    };
+    diagnostics
+        .sort_by(|left, right| (bucket(left), &left.file).cmp(&(bucket(right), &right.file)));
+}
+fn merge_duplicate_diagnostics(left: &mut Diagnostic, right: &mut Diagnostic) -> bool {
+    let duplicate = left.identity() == right.identity();
+    if duplicate && left.phase != right.phase {
+        left.phase = DiagnosticPhase::Both;
+        right.phase = DiagnosticPhase::Both;
+    }
+    duplicate
+}
 #[cfg(test)]
 #[path = "../rewrite-tests/diagnostics_unit.rs"]
 mod tests;

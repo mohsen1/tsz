@@ -1,8 +1,8 @@
 use super::{Modifiers, Parser, recovery};
 use crate::syntax::{
     AccessorKind, ClassDeclaration, ClassMember, ClassMemberKind, ClassMemberModifiers,
-    ContextualGrammarKind, ParameterModifier, ParserRecoveryKind, PropertyNameKind, Token,
-    TokenKind,
+    ContextualGrammarKind, ParameterModifier, ParserRecoveryKind, PropertyNameKind,
+    SourceSyntaxFact, Token, TokenKind,
 };
 
 impl Parser<'_> {
@@ -15,7 +15,21 @@ impl Parser<'_> {
         self.yield_binding_reserved = true;
         self.class_yield_binding_reserved = true;
         self.expect(TokenKind::Class, "'class' expected.", 1005);
-        let (name, name_span) = self.parse_name();
+        let omitted_default_name = modifiers.default_export
+            && (!self.kind().is_identifier()
+                || self.at(TokenKind::Implements) && self.peek_kind(1).is_identifier_name());
+        let (name, name_span) = if omitted_default_name {
+            let at = self.current().span;
+            (
+                String::new(),
+                crate::source::Span {
+                    end: at.start,
+                    ..at
+                },
+            )
+        } else {
+            self.parse_name()
+        };
         self.yield_binding_reserved = !inherited_yield_context;
         self.class_yield_binding_reserved = !inherited_yield_context;
         let type_parameters = self.parse_type_parameters();
@@ -38,22 +52,24 @@ impl Parser<'_> {
         let opening_brace = self.current().span;
         self.expect(TokenKind::LeftBrace, "'{' expected.", 1005);
         let mut members = Vec::new();
+        let mut empty_elements = Vec::new();
         let mut member_list_aborted = false;
         while !self.at_any(&[TokenKind::RightBrace, TokenKind::EndOfFile]) {
-            if self.eat(TokenKind::Semicolon) {
+            if self.at(TokenKind::Semicolon) {
+                empty_elements.push(self.bump().span);
                 continue;
             }
             let before = self.index;
             let decorator_recovery = self.at(TokenKind::At);
             if decorator_recovery {
-                self.yield_binding_reserved = false;
-                self.class_yield_binding_reserved = false;
+                self.source_syntax_facts
+                    .insert(SourceSyntaxFact::DecoratorRecovery);
             }
+            self.yield_binding_reserved = !decorator_recovery;
+            self.class_yield_binding_reserved = !decorator_recovery;
             let (member, recovery) = self.parse_class_member();
-            if decorator_recovery {
-                self.yield_binding_reserved = true;
-                self.class_yield_binding_reserved = true;
-            }
+            self.yield_binding_reserved = true;
+            self.class_yield_binding_reserved = true;
             members.push(member);
             member_list_aborted = recovery.aborts_list();
             if member_list_aborted {
@@ -82,6 +98,7 @@ impl Parser<'_> {
             extends,
             implements,
             members,
+            empty_elements,
             body_span: (has_opening_brace && has_closing_brace)
                 .then(|| opening_brace.merge(closing_brace)),
             exported: modifiers.exported,
@@ -95,6 +112,7 @@ impl Parser<'_> {
     fn parse_class_member(&mut self) -> (ClassMember, recovery::ClassMemberListRecovery) {
         let diagnostic_count = self.diagnostics.len();
         let start = self.current().span;
+        let has_leading_jsdoc = self.current_has_leading_jsdoc();
         let mut modifiers = ClassMemberModifiers::default();
         loop {
             match self.kind() {
@@ -114,6 +132,9 @@ impl Parser<'_> {
         }
         if self.at(TokenKind::Constructor) {
             let name_span = self.bump().span;
+            if self.at(TokenKind::Question) {
+                self.retain_recovery_extent(ParserRecoveryKind::ClassMember, self.current().span);
+            }
             let previous_yield_context = self.in_yield_context;
             let previous_await_context = self.in_await_context;
             let previous_await_binding_reserved = self.await_binding_reserved;
@@ -139,6 +160,7 @@ impl Parser<'_> {
                     name_kind: PropertyNameKind::Identifier,
                     string_name_value: None,
                     span: start.merge(self.previous().span),
+                    has_leading_jsdoc,
                     overload_completion_supported: !modifiers.unsupported_for_overload_completion
                         && self.diagnostics.len() == diagnostic_count,
                     emit_products_supported: modifiers.constructor_modifiers_are_modeled()
@@ -211,7 +233,7 @@ impl Parser<'_> {
             let parameters = if accessor.is_some() {
                 self.parse_accessor_parameters()
             } else {
-                self.parse_parameters()
+                self.parse_signature_parameters()
             };
             let return_type = self.eat(TokenKind::Colon).then(|| self.parse_type());
             let has_body = self.at(TokenKind::LeftBrace);
@@ -264,6 +286,7 @@ impl Parser<'_> {
                 name_kind,
                 string_name_value,
                 span: start.merge(self.previous().span),
+                has_leading_jsdoc,
                 overload_completion_supported: if quoted_constructor {
                     constructor_products_supported && !modifiers.unsupported_for_overload_completion
                 } else {
@@ -292,7 +315,7 @@ impl Parser<'_> {
                 self.retain_parser_recovery(generator_recovery, generator_span, member.span);
             }
             if name_kind == PropertyNameKind::Computed {
-                self.record_parser_recovery_for_analysis(
+                self.note_recovery(
                     ParserRecoveryKind::ComputedPropertyName,
                     name_span,
                     member.span,
@@ -301,7 +324,9 @@ impl Parser<'_> {
             return (member, recovery::ClassMemberListRecovery::Continue);
         }
         let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
-        let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
+        let initializer = self
+            .eat(TokenKind::Equals)
+            .then(|| self.parse_assignment_expression());
         self.eat(TokenKind::Semicolon);
         let property_products_supported = self.diagnostics.len() == diagnostic_count;
         let member_list_recovery = if quoted_constructor_name && definite {
@@ -319,6 +344,7 @@ impl Parser<'_> {
             name_kind,
             string_name_value,
             span: start.merge(self.previous().span),
+            has_leading_jsdoc,
             overload_completion_supported: matches!(name_kind, PropertyNameKind::Identifier)
                 && generator_span.is_none()
                 && property_products_supported,
@@ -338,7 +364,7 @@ impl Parser<'_> {
             self.retain_parser_recovery(generator_recovery, generator_span, member.span);
         }
         if name_kind == PropertyNameKind::Computed {
-            self.record_parser_recovery_for_analysis(
+            self.note_recovery(
                 ParserRecoveryKind::ComputedPropertyName,
                 name_span,
                 member.span,

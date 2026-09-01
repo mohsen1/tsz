@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::bind::bind_source;
+use crate::bind::bind_source_with_kind;
 use crate::config::ProjectProvenance;
 use crate::emit_paths::EmitPlan;
 use crate::program::{
@@ -25,7 +25,12 @@ pub(super) fn emit_file(file: &ProgramFile, options: &CompilerOptions) -> Vec<Em
         &ProjectProvenance::default(),
         &capabilities,
     );
-    emit_file_with_plan(file, options, plan.for_file(file.source.id))
+    emit_file_with_plan(
+        file,
+        options,
+        plan.for_file(file.source.id),
+        &Default::default(),
+    )
 }
 
 fn program_file(path: &str, text: &str) -> ProgramFile {
@@ -36,12 +41,32 @@ fn program_file(path: &str, text: &str) -> ProgramFile {
         "test source must parse without diagnostics: {:?}",
         parsed.diagnostics
     );
-    let bindings = bind_source(source.id, &parsed.unit);
+    let bindings = bind_source_with_kind(
+        source.id,
+        crate::source::SourceKind::TypeScript,
+        &parsed.unit,
+    );
     ProgramFile {
         source,
         syntax: parsed.unit,
         bindings,
     }
+}
+
+#[test]
+fn conditional_expression_printer_preserves_branch_association() {
+    let source = concat!(
+        "const nested = flag ? 1 : other ? 2 : 3;\n",
+        "const grouped = (flag ? 1 : 2) ? 3 : 4;\n",
+    );
+    let file = program_file("conditional.ts", source);
+    let options = CompilerOptions {
+        target: "es2022".to_string(),
+        ..CompilerOptions::default()
+    };
+    let mut javascript = Printer::new(&file.source, &file.bindings, &options);
+    javascript.emit_javascript(&file.syntax);
+    assert_eq!(javascript.finish(), format!("\"use strict\";\n{source}"));
 }
 
 #[test]
@@ -132,9 +157,9 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "exports.value = void 0;\n",
                 "\"use strict\";\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -148,8 +173,8 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = void 0;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -163,8 +188,8 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = void 0;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -178,8 +203,8 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = void 0;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -193,8 +218,8 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = void 0;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -208,8 +233,8 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = void 0;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -223,9 +248,9 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
             concat!(
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "exports.value = void 0;\n",
                 "\"use strict\";\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -256,9 +281,9 @@ fn authored_strict_directive_controls_the_synthesized_prologue() {
                 "/* keep between */\n",
                 "\"use strict\";\n",
                 "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "exports.value = void 0;\n",
                 "/* keep after */\n",
-                "const value = 1;\n",
-                "exports.value = value;\n",
+                "exports.value = 1;\n",
             ),
         ),
         (
@@ -418,7 +443,10 @@ fn explicit_redundant_module_aliases_survive_in_both_printers() {
     assert_eq!(javascript.finish(), source);
 
     let mut declaration = Printer::new(&file.source, &file.bindings, &options);
-    declaration.emit_declarations(&file.syntax);
+    declaration.emit_declarations(
+        &file.syntax,
+        &super::reachability::DeclarationReachability::All,
+    );
     assert_eq!(declaration.finish(), source);
 }
 
@@ -443,14 +471,146 @@ fn commonjs_import_export_and_variable_identifier_spelling_is_exact() {
         concat!(
             "\"use strict\";\n",
             "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+            "exports.ab = void 0;\n",
             "const localb = require(\"./m\").a;\n",
             "const d = require(\"./m\").c;\n",
             "Object.defineProperty(exports, \"\\\\u0065\", { enumerable: true, get: function () { return localb; } });\n",
             "Object.defineProperty(exports, \"f\", { enumerable: true, get: function () { return d; } });\n",
-            "const a\\u0062 = 1;\n",
-            "exports.a\\u0062 = a\\u0062;\n",
+            "exports.a\\u0062 = 1;\n",
         )
     );
+}
+
+#[test]
+fn commonjs_exported_variable_uses_module_slot_and_preserves_detached_header() {
+    let source = concat!(
+        "// repro from an upstream issue\n",
+        "\n",
+        "export let cedar = [{ leaf: 0, grow() {} }, { branch: 1 }];\n",
+    );
+    let file = program_file("case.ts", source);
+    let options = CompilerOptions {
+        target: "es2015".to_string(),
+        module: "commonjs".to_string(),
+        ..CompilerOptions::default()
+    };
+
+    let mut javascript = Printer::new(&file.source, &file.bindings, &options);
+    javascript.emit_javascript(&file.syntax);
+    assert_eq!(
+        javascript.finish(),
+        concat!(
+            "\"use strict\";\n",
+            "// repro from an upstream issue\n",
+            "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+            "exports.cedar = void 0;\n",
+            "exports.cedar = [{ leaf: 0, grow() { } }, { branch: 1 }];\n",
+        )
+    );
+}
+
+#[test]
+fn commonjs_exported_variable_references_follow_binding_identity() {
+    let source = concat!(
+        "export let cedar = 1;\n",
+        "export function bump() { cedar += 1; return { cedar }; }\n",
+        "export function shadow(cedar: number) { cedar += 1; return { cedar }; }\n",
+    );
+    let file = program_file("case.ts", source);
+    let options = CompilerOptions {
+        target: "es2015".to_string(),
+        module: "commonjs".to_string(),
+        ..CompilerOptions::default()
+    };
+
+    let mut javascript = Printer::new(&file.source, &file.bindings, &options);
+    javascript.emit_javascript(&file.syntax);
+    assert_eq!(
+        javascript.finish(),
+        concat!(
+            "\"use strict\";\n",
+            "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+            "exports.cedar = void 0;\n",
+            "exports.bump = bump;\n",
+            "exports.shadow = shadow;\n",
+            "exports.cedar = 1;\n",
+            "function bump() { exports.cedar += 1; return { cedar: exports.cedar }; }\n",
+            "function shadow(cedar) { cedar += 1; return { cedar }; }\n",
+        )
+    );
+}
+
+#[test]
+fn ambient_exports_never_reenter_javascript_module_lowering() {
+    let mixed = concat!(
+        "export declare const amb\\u0069ent: number;\n",
+        "export let r\\u0075ntime = 1;\n",
+        "r\\u0075ntime += amb\\u0069ent;\n",
+    );
+    for (name, module, source, expected) in [
+        (
+            "commonjs-ambient-only",
+            "commonjs",
+            "export declare const erased: number;\n",
+            concat!(
+                "\"use strict\";\n",
+                "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+            ),
+        ),
+        (
+            "commonjs-mixed-escaped",
+            "commonjs",
+            mixed,
+            concat!(
+                "\"use strict\";\n",
+                "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "exports.runtime = void 0;\n",
+                "exports.r\\u0075ntime = 1;\n",
+                "exports.r\\u0075ntime += amb\\u0069ent;\n",
+            ),
+        ),
+        (
+            "commonjs-all-ambient-declaration-kinds",
+            "commonjs",
+            concat!(
+                "export declare function erasedFunction(): void;\n",
+                "export declare class ErasedClass {}\n",
+                "declare const localAmbient: number;\n",
+                "export const kept = localAmbient;\n",
+            ),
+            concat!(
+                "\"use strict\";\n",
+                "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "exports.kept = void 0;\n",
+                "exports.kept = localAmbient;\n",
+            ),
+        ),
+        (
+            "esmodule-ambient-only",
+            "esnext",
+            "export declare const erased: number;\n",
+            "export {};\n",
+        ),
+        (
+            "esmodule-mixed-escaped",
+            "esnext",
+            mixed,
+            concat!(
+                "export let r\\u0075ntime = 1;\n",
+                "r\\u0075ntime += amb\\u0069ent;\n",
+            ),
+        ),
+    ] {
+        let file = program_file("case.ts", source);
+        let options = CompilerOptions {
+            target: "es2025".to_string(),
+            module: module.to_string(),
+            ..CompilerOptions::default()
+        };
+        let mut javascript = Printer::new(&file.source, &file.bindings, &options);
+        javascript.emit_javascript(&file.syntax);
+        assert_eq!(javascript.finish(), expected, "{name}");
+    }
 }
 
 #[test]
@@ -824,6 +984,97 @@ fn erases_class_overload_signatures_but_keeps_empty_implementations() {
 }
 
 #[test]
+fn authored_empty_class_elements_survive_javascript_but_not_declarations() {
+    let source = concat!(
+        "export class Empty { ;;; }\n",
+        "export class Around {\n",
+        "  ; // after first\n",
+        "  field: number = 1;\n",
+        "  ; /* between */ ;\n",
+        "  method() {}\n",
+        "  ;\n",
+        "}\n",
+        "export class Control { field: number = 1; method() {} }\n",
+    );
+    let file = program_file("empty-elements.ts", source);
+    let classes = file
+        .syntax
+        .statements
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StatementKind::Class(declaration) => Some(declaration),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(classes.len(), 3);
+    assert_eq!(classes[0].empty_elements.len(), 3);
+    assert_eq!(classes[1].empty_elements.len(), 4);
+    assert!(classes[2].empty_elements.is_empty());
+
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "empty-elements.ts",
+            Arc::<str>::from(source),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            target: "es2022".to_string(),
+            module: "esnext".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{output:#?}");
+    assert_eq!(
+        output.semantic_completion,
+        crate::program::SemanticCompletion::Complete
+    );
+    let product = |path: &str| {
+        output
+            .emitted_files
+            .iter()
+            .find(|file| file.path == Path::new(path))
+            .map(|file| file.text.as_str())
+    };
+    assert_eq!(
+        product("empty-elements.js"),
+        Some(concat!(
+            "export class Empty {\n",
+            "    ;\n",
+            "    ;\n",
+            "    ;\n",
+            "}\n",
+            "export class Around {\n",
+            "    ; // after first\n",
+            "    field = 1;\n",
+            "    ; /* between */\n",
+            "    ;\n",
+            "    method() { }\n",
+            "    ;\n",
+            "}\n",
+            "export class Control {\n",
+            "    field = 1;\n",
+            "    method() { }\n",
+            "}\n",
+        )),
+    );
+    assert_eq!(
+        product("empty-elements.d.ts"),
+        Some(concat!(
+            "export declare class Empty {\n",
+            "}\n",
+            "export declare class Around {\n",
+            "    field: number;\n",
+            "    method(): void;\n",
+            "}\n",
+            "export declare class Control {\n",
+            "    field: number;\n",
+            "    method(): void;\n",
+            "}\n",
+        )),
+    );
+}
+
+#[test]
 fn rewrites_mixed_esm_clauses_and_assertions_from_structured_nodes() {
     let file = program_file(
         "module.ts",
@@ -908,6 +1159,37 @@ fn default_export_declarations_use_the_default_commonjs_key_and_exact_dts_spelli
             "export default class C\\u006cassed {\n}\n",
         ),
         (
+            "anonymous-class.ts",
+            "export default class {}\n",
+            concat!(
+                "\"use strict\";\n",
+                "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "class default_1 {\n",
+                "}\n",
+                "exports.default = default_1;\n",
+            ),
+            "export default class {\n}\n",
+        ),
+        (
+            "anonymous-class-extends.ts",
+            "class Base {}\nexport default class extends Base {}\n",
+            concat!(
+                "\"use strict\";\n",
+                "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "class Base {\n",
+                "}\n",
+                "class default_1 extends Base {\n",
+                "}\n",
+                "exports.default = default_1;\n",
+            ),
+            concat!(
+                "declare class Base {\n",
+                "}\n",
+                "export default class extends Base {\n",
+                "}\n",
+            ),
+        ),
+        (
             "named-function.ts",
             "0;\nexport default function named(): number { return 1; }\n",
             concat!(
@@ -931,6 +1213,17 @@ fn default_export_declarations_use_the_default_commonjs_key_and_exact_dts_spelli
             ),
             "export default function f\\u0075n(): number;\n",
         ),
+        (
+            "anonymous-function.ts",
+            "export default function (): number { return 1; }\n",
+            concat!(
+                "\"use strict\";\n",
+                "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+                "exports.default = default_1;\n",
+                "function default_1() { return 1; }\n",
+            ),
+            "export default function (): number;\n",
+        ),
     ];
 
     for (path, source, expected_javascript, expected_declaration) in cases {
@@ -949,13 +1242,47 @@ fn default_export_declarations_use_the_default_commonjs_key_and_exact_dts_spelli
             "{path} JavaScript"
         );
         let mut declaration = Printer::new(&file.source, &file.bindings, &options);
-        declaration.emit_declarations(&file.syntax);
+        declaration.emit_declarations(
+            &file.syntax,
+            &super::reachability::DeclarationReachability::All,
+        );
         assert_eq!(
             declaration.finish(),
             expected_declaration,
             "{path} declaration"
         );
     }
+}
+
+#[test]
+fn anonymous_default_commonjs_runtime_names_avoid_authored_collisions() {
+    let file = program_file(
+        "anonymous-default-collision.ts",
+        concat!(
+            "const default_1 = 0;\n",
+            "export default function (): number { return 1; }\n",
+        ),
+    );
+    let mut javascript = Printer::new(
+        &file.source,
+        &file.bindings,
+        &CompilerOptions {
+            target: "es2022".to_string(),
+            module: "commonjs".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    javascript.emit_javascript(&file.syntax);
+    assert_eq!(
+        javascript.finish(),
+        concat!(
+            "\"use strict\";\n",
+            "Object.defineProperty(exports, \"__esModule\", { value: true });\n",
+            "exports.default = default_2;\n",
+            "const default_1 = 0;\n",
+            "function default_2() { return 1; }\n",
+        ),
+    );
 }
 
 #[test]
@@ -991,7 +1318,10 @@ fn default_export_spelling_stays_authored_at_the_esm_boundary() {
             "{path} JavaScript"
         );
         let mut declaration = Printer::new(&file.source, &file.bindings, &options);
-        declaration.emit_declarations(&file.syntax);
+        declaration.emit_declarations(
+            &file.syntax,
+            &super::reachability::DeclarationReachability::All,
+        );
         assert_eq!(
             declaration.finish(),
             expected_declaration,
@@ -1042,7 +1372,11 @@ fn declaration_accessors_erase_type_parameters_but_preserve_authored_this_parame
         Arc::<str>::from(text),
     );
     let parsed = parse_source(&source);
-    let bindings = bind_source(source.id, &parsed.unit);
+    let bindings = bind_source_with_kind(
+        source.id,
+        crate::source::SourceKind::TypeScript,
+        &parsed.unit,
+    );
     let options = CompilerOptions {
         declaration: true,
         target: "es2022".to_string(),
@@ -1050,7 +1384,10 @@ fn declaration_accessors_erase_type_parameters_but_preserve_authored_this_parame
         ..CompilerOptions::default()
     };
     let mut declaration = Printer::new(&source, &bindings, &options);
-    declaration.emit_declarations(&parsed.unit);
+    declaration.emit_declarations(
+        &parsed.unit,
+        &super::reachability::DeclarationReachability::All,
+    );
     assert_eq!(
         declaration.finish(),
         concat!(
@@ -1350,4 +1687,250 @@ fn invalid_new_type_argument_lists_remain_parser_owned() {
         );
         assert!(output.emitted_files.is_empty(), "{output:#?}");
     }
+}
+
+#[test]
+fn default_export_expression_declarations_use_complete_checker_summaries() {
+    let cases = [
+        (
+            "binary",
+            "export default 1 + 2;\n",
+            concat!(
+                "declare const _default: number;\n",
+                "export default _default;\n",
+            ),
+        ),
+        (
+            "parenthesized",
+            "export default (1 + 2);\n",
+            concat!(
+                "declare const _default: number;\n",
+                "export default _default;\n",
+            ),
+        ),
+        (
+            "constructed",
+            concat!(
+                "class Unused {}\n",
+                "class A {}\n",
+                "export default new A();\n",
+            ),
+            concat!(
+                "declare class A {\n",
+                "}\n",
+                "declare const _default: A;\n",
+                "export default _default;\n",
+            ),
+        ),
+        (
+            "literal",
+            "export default 3.14159;\n",
+            concat!(
+                "declare const _default = 3.14159;\n",
+                "export default _default;\n",
+            ),
+        ),
+        (
+            "string-literal",
+            "export default (\"cedar\");\n",
+            concat!(
+                "declare const _default = \"cedar\";\n",
+                "export default _default;\n",
+            ),
+        ),
+        (
+            "null-literal",
+            "export default null;\n",
+            concat!(
+                "declare const _default: null;\n",
+                "export default _default;\n",
+            ),
+        ),
+        (
+            "parenthesized-identifier",
+            concat!("const value = 1;\n", "export default (value);\n"),
+            concat!(
+                "declare const value_1: number;\n",
+                "export default value_1;\n",
+            ),
+        ),
+        (
+            "named-default-function",
+            "export default function foo() { return \"\"; }\n",
+            "export default function foo(): string;\n",
+        ),
+        (
+            "anonymous-default-function",
+            "export default function () { return 1; }\n",
+            "export default function (): number;\n",
+        ),
+        (
+            "anonymous-default-class",
+            "export default class {}\n",
+            "export default class {\n}\n",
+        ),
+        (
+            "collision",
+            concat!(
+                "var _default = 1;\n",
+                "export { _default as d };\n",
+                "export default 1 + 2;\n",
+            ),
+            concat!(
+                "declare var _default: number;\n",
+                "export { _default as d };\n",
+                "declare const _default_1: number;\n",
+                "export default _default_1;\n",
+            ),
+        ),
+        (
+            "identifier",
+            concat!("const value = 1;\n", "export default value;\n"),
+            concat!("declare const value = 1;\n", "export default value;\n"),
+        ),
+    ];
+    for (name, source, expected) in cases {
+        for no_check in [false, true] {
+            let output = Compiler::new().compile(
+                vec![SourceInput::new(
+                    format!("{name}.ts"),
+                    Arc::<str>::from(source),
+                )],
+                &CompilerOptions {
+                    declaration: true,
+                    module: "esnext".to_string(),
+                    target: "es2022".to_string(),
+                    no_check,
+                    ..CompilerOptions::default()
+                },
+            );
+            assert!(
+                output.diagnostics.is_empty(),
+                "{name} no_check={no_check}: {output:#?}"
+            );
+            assert_eq!(
+                output.semantic_completion,
+                crate::program::SemanticCompletion::Complete,
+                "{name} no_check={no_check}: {output:#?}",
+            );
+            assert_eq!(
+                output
+                    .emitted_files
+                    .iter()
+                    .find(|file| file.path == Path::new(&format!("{name}.d.ts")))
+                    .map(|file| file.text.as_str()),
+                Some(expected),
+                "{name} no_check={no_check}: {output:#?}",
+            );
+        }
+    }
+
+    let deferred = Compiler::new().compile(
+        vec![SourceInput::new(
+            "generic.ts",
+            Arc::<str>::from(concat!(
+                "declare function identity<T>(value: T): T;\n",
+                "export default identity(1);\n",
+            )),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            module: "esnext".to_string(),
+            target: "es2022".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        deferred.semantic_completion,
+        crate::program::SemanticCompletion::Deferred,
+        "{deferred:#?}",
+    );
+    assert!(
+        deferred
+            .emitted_files
+            .iter()
+            .all(|file| file.path != Path::new("generic.d.ts")),
+        "an incomplete default-export operand must not enter a definitive DTS summary: {deferred:#?}",
+    );
+}
+
+#[test]
+fn inferred_object_literal_array_declarations_use_complete_checker_summaries() {
+    let source = concat!(
+        "export let concrete=[{foo:0,m(){}},{bar:1}];\n",
+        "export const wrapped=([({cedar:1}),({birch:\"x\"})]);\n",
+        "export let annotated:({oak:number}|{elm:string})[]=[{oak:1},{elm:\"x\"}];\n",
+    );
+    let output = Compiler::new().compile(
+        vec![SourceInput::new("arrays.ts", Arc::<str>::from(source))],
+        &CompilerOptions {
+            declaration: true,
+            module: "esnext".to_string(),
+            target: "es2015".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{output:#?}");
+    assert_eq!(
+        output.semantic_completion,
+        crate::program::SemanticCompletion::Complete
+    );
+    let declaration = output
+        .emitted_files
+        .iter()
+        .find(|file| file.path == Path::new("arrays.d.ts"))
+        .expect("complete inferred arrays publish their declaration product");
+    assert_eq!(
+        declaration.text,
+        concat!(
+            "export declare let concrete: ({\n",
+            "    foo: number;\n",
+            "    m(): void;\n",
+            "    bar?: undefined;\n",
+            "} | {\n",
+            "    foo?: undefined;\n",
+            "    m?: undefined;\n",
+            "    bar: number;\n",
+            "})[];\n",
+            "export declare const wrapped: ({\n",
+            "    cedar: number;\n",
+            "    birch?: undefined;\n",
+            "} | {\n",
+            "    cedar?: undefined;\n",
+            "    birch: string;\n",
+            "})[];\n",
+            "export declare let annotated: ({\n",
+            "    oak: number;\n",
+            "} | {\n",
+            "    elm: string;\n",
+            "})[];\n",
+        )
+    );
+
+    let generic = Compiler::new().compile(
+        vec![SourceInput::new(
+            "generic.ts",
+            Arc::<str>::from(concat!(
+                "declare function identity<T>(value:T):T;",
+                "export let deferred=[{oak:identity(1)},{elm:identity(\"x\")}];",
+            )),
+        )],
+        &CompilerOptions {
+            declaration: true,
+            module: "esnext".to_string(),
+            target: "es2015".to_string(),
+            ..CompilerOptions::default()
+        },
+    );
+    assert_eq!(
+        generic.semantic_completion,
+        crate::program::SemanticCompletion::Deferred
+    );
+    assert!(
+        generic
+            .emitted_files
+            .iter()
+            .all(|file| file.path != Path::new("generic.d.ts")),
+        "an incomplete generic operand must not enter a definitive DTS summary: {generic:#?}",
+    );
 }

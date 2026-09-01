@@ -29,33 +29,6 @@ impl Parser<'_> {
             && self.tokens_are_on_same_line(self.index, self.index + 1)
     }
 
-    /// Recognize a closed enum declaration without claiming member semantics.
-    /// Its authored name is retained separately as an opaque declaration host.
-    pub(super) fn starts_unmodeled_enum_declaration(&self) -> bool {
-        let enum_offset = if self.at(TokenKind::Enum) {
-            0
-        } else if self.at(TokenKind::Const) && self.peek_kind(1) == TokenKind::Enum {
-            1
-        } else {
-            return false;
-        };
-        let name_offset = enum_offset + 1;
-        let body_offset = name_offset + 1;
-        self.peek_kind(name_offset).is_identifier()
-            && self.peek_kind(body_offset) == TokenKind::LeftBrace
-            && self
-                .balanced_recovery_brace_extent(self.index + body_offset)
-                .is_some()
-    }
-
-    pub(super) fn parse_unmodeled_enum_declaration(&mut self) {
-        self.eat(TokenKind::Const);
-        self.bump();
-        self.parse_name();
-        self.consume_balanced_tokens(TokenKind::LeftBrace, TokenKind::RightBrace, "'}' expected.");
-        self.eat(TokenKind::Semicolon);
-    }
-
     pub(super) fn parse_variable(
         &mut self,
         modifiers: Modifiers,
@@ -95,7 +68,9 @@ impl Parser<'_> {
                 !recovered_binding_names.is_empty(),
             );
             let annotation = self.eat(TokenKind::Colon).then(|| self.parse_type());
-            let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
+            let initializer = self
+                .eat(TokenKind::Equals)
+                .then(|| self.parse_assignment_expression());
             let rejected_arrow_tail = initializer.as_ref().is_some_and(|expression| {
                 self.expression_starts_rejected_generic_arrow_prefix(expression.span)
             }) && self.eat(TokenKind::Comma);

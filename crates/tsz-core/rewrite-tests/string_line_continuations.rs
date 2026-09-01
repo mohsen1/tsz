@@ -132,7 +132,7 @@ fn property_class_and_type_member_names_share_the_scanner_cooked_value() {
     };
     assert!(matches!(
         &name.kind,
-        TypeMemberNameKind::StringLiteral(value) if value == "text"
+        TypeMemberNameKind::StringLiteral(value, _) if value == "text"
     ));
 }
 

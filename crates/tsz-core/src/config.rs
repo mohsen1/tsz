@@ -1,20 +1,23 @@
 //! TypeScript-compatible project selection and JSONC configuration loading.
+mod compiler_options;
 
+use crate::diagnostics::{Diagnostic, DiagnosticPhase, RelatedInformation, sort_and_deduplicate};
+use crate::host::ProgramHost;
+use crate::program::{CompilerOptions, DeferredCompilerOption, SourceInput};
+use crate::source::{
+    FileId, SourceText, display_path, normalize_project_path_lexically as normalize_path,
+};
+use crate::syntax::{Token, TokenKind, scan_source};
+pub use compiler_options::{
+    CompilerOptionKey, CompilerOptionPatch, TargetValueOutcome, classify_target_value,
+};
+use compiler_options::{CompilerOptionOrigin, decode_compiler_options};
+use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-
-use serde_json::{Map, Value};
-
-use crate::diagnostics::{Diagnostic, RelatedInformation, sort_and_deduplicate};
-use crate::host::ProgramHost;
-use crate::program::{CompilerOptions, SourceInput};
-use crate::project_graph::{ProjectConfigId, ProjectGraph, ProjectReference};
-use crate::source::{display_path, normalize_project_path_lexically as normalize_path};
-
 const CONFIG_FILE_NAME: &str = "tsconfig.json";
 const DEFAULT_INCLUDE: &str = "**/*";
-
 /// How a process or service selects the entry program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectSelection {
@@ -25,49 +28,22 @@ pub enum ProjectSelection {
     /// Search this directory and its ancestors for `tsconfig.json`.
     Search(PathBuf),
 }
-
 /// Host-backed project resolution request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectRequest {
     pub selection: ProjectSelection,
     /// Discovery override; the adapter applies other overrides after resolution.
-    pub allow_js: Option<bool>,
-    pub check_js: Option<bool>,
-    pub out_dir: Option<PathBuf>,
-    pub declaration_dir: Option<PathBuf>,
+    pub overrides: CompilerOptionPatch,
 }
-
 impl ProjectRequest {
     #[must_use]
-    pub const fn new(selection: ProjectSelection) -> Self {
+    pub fn new(selection: ProjectSelection) -> Self {
         Self {
             selection,
-            allow_js: None,
-            check_js: None,
-            out_dir: None,
-            declaration_dir: None,
+            overrides: CompilerOptionPatch::default(),
         }
     }
-
-    #[must_use]
-    pub const fn with_allow_js(mut self, allow_js: bool) -> Self {
-        self.allow_js = Some(allow_js);
-        self
-    }
-
-    #[must_use]
-    pub fn with_out_dir(mut self, out_dir: impl Into<PathBuf>) -> Self {
-        self.out_dir = Some(out_dir.into());
-        self
-    }
-
-    #[must_use]
-    pub fn with_declaration_dir(mut self, declaration_dir: impl Into<PathBuf>) -> Self {
-        self.declaration_dir = Some(declaration_dir.into());
-        self
-    }
 }
-
 /// Fully resolved roots and configuration metadata, before parsing sources.
 #[derive(Debug)]
 pub struct ResolvedProject {
@@ -75,238 +51,38 @@ pub struct ResolvedProject {
     pub inputs: Vec<SourceInput>,
     pub root_files: Vec<PathBuf>,
     pub diagnostics: Vec<Diagnostic>,
-    pub graph: ProjectGraph,
+    pub entry_config: Option<PathBuf>,
+    pub project_config_count: usize,
+    pub project_reference_count: usize,
+    pub(crate) resolution: ProjectResolution,
     pub(crate) provenance: ProjectProvenance,
 }
-
-macro_rules! compiler_option_schema {
-    (@type bool) => { Option<bool> };
-    (@type optional_bool) => { Option<bool> };
-    (@type string_array) => { Option<Vec<String>> };
-    (@type string) => { Option<String> };
-    (@type path) => { Option<PathBuf> };
-    (@value_kind bool) => { CompilerOptionValueKind::Boolean };
-    (@value_kind optional_bool) => { CompilerOptionValueKind::Boolean };
-    (@value_kind string_array) => { CompilerOptionValueKind::StringArray };
-    (@value_kind string) => { CompilerOptionValueKind::String };
-    (@value_kind path) => { CompilerOptionValueKind::Path };
-    (@decode bool, $options:ident, $json:literal, $origin:ident) => {
-        bool_property($options, $json)
-    };
-    (@decode optional_bool, $options:ident, $json:literal, $origin:ident) => {
-        bool_property($options, $json)
-    };
-    (@decode string_array, $options:ident, $json:literal, $origin:ident) => {
-        string_values($options.get($json), false)
-    };
-    (@decode string, $options:ident, $json:literal, $origin:ident) => {
-        string_property($options, $json)
-    };
-    (@decode path, $options:ident, $json:literal, $origin:ident) => {
-        string_property($options, $json).map(|value| absolute_path($origin, Path::new(&value)))
-    };
-    (@apply bool, $source:expr, $target:expr) => {
-        if let Some(value) = $source { $target = *value; }
-    };
-    (@apply optional_bool, $source:expr, $target:expr) => {
-        if let Some(value) = $source { $target = Some(*value); }
-    };
-    (@apply string_array, $source:expr, $target:expr) => {
-        if let Some(value) = $source { $target = Some(value.clone()); }
-    };
-    (@apply string, $source:expr, $target:expr) => {
-        if let Some(value) = $source { $target.clone_from(value); }
-    };
-    (@apply path, $source:expr, $target:expr) => {
-        if let Some(value) = $source { $target = Some(value.clone()); }
-    };
-    (@set bool, $target:expr, $value:expr) => {{
-        let CompilerOptionValue::Boolean(value) = $value else { return false; };
-        $target = Some(value); true
-    }};
-    (@set optional_bool, $target:expr, $value:expr) => {
-        compiler_option_schema!(@set bool, $target, $value)
-    };
-    (@set string_array, $target:expr, $value:expr) => {{
-        let CompilerOptionValue::StringArray(value) = $value else { return false; };
-        $target = Some(value); true
-    }};
-    (@set string, $target:expr, $value:expr) => {{
-        let CompilerOptionValue::String(value) = $value else { return false; };
-        $target = Some(value); true
-    }};
-    (@set path, $target:expr, $value:expr) => {{
-        let CompilerOptionValue::Path(value) = $value else { return false; };
-        $target = Some(value); true
-    }};
-    ($($variant:ident => $field:ident, $json:literal, $kind:ident;)+) => {
-        /// An option whose source locates diagnostics; process overrides clear it
-        /// when replacing the configuration value, without ambient provenance.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-        pub enum CompilerOptionKey { $($variant,)+ }
-
-        impl CompilerOptionKey {
-            const ALL: &'static [Self] = &[$(Self::$variant,)+];
-
-            const fn json_name(self) -> &'static str {
-                match self { $(Self::$variant => $json,)+ }
-            }
-
-            /// Resolve TypeScript's case-insensitive CLI spelling of a JSON option.
-            #[must_use]
-            pub fn from_cli_name(name: &str) -> Option<Self> {
-                Self::ALL
-                    .iter()
-                    .copied()
-                    .find(|key| key.json_name().eq_ignore_ascii_case(name))
-            }
-
-            #[must_use]
-            pub const fn value_kind(self) -> CompilerOptionValueKind {
-                match self { $(Self::$variant => compiler_option_schema!(@value_kind $kind),)+ }
-            }
-        }
-
-        /// Explicit config/process values; absence differs from false/default.
-        #[derive(Debug, Clone, Default, PartialEq, Eq)]
-        pub struct CompilerOptionPatch {
-            $(pub $field: compiler_option_schema!(@type $kind),)+
-        }
-
-        impl CompilerOptionPatch {
-            const fn contains(&self, key: CompilerOptionKey) -> bool {
-                match key { $(CompilerOptionKey::$variant => self.$field.is_some(),)+ }
-            }
-
-            fn merge_from(&mut self, other: &Self) {
-                $(if other.$field.is_some() { self.$field.clone_from(&other.$field); })+
-            }
-
-            fn apply_to(&self, options: &mut CompilerOptions) {
-                $(compiler_option_schema!(@apply $kind, &self.$field, options.$field);)+
-            }
-
-            /// Set a typed option value selected by the shared schema.
-            pub fn set(&mut self, key: CompilerOptionKey, value: CompilerOptionValue) -> bool {
-                match key {
-                    $(CompilerOptionKey::$variant =>
-                        compiler_option_schema!(@set $kind, self.$field, value),)+
-                }
-            }
-        }
-
-        fn partial_options(object: &Map<String, Value>, origin: &Path) -> CompilerOptionPatch {
-            let Some(options) = object.get("compilerOptions").and_then(Value::as_object) else {
-                return CompilerOptionPatch::default();
-            };
-            CompilerOptionPatch {
-                $($field: compiler_option_schema!(@decode $kind, options, $json, origin),)+
-            }
-        }
-    };
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ProjectResolution {
+    #[default]
+    Complete,
+    Terminal,
 }
-
-/// Value domain for one option in the shared configuration/process schema.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompilerOptionValueKind {
-    Boolean,
-    StringArray,
-    String,
-    Path,
-}
-
-/// Explicit value supplied for one compiler option.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompilerOptionValue {
-    Boolean(bool),
-    StringArray(Vec<String>),
-    String(String),
-    Path(PathBuf),
-}
-
-compiler_option_schema! {
-    Strict => strict, "strict", bool;
-    StrictNullChecks => strict_null_checks, "strictNullChecks", optional_bool;
-    StrictPropertyInitialization => strict_property_initialization, "strictPropertyInitialization", optional_bool;
-    NoImplicitAny => no_implicit_any, "noImplicitAny", optional_bool;
-    NoUnusedLocals => no_unused_locals, "noUnusedLocals", bool;
-    NoUnusedParameters => no_unused_parameters, "noUnusedParameters", bool;
-    NoLib => no_lib, "noLib", bool;
-    Lib => lib, "lib", string_array;
-    AllowJs => allow_js, "allowJs", bool;
-    CheckJs => check_js, "checkJs", optional_bool;
-    NoCheck => no_check, "noCheck", bool;
-    NoEmit => no_emit, "noEmit", bool;
-    NoEmitOnError => no_emit_on_error, "noEmitOnError", bool;
-    Declaration => declaration, "declaration", bool;
-    DeclarationMap => declaration_map, "declarationMap", bool;
-    SourceMap => source_map, "sourceMap", bool;
-    InlineSourceMap => inline_source_map, "inlineSourceMap", bool;
-    RemoveComments => remove_comments, "removeComments", bool;
-    UseDefineForClassFields => use_define_for_class_fields, "useDefineForClassFields", optional_bool;
-    Target => target, "target", string;
-    Module => module, "module", string;
-    RootDir => root_dir, "rootDir", path;
-    OutDir => out_dir, "outDir", path;
-    DeclarationDir => declaration_dir, "declarationDir", path;
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CompilerOptionOrigin {
-    file: String,
-    source_text: Arc<str>,
-    key_start: u32,
-    key_length: u32,
-    value_start: Option<u32>,
-    value_length: Option<u32>,
-}
-
-impl CompilerOptionOrigin {
-    pub(crate) fn diagnostic_at_key(&self, message: String, code: u32) -> Diagnostic {
-        Diagnostic::error_at_text(
-            self.file.clone(),
-            self.key_start,
-            self.key_length,
-            Arc::clone(&self.source_text),
-            message,
-            code,
-        )
-    }
-
-    pub(crate) fn diagnostic_at_value(&self, message: String, code: u32) -> Diagnostic {
-        Diagnostic::error_at_text(
-            self.file.clone(),
-            self.value_start.unwrap_or(self.key_start),
-            self.value_length.unwrap_or(self.key_length),
-            Arc::clone(&self.source_text),
-            message,
-            code,
-        )
-    }
-
-    fn belongs_to(&self, config_path: &Path, current_directory: &Path) -> bool {
-        self.file == display_path(&logical_path_from_host(current_directory, config_path))
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ProjectProvenance {
     current_directory: PathBuf,
     entry_config_path: Option<PathBuf>,
     option_origins: BTreeMap<CompilerOptionKey, CompilerOptionOrigin>,
+    entry_option_origins: BTreeMap<CompilerOptionKey, CompilerOptionOrigin>,
+    entry_compiler_options_origin: Option<CompilerOptionOrigin>,
     root_reasons: BTreeMap<String, RootReason>,
     case_sensitive: bool,
 }
-
 impl ProjectProvenance {
     pub(crate) fn entry_config_path(&self) -> Option<&Path> {
         self.entry_config_path.as_deref()
     }
-
     pub(crate) fn option_origin(&self, key: CompilerOptionKey) -> Option<&CompilerOptionOrigin> {
         self.option_origins.get(&key)
     }
-
+    pub(crate) fn clear_option_origin(&mut self, key: CompilerOptionKey) {
+        self.option_origins.remove(&key);
+    }
     pub(crate) fn entry_option_origin(
         &self,
         key: CompilerOptionKey,
@@ -315,20 +91,27 @@ impl ProjectProvenance {
         self.option_origin(key)
             .filter(|origin| origin.belongs_to(config_path, &self.current_directory))
     }
-
+    pub(crate) fn program_option_origin(
+        &self,
+        primary: CompilerOptionKey,
+        secondary: Option<CompilerOptionKey>,
+    ) -> Option<&CompilerOptionOrigin> {
+        self.entry_option_origins
+            .get(&primary)
+            .or_else(|| secondary.and_then(|key| self.entry_option_origins.get(&key)))
+            .or(self.entry_compiler_options_origin.as_ref())
+    }
     pub(crate) fn root_reason(&self, path: &Path) -> Option<RootReason> {
         self.root_reasons
             .get(&path_key(path, self.case_sensitive))
             .copied()
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RootReason {
     CommandLine,
     FilesList,
 }
-
 impl RootReason {
     pub(crate) const fn diagnostic(self) -> (&'static str, u32) {
         match self {
@@ -337,35 +120,13 @@ impl RootReason {
         }
     }
 }
-
 #[derive(Debug, Clone)]
 struct RootMetadata {
     display_path: String,
     logical_path: PathBuf,
     reason: RootReason,
 }
-
 impl ResolvedProject {
-    #[must_use]
-    pub const fn root_file_count(&self) -> usize {
-        self.root_files.len()
-    }
-
-    #[must_use]
-    pub const fn source_file_count(&self) -> usize {
-        self.inputs.len()
-    }
-
-    #[must_use]
-    pub const fn project_config_count(&self) -> usize {
-        self.graph.config_count()
-    }
-
-    #[must_use]
-    pub fn project_reference_count(&self) -> usize {
-        self.graph.reference_count()
-    }
-
     /// Apply explicit overrides and clear provenance only for supplied keys.
     #[must_use]
     pub fn apply_option_patch(&mut self, patch: &CompilerOptionPatch) -> CompilerOptions {
@@ -381,7 +142,6 @@ impl ResolvedProject {
         options
     }
 }
-
 /// Resolve inherited options/references/roots; `exclude` never filters literal `files`.
 #[must_use]
 pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> ResolvedProject {
@@ -412,11 +172,13 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
         ),
     };
     let root_files = deduplicate_paths(roots, host.use_case_sensitive_file_names());
+    let mut config_diagnostics = std::mem::take(&mut resolver.diagnostics);
+    let mut program_diagnostics = std::mem::take(&mut resolver.program_diagnostics);
     let mut inputs = Vec::with_capacity(root_files.len());
     for path in &root_files {
         let metadata = resolver.root_metadata(path);
         if !host.file_exists(path) {
-            resolver.diagnostics.push(root_file_diagnostic(
+            program_diagnostics.push(root_file_diagnostic(
                 format!("File '{}' not found.", metadata.display_path),
                 6053,
                 metadata.reason,
@@ -431,16 +193,14 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
                 if absolute_display != metadata.display_path {
                     let (_, absolute_message) =
                         unsupported_root_message(&absolute_display, path, options.allow_js);
-                    resolver.diagnostics.push(root_file_diagnostic(
+                    program_diagnostics.push(root_file_diagnostic(
                         absolute_message,
                         code,
                         metadata.reason,
                     ));
                 }
             }
-            resolver
-                .diagnostics
-                .push(root_file_diagnostic(message, code, metadata.reason));
+            program_diagnostics.push(root_file_diagnostic(message, code, metadata.reason));
             continue;
         }
         match host.read_file(path) {
@@ -451,18 +211,22 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
                     Arc::<str>::from(text),
                 ));
             }
-            Err(_) => resolver.diagnostics.push(root_file_diagnostic(
+            Err(_) => program_diagnostics.push(root_file_diagnostic(
                 format!("File '{}' not found.", metadata.display_path),
                 6053,
                 metadata.reason,
             )),
         }
     }
-    sort_and_deduplicate(&mut resolver.diagnostics);
-    let entry_config_path = resolver
-        .graph
-        .entry_config()
-        .map(|config| config.path.clone());
+    sort_and_deduplicate(&mut config_diagnostics);
+    sort_and_deduplicate(&mut program_diagnostics);
+    for diagnostic in &mut program_diagnostics {
+        diagnostic.phase = DiagnosticPhase::Program;
+    }
+    let mut diagnostics = config_diagnostics;
+    diagnostics.extend(program_diagnostics);
+    sort_and_deduplicate(&mut diagnostics);
+    let entry_config_path = resolver.entry_config.clone();
     let root_reasons = resolver
         .roots
         .iter()
@@ -472,6 +236,8 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
         current_directory: host.current_directory().to_path_buf(),
         entry_config_path,
         option_origins: resolver.option_origins,
+        entry_option_origins: resolver.entry_option_origins,
+        entry_compiler_options_origin: resolver.entry_compiler_options_origin,
         root_reasons,
         case_sensitive: host.use_case_sensitive_file_names(),
     };
@@ -479,66 +245,71 @@ pub fn resolve_project(host: &dyn ProgramHost, request: &ProjectRequest) -> Reso
         options,
         inputs,
         root_files,
-        diagnostics: resolver.diagnostics,
-        graph: resolver.graph,
+        diagnostics,
+        entry_config: resolver.entry_config,
+        project_config_count: resolver.project_config_count,
+        project_reference_count: resolver.project_reference_count,
+        resolution: resolver.resolution,
         provenance,
     }
 }
-
 /// Search ancestors for `tsconfig.json` without parsing or expanding the project.
 #[must_use]
 pub fn find_config_file(host: &dyn ProgramHost, start: &Path) -> Option<PathBuf> {
     let absolute = absolute_path(host.current_directory(), start);
-    let mut directory = if host.directory_exists(&absolute) {
+    let directory = if host.directory_exists(&absolute) {
         absolute
     } else {
         absolute.parent()?.to_path_buf()
     };
-    loop {
-        let candidate = directory.join(CONFIG_FILE_NAME);
-        if host.file_exists(&candidate) {
-            return Some(normalize_path(&candidate));
-        }
-        if !directory.pop() {
-            return None;
-        }
-    }
+    directory
+        .ancestors()
+        .map(|directory| directory.join(CONFIG_FILE_NAME))
+        .find(|candidate| host.file_exists(candidate))
+        .map(|candidate| normalize_path(&candidate))
 }
-
 struct Resolver<'a> {
     host: &'a dyn ProgramHost,
     overrides: CompilerOptionPatch,
     diagnostics: Vec<Diagnostic>,
-    graph: ProjectGraph,
-    config_ids: BTreeMap<String, ProjectConfigId>,
+    program_diagnostics: Vec<Diagnostic>,
+    resolution: ProjectResolution,
+    entry_config: Option<PathBuf>,
+    project_config_count: usize,
+    project_reference_count: usize,
+    seen_configs: BTreeSet<String>,
     cache: BTreeMap<String, LoadedConfig>,
     incomplete_configs: BTreeSet<String>,
     roots: BTreeMap<String, RootMetadata>,
     option_origins: BTreeMap<CompilerOptionKey, CompilerOptionOrigin>,
+    entry_option_origins: BTreeMap<CompilerOptionKey, CompilerOptionOrigin>,
+    entry_compiler_options_origin: Option<CompilerOptionOrigin>,
 }
-
 impl<'a> Resolver<'a> {
     fn new(host: &'a dyn ProgramHost, request: &ProjectRequest) -> Self {
         let absolute = |path: &Path| absolute_path(host.current_directory(), path);
+        let mut overrides = request.overrides.clone();
+        overrides.out_dir = overrides.out_dir.as_deref().map(absolute);
+        overrides.declaration_dir = overrides.declaration_dir.as_deref().map(absolute);
+        overrides.absolutize_deferred_paths(host.current_directory());
         Self {
             host,
-            overrides: CompilerOptionPatch {
-                allow_js: request.allow_js,
-                check_js: request.check_js,
-                out_dir: request.out_dir.as_deref().map(absolute),
-                declaration_dir: request.declaration_dir.as_deref().map(absolute),
-                ..CompilerOptionPatch::default()
-            },
+            overrides,
             diagnostics: Vec::new(),
-            graph: ProjectGraph::default(),
-            config_ids: BTreeMap::new(),
+            program_diagnostics: Vec::new(),
+            resolution: ProjectResolution::Complete,
+            entry_config: None,
+            project_config_count: 0,
+            project_reference_count: 0,
+            seen_configs: BTreeSet::new(),
             cache: BTreeMap::new(),
             incomplete_configs: BTreeSet::new(),
             roots: BTreeMap::new(),
             option_origins: BTreeMap::new(),
+            entry_option_origins: BTreeMap::new(),
+            entry_compiler_options_origin: None,
         }
     }
-
     fn apply_overrides(&mut self, configured: &CompilerOptionPatch, options: &mut CompilerOptions) {
         let explicit_allow_js = configured.allow_js.is_some() || self.overrides.allow_js.is_some();
         for key in CompilerOptionKey::ALL
@@ -552,7 +323,6 @@ impl<'a> Resolver<'a> {
             options.allow_js = true;
         }
     }
-
     fn record_root(
         &mut self,
         host_path: &Path,
@@ -571,7 +341,6 @@ impl<'a> Resolver<'a> {
                 reason,
             });
     }
-
     fn root_metadata(&self, host_path: &Path) -> RootMetadata {
         self.roots
             .get(&path_key(
@@ -585,13 +354,13 @@ impl<'a> Resolver<'a> {
                 reason: RootReason::CommandLine,
             })
     }
-
     fn resolve_explicit_project(&mut self, requested: &Path) -> (CompilerOptions, Vec<PathBuf>) {
         let absolute = absolute_path(self.host.current_directory(), requested);
         let config_path =
             if requested.as_os_str().is_empty() || self.host.directory_exists(&absolute) {
                 let candidate = absolute.join(CONFIG_FILE_NAME);
                 if !self.host.file_exists(&candidate) {
+                    self.resolution = ProjectResolution::Terminal;
                     self.diagnostics.push(Diagnostic::global(
                         format!(
                             "Cannot find a tsconfig.json file at the current directory: {}.",
@@ -604,6 +373,7 @@ impl<'a> Resolver<'a> {
                 candidate
             } else {
                 if !self.host.file_exists(&absolute) {
+                    self.resolution = ProjectResolution::Terminal;
                     self.diagnostics.push(Diagnostic::global(
                         format!(
                             "The specified path does not exist: '{}'.",
@@ -617,7 +387,6 @@ impl<'a> Resolver<'a> {
             };
         self.resolve_config_entry(config_path)
     }
-
     fn resolve_config_entry(&mut self, config_path: PathBuf) -> (CompilerOptions, Vec<PathBuf>) {
         let config_path = normalize_path(&config_path);
         if !self.host.file_exists(&config_path) {
@@ -627,11 +396,18 @@ impl<'a> Resolver<'a> {
             ));
             return (CompilerOptions::default(), Vec::new());
         }
+        self.entry_config = Some(config_path.clone());
         let mut stack = Vec::new();
         let Some(loaded) = self.load_config(&config_path, &mut stack, true) else {
             return (CompilerOptions::default(), Vec::new());
         };
-        self.graph.entry = Some(loaded.id);
+        self.diagnostics.extend(
+            loaded
+                .merged
+                .deferred_option_diagnostics
+                .values()
+                .filter_map(Clone::clone),
+        );
         let mut options = CompilerOptions::default();
         loaded.merged.options.apply_to(&mut options);
         self.option_origins = loaded.merged.option_origins.clone();
@@ -639,7 +415,6 @@ impl<'a> Resolver<'a> {
         let roots = self.resolve_root_files(&loaded, &options);
         (options, roots)
     }
-
     fn load_config(
         &mut self,
         path: &Path,
@@ -673,42 +448,27 @@ impl<'a> Resolver<'a> {
             return None;
         }
         if let Some(cached) = self.cache.get(&key) {
-            if is_entry {
-                self.graph.entry = Some(cached.id);
-            }
             return Some(cached.clone());
         }
-        let id = self.config_id(path.clone(), &key);
-        if is_entry {
-            self.graph.entry = Some(id);
+        if self.seen_configs.insert(key.clone()) {
+            self.project_config_count += 1;
         }
-        let text: Arc<str> = match self.host.read_file(&path) {
-            Ok(text) => Arc::from(text),
-            Err(_) => {
-                self.diagnostics.push(Diagnostic::global(
-                    format!("Cannot read file '{}'.", display_path(&path)),
-                    5083,
-                ));
-                return None;
-            }
-        };
-        let document = match parse_jsonc(&text) {
-            Ok(document) => document,
-            Err(()) => {
-                self.diagnostics.push(Diagnostic::global(
-                    format!("Cannot read file '{}'.", display_path(&path)),
-                    5083,
-                ));
-                return None;
-            }
+        let loaded = self.host.read_file(&path).ok().and_then(|text| {
+            let text = Arc::<str>::from(text);
+            parse_jsonc(&text).ok().map(|document| (text, document))
+        });
+        let Some((text, document)) = loaded else {
+            self.diagnostics.push(Diagnostic::global(
+                format!("Cannot read file '{}'.", display_path(&path)),
+                5083,
+            ));
+            return None;
         };
         let object = document.value.as_object().cloned().unwrap_or_default();
         stack.push(path.clone());
-
         let directory = path.parent().unwrap_or_else(|| Path::new("."));
         let extends_values = string_values(object.get("extends"), true).unwrap_or_default();
         let mut merged = MergedConfig::default();
-        let mut extends_ids = Vec::new();
         let mut bases_complete = true;
         for raw in &extends_values {
             let Some(extends_path) = self.resolve_extends_path(directory, raw) else {
@@ -716,20 +476,33 @@ impl<'a> Resolver<'a> {
             };
             if let Some(base) = self.load_config(&extends_path, stack, false) {
                 merged.merge_from(&base.merged);
-                extends_ids.push(base.id);
                 bases_complete &= base.complete;
             }
         }
-
-        let own_options = partial_options(&object, directory);
-        let own_origins = compiler_option_origins(
-            &own_options,
-            &text,
+        let logical_path = logical_path_from_host(self.host.current_directory(), &path);
+        let decoded = decode_compiler_options(
             &document.source_spans.compiler_options,
-            &logical_path_from_host(self.host.current_directory(), &path),
+            directory,
+            &logical_path,
+            &text,
+            &mut self.diagnostics,
         );
-        merged.options.merge_from(&own_options);
-        merged.option_origins.extend(own_origins);
+        if is_entry {
+            self.entry_option_origins = decoded.authored_option_origins;
+            self.entry_compiler_options_origin =
+                document.source_spans.compiler_options_key.map(|span| {
+                    CompilerOptionOrigin::for_compiler_options_key(
+                        display_path(&logical_path),
+                        Arc::clone(&text),
+                        span,
+                    )
+                });
+        }
+        merged.options.merge_from(&decoded.patch);
+        merged.option_origins.extend(decoded.option_origins);
+        merged
+            .deferred_option_diagnostics
+            .extend(decoded.deferred_diagnostics);
         if let Some(values) = string_values(object.get("files"), false) {
             merged.files = Some(Selector::new(values, directory));
         }
@@ -741,12 +514,14 @@ impl<'a> Resolver<'a> {
         }
         merged.own_has_extends = object.contains_key("extends");
         merged.own_has_references = object.contains_key("references");
-
         let references = if is_entry {
-            project_references(&object, &document.source_spans.references, directory, id)
+            project_references(&object, &document.source_spans.references, directory)
         } else {
             Vec::new()
         };
+        if is_entry {
+            self.project_reference_count = references.len();
+        }
         for reference in &references {
             let resolved_config_path = if reference
                 .path
@@ -759,7 +534,7 @@ impl<'a> Resolver<'a> {
             };
             let exists = self.host.file_exists(&resolved_config_path);
             if !exists {
-                self.diagnostics.push(Diagnostic::error_at_text(
+                self.program_diagnostics.push(Diagnostic::error_at_text(
                     display_path(&logical_path_from_host(
                         self.host.current_directory(),
                         &path,
@@ -773,13 +548,7 @@ impl<'a> Resolver<'a> {
             }
         }
         stack.pop();
-        {
-            let node = self.graph.config_mut(id);
-            node.extends = extends_ids;
-            node.references = references;
-        }
         let loaded = LoadedConfig {
-            id,
             merged,
             complete: bases_complete && !self.incomplete_configs.contains(&key),
         };
@@ -788,16 +557,6 @@ impl<'a> Resolver<'a> {
         }
         Some(loaded)
     }
-
-    fn config_id(&mut self, path: PathBuf, key: &str) -> ProjectConfigId {
-        if let Some(id) = self.config_ids.get(key) {
-            return *id;
-        }
-        let id = self.graph.add_config(path);
-        self.config_ids.insert(key.to_string(), id);
-        id
-    }
-
     fn resolve_extends_path(&mut self, directory: &Path, raw: &str) -> Option<PathBuf> {
         let relative = raw.starts_with("./") || raw.starts_with("../");
         let raw_path = Path::new(raw);
@@ -816,7 +575,6 @@ impl<'a> Resolver<'a> {
                 .push(Diagnostic::global(format!("File '{raw}' not found."), 6053));
             return None;
         }
-
         let mut ancestor = Some(directory);
         while let Some(base) = ancestor {
             let package = base.join("node_modules").join(raw);
@@ -831,7 +589,6 @@ impl<'a> Resolver<'a> {
             .push(Diagnostic::global(format!("File '{raw}' not found."), 6053));
         None
     }
-
     fn resolve_root_files(
         &mut self,
         loaded: &LoadedConfig,
@@ -850,13 +607,12 @@ impl<'a> Resolver<'a> {
                 roots.push(path);
             }
         }
-
         let include = if loaded.merged.files.is_none() && loaded.merged.include.is_none() {
             Some(Selector::new(
                 vec![DEFAULT_INCLUDE.to_string()],
-                self.graph
-                    .entry_config()
-                    .and_then(|config| config.path.parent())
+                self.entry_config
+                    .as_deref()
+                    .and_then(Path::parent)
                     .unwrap_or_else(|| Path::new(".")),
             ))
         } else {
@@ -875,8 +631,7 @@ impl<'a> Resolver<'a> {
                 discover_wildcard_files(self.host, include, &exclude, options.allow_js, &roots);
             roots.extend(wildcard_roots);
         }
-
-        let reference_count = self.graph.reference_count();
+        let reference_count = self.project_reference_count;
         if loaded
             .merged
             .files
@@ -885,11 +640,11 @@ impl<'a> Resolver<'a> {
             && reference_count == 0
             && !loaded.merged.own_has_extends
         {
-            let config = self.graph.entry_config().expect("entry config is set");
+            let config = self.entry_config.as_ref().expect("entry config is set");
             self.diagnostics.push(Diagnostic::global(
                 format!(
                     "The 'files' list in config file '{}' is empty.",
-                    display_path(&config.path)
+                    display_path(config)
                 ),
                 18002,
             ));
@@ -897,14 +652,14 @@ impl<'a> Resolver<'a> {
             && loaded.merged.files.is_none()
             && !loaded.merged.own_has_references
         {
-            let config = self.graph.entry_config().expect("entry config is set");
+            let config = self.entry_config.as_ref().expect("entry config is set");
             let include_values = include
                 .as_ref()
                 .map_or_else(Vec::new, |selector| selector.values.clone());
             self.diagnostics.push(Diagnostic::global(
                 format!(
                     "No inputs were found in config file '{}'. Specified 'include' paths were '{}' and 'exclude' paths were '{}'.",
-                    display_path(&config.path),
+                    display_path(config),
                     json_array(&include_values),
                     json_array(&exclude.values)
                 ),
@@ -914,30 +669,29 @@ impl<'a> Resolver<'a> {
         roots
     }
 }
-
 #[derive(Debug, Clone)]
 struct LoadedConfig {
-    id: ProjectConfigId,
     merged: MergedConfig,
     /// Cache only complete loads; cycle recovery remains traversal-local.
     complete: bool,
 }
-
 #[derive(Debug, Clone, Default)]
 struct MergedConfig {
     options: CompilerOptionPatch,
     option_origins: BTreeMap<CompilerOptionKey, CompilerOptionOrigin>,
+    deferred_option_diagnostics: BTreeMap<DeferredCompilerOption, Option<Diagnostic>>,
     files: Option<Selector>,
     include: Option<Selector>,
     exclude: Option<Selector>,
     own_has_extends: bool,
     own_has_references: bool,
 }
-
 impl MergedConfig {
     fn merge_from(&mut self, other: &Self) {
         self.options.merge_from(&other.options);
         self.option_origins.extend(other.option_origins.clone());
+        self.deferred_option_diagnostics
+            .extend(other.deferred_option_diagnostics.clone());
         if other.files.is_some() {
             self.files.clone_from(&other.files);
         }
@@ -949,13 +703,11 @@ impl MergedConfig {
         }
     }
 }
-
 #[derive(Debug, Clone)]
 struct Selector {
     values: Vec<String>,
     origin: PathBuf,
 }
-
 impl Selector {
     fn new(values: Vec<String>, origin: &Path) -> Self {
         Self {
@@ -964,39 +716,10 @@ impl Selector {
         }
     }
 }
-
-fn compiler_option_origins(
-    options: &CompilerOptionPatch,
-    source_text: &Arc<str>,
-    spans: &BTreeMap<String, ConfigOptionSpans>,
-    logical_path: &Path,
-) -> BTreeMap<CompilerOptionKey, CompilerOptionOrigin> {
-    CompilerOptionKey::ALL
-        .iter()
-        .copied()
-        .filter(|key| options.contains(*key))
-        .filter_map(|key| {
-            let span = spans.get(key.json_name())?;
-            Some((
-                key,
-                CompilerOptionOrigin {
-                    file: display_path(logical_path),
-                    source_text: Arc::clone(source_text),
-                    key_start: span.key_start,
-                    key_length: span.key_length,
-                    value_start: span.value_start,
-                    value_length: span.value_length,
-                },
-            ))
-        })
-        .collect()
-}
-
 fn project_references(
     object: &Map<String, Value>,
     spans: &[(u32, u32)],
     origin: &Path,
-    owner: ProjectConfigId,
 ) -> Vec<ProjectReference> {
     object
         .get("references")
@@ -1009,72 +732,59 @@ fn project_references(
             let raw = reference.get("path").and_then(Value::as_str)?;
             let (source_start, source_length) = spans.get(index).copied().unwrap_or((0, 0));
             Some(ProjectReference {
-                owner,
                 path: absolute_path(origin, Path::new(raw)),
-                original_path: raw.to_string(),
                 source_start,
                 source_length,
             })
         })
         .collect()
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum JsonTokenKind {
-    String(String),
-    Literal,
-    Punctuation(u8),
+struct ProjectReference {
+    path: PathBuf,
+    source_start: u32,
+    source_length: u32,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct JsonToken {
-    kind: JsonTokenKind,
-    start: usize,
-    end: usize,
-}
-
 struct JsoncDocument {
     value: Value,
     source_spans: ConfigSourceSpans,
 }
-
 #[derive(Debug, Default)]
 struct ConfigSourceSpans {
-    compiler_options: BTreeMap<String, ConfigOptionSpans>,
+    compiler_options: Vec<ConfigOptionOccurrence>,
+    compiler_options_key: Option<(u32, u32)>,
     references: Vec<(u32, u32)>,
 }
-
+#[derive(Debug, Clone, PartialEq)]
+struct ConfigOptionOccurrence {
+    name: String,
+    value: Value,
+    span: ConfigOptionSpans,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ConfigOptionSpans {
-    key_start: u32,
-    key_length: u32,
-    value_start: Option<u32>,
-    value_length: Option<u32>,
+    key: (u32, u32),
+    value: Option<(u32, u32)>,
 }
-
 impl ConfigSourceSpans {
     /// Inventory source provenance while walking the shared JSONC token stream once.
-    fn from_tokens(tokens: &[JsonToken]) -> Self {
+    fn from_tokens(source_text: &str, normalized: &str, tokens: &[Token]) -> Self {
         let mut spans = Self::default();
         let mut object_depth = 0usize;
         let mut array_depth = 0usize;
-        let mut options_open = None;
-        let mut references_open = None;
+        let mut options_seen = false;
+        let mut references_seen = false;
         let mut in_options = false;
         let mut in_references = false;
         let mut reference_start = None;
-
         for (index, token) in tokens.iter().enumerate() {
-            in_options |= options_open == Some(index);
-            in_references |= references_open == Some(index);
-            match &token.kind {
-                JsonTokenKind::Punctuation(b'{') => {
+            match token.kind {
+                TokenKind::LeftBrace => {
                     if in_references && object_depth == 1 && array_depth == 1 {
-                        reference_start = Some(token.start);
+                        reference_start = Some(token.span.start);
                     }
                     object_depth += 1;
                 }
-                JsonTokenKind::Punctuation(b'}') => {
+                TokenKind::RightBrace => {
                     if in_references
                         && object_depth == 2
                         && array_depth == 1
@@ -1082,186 +792,98 @@ impl ConfigSourceSpans {
                     {
                         spans
                             .references
-                            .push((start as u32, (token.end - start) as u32));
+                            .push((start, token.span.end.saturating_sub(start)));
                     }
                     if in_options && object_depth == 2 && array_depth == 0 {
                         in_options = false;
                     }
                     object_depth = object_depth.saturating_sub(1);
                 }
-                JsonTokenKind::Punctuation(b'[') => array_depth += 1,
-                JsonTokenKind::Punctuation(b']') => {
+                TokenKind::LeftBracket => array_depth += 1,
+                TokenKind::RightBracket => {
                     if in_references && object_depth == 1 && array_depth == 1 {
                         in_references = false;
                     }
                     array_depth = array_depth.saturating_sub(1);
                 }
-                JsonTokenKind::String(name)
-                    if in_options && object_depth == 2 && array_depth == 0 =>
+                TokenKind::StringLiteral
+                    if tokens
+                        .get(index + 1)
+                        .is_some_and(|token| token.kind == TokenKind::Colon) =>
                 {
-                    if matches!(
-                        tokens.get(index + 1).map(|token| &token.kind),
-                        Some(JsonTokenKind::Punctuation(b':'))
-                    ) {
-                        let value = tokens.get(index + 2);
-                        spans.compiler_options.insert(
-                            name.clone(),
-                            ConfigOptionSpans {
-                                key_start: token.start as u32,
-                                key_length: (token.end - token.start) as u32,
-                                value_start: value.map(|value| value.start as u32),
-                                value_length: value.map(|value| (value.end - value.start) as u32),
-                            },
-                        );
-                    }
-                }
-                JsonTokenKind::String(name) if object_depth == 1 && array_depth == 0 => {
-                    if matches!(
-                        tokens.get(index + 1).map(|token| &token.kind),
-                        Some(JsonTokenKind::Punctuation(b':'))
-                    ) {
-                        match (
-                            name.as_str(),
-                            tokens.get(index + 2).map(|token| &token.kind),
-                        ) {
-                            ("compilerOptions", Some(JsonTokenKind::Punctuation(b'{')))
-                                if options_open.is_none() =>
-                            {
-                                options_open = Some(index + 2);
-                            }
-                            ("references", Some(JsonTokenKind::Punctuation(b'[')))
-                                if references_open.is_none() =>
-                            {
-                                references_open = Some(index + 2);
-                            }
-                            _ => {}
+                    let Some(name) = json_token_string(source_text, token) else {
+                        continue;
+                    };
+                    let value = tokens.get(index + 2);
+                    if in_options && object_depth == 2 && array_depth == 0 {
+                        if let Some((value, value_span)) =
+                            value.and_then(|token| config_value(normalized, token))
+                        {
+                            spans.compiler_options.push(ConfigOptionOccurrence {
+                                name,
+                                value,
+                                span: ConfigOptionSpans {
+                                    key: (token.span.start, token.span.len()),
+                                    value: Some(value_span),
+                                },
+                            });
+                        }
+                    } else if object_depth == 1 && array_depth == 0 {
+                        if name == "compilerOptions" && spans.compiler_options_key.is_none() {
+                            spans.compiler_options_key = Some((token.span.start, token.span.len()));
+                        }
+                        let value_kind = value.map(|token| token.kind);
+                        if !options_seen
+                            && name == "compilerOptions"
+                            && value_kind == Some(TokenKind::LeftBrace)
+                        {
+                            options_seen = true;
+                            in_options = true;
+                        } else if !references_seen
+                            && name == "references"
+                            && value_kind == Some(TokenKind::LeftBracket)
+                        {
+                            references_seen = true;
+                            in_references = true;
                         }
                     }
                 }
-                JsonTokenKind::String(_)
-                | JsonTokenKind::Literal
-                | JsonTokenKind::Punctuation(_) => {}
+                _ => {}
             }
         }
         spans
     }
 }
-
-fn scan_jsonc(source_text: &str) -> (String, Vec<JsonToken>) {
+fn config_value(normalized: &str, token: &Token) -> Option<(Value, (u32, u32))> {
+    let start = token.span.start;
+    let mut values = serde_json::Deserializer::from_str(&normalized[start as usize..]).into_iter();
+    let value = values.next()?.ok()?;
+    Some((value, (start, values.byte_offset() as u32)))
+}
+fn json_token_string(source_text: &str, token: &Token) -> Option<String> {
+    (token.kind == TokenKind::StringLiteral)
+        .then(|| &source_text[token.span.start as usize..token.span.end as usize])
+        .and_then(|text| serde_json::from_str(text).ok())
+}
+fn normalize_jsonc(source_text: &str, tokens: &[Token]) -> String {
     let bytes = source_text.as_bytes();
-    let mut normalized = bytes.to_vec();
-    let mut tokens = Vec::new();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        if bytes[index].is_ascii_whitespace() {
-            index += 1;
-            continue;
-        }
-        if let Some(end) = mask_jsonc_comment(bytes, &mut normalized, index) {
-            index = end;
-            continue;
-        }
-        let start = index;
-        let kind = match bytes[index] {
-            b'"' => {
-                index = json_string_end(bytes, index);
-                serde_json::from_str(&source_text[start..index])
-                    .ok()
-                    .map(JsonTokenKind::String)
-            }
-            b',' => {
-                if matches!(
-                    bytes.get(skip_jsonc_trivia(bytes, index + 1)),
-                    Some(b'}' | b']')
-                ) {
-                    normalized[index] = b' ';
-                }
-                index += 1;
-                None
-            }
-            byte @ (b'{' | b'}' | b'[' | b']' | b':') => {
-                index += 1;
-                Some(JsonTokenKind::Punctuation(byte))
-            }
-            _ => {
-                index += 1;
-                while bytes.get(index).is_some_and(|byte| {
-                    !byte.is_ascii_whitespace()
-                        && !matches!(byte, b'{' | b'}' | b'[' | b']' | b':' | b',' | b'"')
-                }) {
-                    index = mask_jsonc_comment(bytes, &mut normalized, index).unwrap_or(index + 1);
-                }
-                Some(JsonTokenKind::Literal)
-            }
-        };
-        if let Some(kind) = kind {
-            tokens.push(JsonToken {
-                kind,
-                start,
-                end: index,
-            });
+    let mut normalized = vec![b' '; bytes.len()];
+    for token in tokens {
+        let range = token.span.start as usize..token.span.end as usize;
+        normalized[range.clone()].copy_from_slice(&bytes[range]);
+    }
+    for pair in tokens.windows(2) {
+        if pair[0].kind == TokenKind::Comma
+            && matches!(
+                pair[1].kind,
+                TokenKind::RightBrace | TokenKind::RightBracket
+            )
+        {
+            normalized[pair[0].span.start as usize..pair[0].span.end as usize].fill(b' ');
         }
     }
-    (
-        String::from_utf8(normalized).expect("JSONC input started as UTF-8"),
-        tokens,
-    )
+    String::from_utf8(normalized).expect("JSONC input started as UTF-8")
 }
-
-fn jsonc_comment_end(bytes: &[u8], start: usize) -> Option<usize> {
-    if bytes.get(start..start + 2) == Some(b"//") {
-        return Some(
-            bytes[start + 2..]
-                .iter()
-                .position(|byte| matches!(byte, b'\n' | b'\r'))
-                .map_or(bytes.len(), |end| start + 2 + end),
-        );
-    }
-    (bytes.get(start..start + 2) == Some(b"/*")).then(|| {
-        bytes[start + 2..]
-            .windows(2)
-            .position(|pair| pair == b"*/")
-            .map_or(bytes.len(), |end| start + 4 + end)
-    })
-}
-
-fn mask_jsonc_comment(bytes: &[u8], normalized: &mut [u8], start: usize) -> Option<usize> {
-    let end = jsonc_comment_end(bytes, start)?;
-    for index in start..end {
-        if !matches!(bytes[index], b'\n' | b'\r') {
-            normalized[index] = b' ';
-        }
-    }
-    Some(end)
-}
-
-fn json_string_end(bytes: &[u8], start: usize) -> usize {
-    let mut index = start + 1;
-    while let Some(&byte) = bytes.get(index) {
-        if byte == b'\\' && index + 1 < bytes.len() {
-            index += 2;
-        } else {
-            index += 1;
-            if byte == b'"' {
-                break;
-            }
-        }
-    }
-    index
-}
-
-fn skip_jsonc_trivia(bytes: &[u8], mut index: usize) -> usize {
-    loop {
-        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
-            index += 1;
-        }
-        let Some(end) = jsonc_comment_end(bytes, index) else {
-            return index;
-        };
-        index = end;
-    }
-}
-
 fn package_config_candidates(host: &dyn ProgramHost, package: &Path) -> Vec<PathBuf> {
     let mut candidates = vec![package.to_path_buf()];
     if package.extension().is_none() {
@@ -1279,7 +901,6 @@ fn package_config_candidates(host: &dyn ProgramHost, package: &Path) -> Vec<Path
     }
     candidates
 }
-
 fn discover_wildcard_files(
     host: &dyn ProgramHost,
     include: &Selector,
@@ -1345,7 +966,6 @@ fn discover_wildcard_files(
     }
     result.into_iter().flatten().collect()
 }
-
 fn extension_identity(path: &Path, case_sensitive: bool) -> Option<(String, u8)> {
     let normalized = display_path(path);
     let comparable = if case_sensitive {
@@ -1374,7 +994,6 @@ fn extension_identity(path: &Path, case_sensitive: bool) -> Option<(String, u8)>
     }
     None
 }
-
 fn visit_directory(
     host: &dyn ProgramHost,
     directory: &Path,
@@ -1417,11 +1036,9 @@ fn visit_directory(
         visit_directory(host, &entry.path, include_pattern, visited, files);
     }
 }
-
 fn is_implicitly_excluded_directory(name: &str) -> bool {
     name.starts_with('.') || matches!(name, "node_modules" | "bower_components" | "jspm_packages")
 }
-
 fn pattern_explicitly_includes_directory(
     pattern: &str,
     directory_name: &str,
@@ -1443,24 +1060,21 @@ fn pattern_explicitly_includes_directory(
         if package_directory {
             component == directory_name
         } else {
-            component.starts_with('.')
-                && glob_segment(component.as_bytes(), directory_name.as_bytes())
+            component.starts_with('.') && glob_segment(component, &directory_name)
         }
     })
 }
-
 fn include_pattern(origin: &Path, raw: &str, host: &dyn ProgramHost) -> String {
     let absolute = absolute_pattern(origin, raw);
-    if !contains_wildcard(&absolute) && host.directory_exists(Path::new(&absolute)) {
+    if !absolute.contains(['*', '?']) && host.directory_exists(Path::new(&absolute)) {
         format!("{}/**/*", absolute.trim_end_matches('/'))
     } else {
         absolute
     }
 }
-
 fn traversal_base(pattern: &str, host: &dyn ProgramHost) -> Option<PathBuf> {
     let path = Path::new(pattern);
-    if !contains_wildcard(pattern) {
+    if !pattern.contains(['*', '?']) {
         if host.directory_exists(path) {
             return Some(path.to_path_buf());
         }
@@ -1478,16 +1092,12 @@ fn traversal_base(pattern: &str, host: &dyn ProgramHost) -> Option<PathBuf> {
         }
         base.push(component.as_os_str());
     }
-    if base.as_os_str().is_empty() {
-        return None;
-    }
-    Some(base)
+    (!base.as_os_str().is_empty()).then_some(base)
 }
-
 fn excluded_by(host: &dyn ProgramHost, exclude: &Selector, file: &Path) -> bool {
     exclude.values.iter().any(|raw| {
         let pattern = absolute_pattern(&exclude.origin, raw);
-        if contains_wildcard(&pattern) {
+        if pattern.contains(['*', '?']) {
             glob_matches(&pattern, file, host.use_case_sensitive_file_names())
         } else {
             let mut pattern = pattern.trim_end_matches('/').to_string();
@@ -1500,7 +1110,6 @@ fn excluded_by(host: &dyn ProgramHost, exclude: &Selector, file: &Path) -> bool 
         }
     })
 }
-
 fn glob_matches(pattern: &str, file: &Path, case_sensitive: bool) -> bool {
     let (pattern_text, file_text) = if case_sensitive {
         (pattern.to_string(), display_path(file))
@@ -1520,7 +1129,6 @@ fn glob_matches(pattern: &str, file: &Path, case_sensitive: bool) -> bool {
         .collect();
     glob_parts(&pattern_parts, &file_parts)
 }
-
 fn glob_parts(pattern: &[&str], candidate: &[&str]) -> bool {
     match pattern.split_first() {
         None => candidate.is_empty(),
@@ -1530,23 +1138,19 @@ fn glob_parts(pattern: &[&str], candidate: &[&str]) -> bool {
         }
         Some((segment, rest)) => {
             !candidate.is_empty()
-                && glob_segment(segment.as_bytes(), candidate[0].as_bytes())
+                && glob_segment(segment, candidate[0])
                 && glob_parts(rest, &candidate[1..])
         }
     }
 }
-
-fn glob_segment(pattern: &[u8], candidate: &[u8]) -> bool {
-    let pattern = std::str::from_utf8(pattern).expect("glob pattern is UTF-8");
-    let candidate = std::str::from_utf8(candidate).expect("source path is UTF-8");
-    if candidate.starts_with('.') && !pattern.starts_with('.') && contains_wildcard(pattern) {
+fn glob_segment(pattern: &str, candidate: &str) -> bool {
+    if candidate.starts_with('.') && !pattern.starts_with('.') && pattern.contains(['*', '?']) {
         return false;
     }
     let pattern: Vec<char> = pattern.chars().collect();
     let candidate: Vec<char> = candidate.chars().collect();
     glob_segment_chars(&pattern, &candidate)
 }
-
 fn glob_segment_chars(pattern: &[char], candidate: &[char]) -> bool {
     match pattern.split_first() {
         None => candidate.is_empty(),
@@ -1560,7 +1164,6 @@ fn glob_segment_chars(pattern: &[char], candidate: &[char]) -> bool {
         }
     }
 }
-
 fn supported_source_file(path: &Path, allow_js: bool) -> bool {
     let name = path
         .file_name()
@@ -1576,7 +1179,6 @@ fn supported_source_file(path: &Path, allow_js: bool) -> bool {
                 || name.ends_with(".cjs")
                 || name.ends_with(".mjs")))
 }
-
 fn unsupported_root_message(display_name: &str, path: &Path, allow_js: bool) -> (u32, String) {
     if !allow_js && !supported_source_file(path, false) && supported_source_file(path, true) {
         return (
@@ -1598,7 +1200,6 @@ fn unsupported_root_message(display_name: &str, path: &Path, allow_js: bool) -> 
         ),
     )
 }
-
 fn root_file_diagnostic(message_text: String, code: u32, reason: RootReason) -> Diagnostic {
     let (reason_text, reason_code) = reason.diagnostic();
     Diagnostic::global(message_text, code).with_related_information(vec![
@@ -1606,16 +1207,16 @@ fn root_file_diagnostic(message_text: String, code: u32, reason: RootReason) -> 
         RelatedInformation::unlocated(reason_text, reason_code, 2),
     ])
 }
-
 fn parse_jsonc(text: &str) -> Result<JsoncDocument, ()> {
-    let (normalized, tokens) = scan_jsonc(text);
+    let source = SourceText::new(FileId(0), PathBuf::new(), Arc::from(text));
+    let tokens = scan_source(&source).tokens;
+    let normalized = normalize_jsonc(text, &tokens);
     let value = serde_json::from_str(normalized.trim_start_matches('\u{feff}')).map_err(|_| ())?;
     Ok(JsoncDocument {
         value,
-        source_spans: ConfigSourceSpans::from_tokens(&tokens),
+        source_spans: ConfigSourceSpans::from_tokens(text, &normalized, &tokens),
     })
 }
-
 fn string_values(value: Option<&Value>, allow_scalar: bool) -> Option<Vec<String>> {
     match value {
         Some(Value::String(value)) if allow_scalar => Some(vec![value.clone()]),
@@ -1629,29 +1230,14 @@ fn string_values(value: Option<&Value>, allow_scalar: bool) -> Option<Vec<String
         _ => None,
     }
 }
-
-fn bool_property(object: &Map<String, Value>, name: &str) -> Option<bool> {
-    object.get(name).and_then(Value::as_bool)
-}
-
-fn string_property(object: &Map<String, Value>, name: &str) -> Option<String> {
-    object.get(name).and_then(Value::as_str).map(str::to_string)
-}
-
 fn json_array(values: &[String]) -> String {
     serde_json::to_string(values).unwrap_or_else(|_| "[]".to_string())
 }
-
-fn contains_wildcard(path: &str) -> bool {
-    path.contains(['*', '?'])
-}
-
 fn absolute_pattern(origin: &Path, raw: &str) -> String {
     let normalized_raw = raw.replace('\\', "/");
     let path = Path::new(&normalized_raw);
     display_path(&absolute_path(origin, path))
 }
-
 fn absolute_path(base: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         normalize_path(path)
@@ -1659,7 +1245,6 @@ fn absolute_path(base: &Path, path: &Path) -> PathBuf {
         normalize_path(&base.join(path))
     }
 }
-
 fn deduplicate_paths(paths: Vec<PathBuf>, case_sensitive: bool) -> Vec<PathBuf> {
     let mut seen = BTreeSet::new();
     paths
@@ -1668,7 +1253,6 @@ fn deduplicate_paths(paths: Vec<PathBuf>, case_sensitive: bool) -> Vec<PathBuf> 
         .filter(|path| seen.insert(path_key(path, case_sensitive)))
         .collect()
 }
-
 fn path_key(path: &Path, case_sensitive: bool) -> String {
     if case_sensitive {
         display_path(path)
@@ -1676,7 +1260,6 @@ fn path_key(path: &Path, case_sensitive: bool) -> String {
         display_path(path).to_ascii_lowercase()
     }
 }
-
 fn logical_source_path_from_host(host: &dyn ProgramHost, path: &Path) -> PathBuf {
     let current_directory = normalize_path(host.current_directory());
     let path = normalize_path(path);
@@ -1686,14 +1269,12 @@ fn logical_source_path_from_host(host: &dyn ProgramHost, path: &Path) -> PathBuf
     }
     logical_path_from_host(&host.realpath(&current_directory), &host.realpath(&path))
 }
-
 fn logical_path_from_host(current_directory: &Path, path: &Path) -> PathBuf {
     let current_directory = normalize_path(current_directory);
     let path = normalize_path(path);
     if let Ok(relative) = path.strip_prefix(&current_directory) {
         return relative.to_path_buf();
     }
-
     let base_components: Vec<_> = current_directory.components().collect();
     let path_components: Vec<_> = path.components().collect();
     let common = base_components
@@ -1715,7 +1296,6 @@ fn logical_path_from_host(current_directory: &Path, path: &Path) -> PathBuf {
     }
     relative
 }
-
 #[cfg(test)]
 #[path = "../rewrite-tests/config_jsonc_unit.rs"]
 mod tests;

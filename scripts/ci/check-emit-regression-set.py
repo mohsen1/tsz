@@ -31,6 +31,12 @@ accepted baseline sequence may shrink, but it may not gain codes or reorder.
 The detail schema stores codes rather than full diagnostic fingerprints; exact
 span/message review remains part of semantic PR evidence.
 
+Schema-v2 rows also preserve product selection and raw path-to-bytes parity.
+An unselected JS or DTS surface is product-neutral and must be `skip`; a
+selected surface is validated against the invocation artifact state. Once a
+selected surface proves raw product agreement, later terminal-state changes
+cannot hide loss of that agreement.
+
 Deliberately asymmetric:
 
 * **Named pass losses, new mismatches, and terminal escalations are fatal.** A
@@ -67,9 +73,9 @@ ARTIFACT_STATUSES = frozenset(
     ("complete", "crash", "incomplete", "timeout", "unsupported")
 )
 JS_STATUSES = frozenset(
-    ("crash", "fail", "incomplete", "pass", "timeout", "unsupported")
+    ("crash", "fail", "incomplete", "pass", "skip", "timeout", "unsupported")
 )
-DTS_STATUSES = JS_STATUSES | {"skip"}
+DTS_STATUSES = JS_STATUSES
 PRODUCT_STATUS_FIELDS = (
     ("Artifact", "artifactState", ARTIFACT_STATUSES),
     ("JS", "jsStatus", JS_STATUSES),
@@ -217,32 +223,103 @@ def index_rows(results, source="emit detail"):
         artifact = row["artifactState"]
         js_status = row["jsStatus"]
         dts_status = row["dtsStatus"]
-        if artifact == "complete":
-            if js_status not in ("pass", "fail") or dts_status not in (
-                "pass",
-                "fail",
-                "skip",
-            ):
-                raise ValueError(
-                    "%s result %d has inconsistent complete product statuses: "
-                    "js=%s dts=%s" % (source, index, js_status, dts_status)
-                )
-        elif js_status != artifact or dts_status not in (artifact, "skip"):
+        has_selection = "jsSelected" in row or "dtsSelected" in row
+        if has_selection and not all(field in row for field in ("jsSelected", "dtsSelected")):
             raise ValueError(
-                "%s result %d has inconsistent %s artifact product statuses: "
-                "js=%s dts=%s"
-                % (source, index, artifact, js_status, dts_status)
-            )
-        if js_status == "pass" and row.get("jsError") is not None:
-            raise ValueError(
-                "%s result %d has jsStatus=pass with a jsError payload"
+                "%s result %d must serialize both jsSelected and dtsSelected"
                 % (source, index)
             )
-        if dts_status in ("pass", "skip") and row.get("dtsError") is not None:
-            raise ValueError(
-                "%s result %d has dtsStatus=%s with a dtsError payload"
-                % (source, index, dts_status)
-            )
+        selections = {}
+        for surface, status in (("js", js_status), ("dts", dts_status)):
+            selected = row.get(f"{surface}Selected", status != "skip")
+            if not isinstance(selected, bool):
+                raise ValueError(
+                    "%s result %d has non-boolean %sSelected=%r"
+                    % (source, index, surface, selected)
+                )
+            selections[surface] = selected
+            expected_statuses = (
+                ("pass", "fail") if artifact == "complete" else (artifact,)
+            ) if selected else ("skip",)
+            if status not in expected_statuses:
+                raise ValueError(
+                    "%s result %d has inconsistent %s artifact product status: "
+                    "selected=%s artifact=%s status=%s"
+                    % (source, index, surface, selected, artifact, status)
+                )
+
+        if has_selection:
+            if "outcomeMatch" not in row or not isinstance(
+                row.get("outcomeMatch"), (bool, type(None))
+            ):
+                raise ValueError(
+                    "%s result %d has invalid or missing outcomeMatch"
+                    % (source, index)
+                )
+            if artifact == "complete" and not isinstance(row.get("outcomeMatch"), bool):
+                raise ValueError(
+                    "%s result %d has complete artifact without measured outcomeMatch"
+                    % (source, index)
+                )
+            for surface in ("js", "dts"):
+                selected = selections[surface]
+                match_field = f"{surface}Match"
+                product_field = f"{surface}ProductMatch"
+                product_error_field = f"{surface}ProductError"
+                if match_field not in row or product_field not in row:
+                    raise ValueError(
+                        "%s result %d omits schema-v2 %s parity fields"
+                        % (source, index, surface.upper())
+                    )
+                match = row.get(match_field)
+                product_match = row.get(product_field)
+                if selected:
+                    if not isinstance(match, bool):
+                        raise ValueError(
+                            "%s result %d has selected %s product without boolean %s"
+                            % (source, index, surface.upper(), match_field)
+                        )
+                    if not isinstance(product_match, (bool, type(None))):
+                        raise ValueError(
+                            "%s result %d has invalid %s=%r"
+                            % (source, index, product_field, product_match)
+                        )
+                    if artifact == "complete" and not isinstance(product_match, bool):
+                        raise ValueError(
+                            "%s result %d has complete selected %s product without raw parity"
+                            % (source, index, surface.upper())
+                        )
+                    expected_match = row.get("outcomeMatch") is True and product_match is True
+                    if match is not expected_match:
+                        raise ValueError(
+                            "%s result %d has inconsistent %s effective parity"
+                            % (source, index, surface.upper())
+                        )
+                elif match is not None or product_match is not None:
+                    raise ValueError(
+                        "%s result %d has unselected %s product with measured parity"
+                        % (source, index, surface.upper())
+                    )
+                product_error = row.get(product_error_field)
+                if product_match is False:
+                    if not isinstance(product_error, str) or not product_error:
+                        raise ValueError(
+                            "%s result %d has %s=false without %s"
+                            % (source, index, product_field, product_error_field)
+                        )
+                elif product_error is not None:
+                    raise ValueError(
+                        "%s result %d has %s=%r with a %s payload"
+                        % (source, index, product_field, product_match, product_error_field)
+                    )
+
+        for surface, status in (("js", js_status), ("dts", dts_status)):
+            error_field = f"{surface}Error"
+            if status in ("pass", "skip") and row.get(error_field) is not None:
+                raise ValueError(
+                    "%s result %d has %sStatus=%s with a %s payload"
+                    % (source, index, surface, status, error_field)
+                )
         for field in ("jsError", "dtsError"):
             tsz_nonzero_diagnostics(row.get(field))
         indexed[key] = row
@@ -389,6 +466,23 @@ def find_regressions(baseline_rows, current_rows):
             baseline_status = baseline.get(field)
             if is_status_regression(kind, baseline_status, current_status):
                 regressions.append((key, kind, baseline_status, current_status))
+    return regressions
+
+
+def find_product_parity_regressions(baseline_rows, current_rows):
+    """Selected schema-v2 products that lost previously proven byte parity."""
+    regressions = []
+    for key, current in sorted(current_rows.items()):
+        baseline = baseline_rows.get(key)
+        if baseline is None:
+            continue
+        for kind, surface in (("JS", "js"), ("DTS", "dts")):
+            baseline_match = baseline.get(f"{surface}ProductMatch")
+            if baseline_match is not True:
+                continue
+            current_match = current.get(f"{surface}ProductMatch")
+            if current_match is not True:
+                regressions.append((key, kind, baseline_match, current_match))
     return regressions
 
 
@@ -696,6 +790,9 @@ def main(argv=None):
         failed = args.reject_absent_baseline_rows
 
     regressions = find_regressions(baseline_rows, current_rows)
+    product_regressions = find_product_parity_regressions(
+        baseline_rows, current_rows
+    )
     payload_regressions = find_diagnostic_payload_regressions(
         baseline_rows, current_rows
     )
@@ -716,6 +813,28 @@ def main(argv=None):
         if len(regressions) > args.max_report:
             print(
                 "error:   ... and %d more" % (len(regressions) - args.max_report),
+                file=sys.stderr,
+            )
+    if product_regressions:
+        failed = True
+        print(
+            "error: emit product parity regression: %d selected surface(s) "
+            "lost previously proven raw product agreement"
+            % len(product_regressions),
+            file=sys.stderr,
+        )
+        for key, kind, baseline_match, current_match in product_regressions[
+            : args.max_report
+        ]:
+            print(
+                "error:   %s %s: productMatch=%s -> %s"
+                % (kind, format_key(key), baseline_match, current_match),
+                file=sys.stderr,
+            )
+        if len(product_regressions) > args.max_report:
+            print(
+                "error:   ... and %d more"
+                % (len(product_regressions) - args.max_report),
                 file=sys.stderr,
             )
     if payload_regressions:

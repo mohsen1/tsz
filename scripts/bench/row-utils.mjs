@@ -55,12 +55,31 @@ export function hasExactFixtureStubEvidence(compatibility, projectName) {
     && compatibility.stubbed_modules === expected.stubbedModules
     && compatibility.stubbed_any_members === expected.stubbedAnyMembers
     && compatibility.stub_inventory_fingerprint === expected.stubInventoryFingerprint
+    && JSON.stringify(compatibility.stub_inventory_owners) === JSON.stringify(expected.stubInventoryOwners)
     && expected.stubbedModules === 0
-    && expected.stubbedAnyMembers === 0;
+    && expected.stubbedAnyMembers === 0
+    && expected.stubInventoryOwners.length === 0;
 }
 
 export function hasExactProjectEvidence(compatibility, projectName) {
-  if (!compatibility || compatibility.evidence_schema !== 2) return false;
+  if (!compatibility || compatibility.evidence_schema !== 3) return false;
+  if (!/^[0-9a-f]{40}$/.test(compatibility.source_commit || "")
+    || typeof compatibility.source_dirty !== "boolean"
+    || compatibility.source_stable !== true
+    || compatibility.compile_input_stable !== true) return false;
+  for (const field of [
+    "source_tree_fingerprint",
+    "evidence_protocol_fingerprint",
+    "tsz_binary_sha256",
+    "build_manifest_sha256",
+    "build_inputs_sha256",
+    "build_manifest_binary_sha256",
+    "compile_input_fingerprint",
+    "oracle_fingerprint",
+  ]) {
+    if (!SHA256_PATTERN.test(compatibility[field] || "")) return false;
+  }
+  if (compatibility.build_manifest_binary_sha256 !== compatibility.tsz_binary_sha256) return false;
   if (compatibility.semantic_completion !== "complete") return false;
   if (!hasExactFixtureStubEvidence(compatibility, projectName)) return false;
   const positiveInteger = (value) => Number.isInteger(value) && value > 0;
@@ -224,7 +243,21 @@ export const GREEN_COMPAT = {
   last_successful_phase: "check",
   exit_class: "exit success",
   diagnostic_status: "none",
-  evidence_schema: 2,
+  evidence_schema: 3,
+  evidence_status: "exact",
+  evidence_failures: [],
+  source_commit: "1".repeat(40),
+  source_dirty: false,
+  source_stable: true,
+  source_tree_fingerprint: "2".repeat(64),
+  evidence_protocol_fingerprint: "8".repeat(64),
+  tsz_binary_sha256: "3".repeat(64),
+  build_manifest_sha256: "4".repeat(64),
+  build_inputs_sha256: "5".repeat(64),
+  build_manifest_binary_sha256: "3".repeat(64),
+  compile_input_fingerprint: "6".repeat(64),
+  compile_input_stable: true,
+  oracle_fingerprint: "7".repeat(64),
   semantic_completion: "complete",
   root_files: 1,
   source_files: 1,
@@ -242,6 +275,7 @@ export const GREEN_COMPAT = {
   stubbed_modules: ZERO_STUB_EVIDENCE.stubbedModules,
   stubbed_any_members: ZERO_STUB_EVIDENCE.stubbedAnyMembers,
   stub_inventory_fingerprint: ZERO_STUB_EVIDENCE.stubInventoryFingerprint,
+  stub_inventory_owners: ZERO_STUB_EVIDENCE.stubInventoryOwners,
   oracle_classification: "both-pass",
   files_reached: 1,
   exit_codes: { tsc: [0], tsz: [0] },

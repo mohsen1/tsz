@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::source::{FileId, NodeId, Span};
+use crate::syntax::ParserRecoveryKind::{ConditionalExpression, Expression, MissingExpression};
 use crate::syntax::{
     DescendantAdapter, DescendantContainer, NestedStatement, ParserRecoveryKind,
     ParserRecoveryOwner, Statement, StatementKind, walk_statement_list,
@@ -14,9 +15,6 @@ pub(super) enum RecoveryRole {
     RepresentationalFragment,
 }
 
-#[cfg(test)]
-pub(super) type RecoveryStatementRole = RecoveryRole;
-
 #[derive(Clone, Default)]
 struct RecoveryContext {
     active: bool,
@@ -25,15 +23,19 @@ struct RecoveryContext {
     ancestors: Vec<(NodeId, Span, bool)>,
 }
 
+#[derive(Default)]
+pub(super) struct RecoveryNodes {
+    pub(super) owners: BTreeMap<NodeId, RecoveryRole>,
+    declaration_fragments: BTreeSet<NodeId>,
+    declaration: Option<NodeId>,
+    inferred_value: Option<NodeId>,
+}
+
 struct RecoveryCollector {
     owner: ParserRecoveryOwner,
     authored: Span,
     extent: Span,
-    owners: BTreeMap<NodeId, RecoveryRole>,
-    declaration_fragments: BTreeSet<NodeId>,
-    declaration: Option<(u32, NodeId)>,
-    inferred_return: Option<NodeId>,
-    absorbed: Option<(u32, NodeId)>,
+    nodes: RecoveryNodes,
 }
 
 impl RecoveryCollector {
@@ -63,7 +65,7 @@ impl<'ast> DescendantAdapter<'ast> for RecoveryCollector {
         container: DescendantContainer<'ast>,
     ) -> RecoveryContext {
         let mut next = context.clone();
-        match container {
+        let (span, inferred_return) = match container {
             DescendantContainer::Statement(statement) => {
                 next.active &= !matches!(
                     statement.kind,
@@ -77,28 +79,22 @@ impl<'ast> DescendantAdapter<'ast> for RecoveryCollector {
                         Self::declaration(statement),
                     ));
                 }
+                return next;
             }
-            DescendantContainer::Function(statement, function) => {
-                next.active &= self.owns_authored(statement.span);
-                next.inferred_return = (function.return_type.is_none()
+            DescendantContainer::Function(statement, function) => (
+                statement.span,
+                (function.return_type.is_none()
                     && function
                         .body_span
                         .is_some_and(|span| self.owns_authored(span)))
-                .then_some(statement.id);
-            }
-            DescendantContainer::Class(statement, _) => {
-                next.active &= self.owns_authored(statement.span);
-                next.inferred_return = None;
-            }
-            DescendantContainer::ClassMember(member) => {
-                next.active &= self.owns_authored(member.span);
-                next.inferred_return = None;
-            }
-            DescendantContainer::FunctionLike(expression, _) => {
-                next.active &= self.owns_authored(expression.span);
-                next.inferred_return = None;
-            }
-        }
+                .then_some(statement.id),
+            ),
+            DescendantContainer::Class(statement, _) => (statement.span, None),
+            DescendantContainer::ClassMember(member) => (member.span, None),
+            DescendantContainer::FunctionLike(expression, _) => (expression.span, None),
+        };
+        next.active &= self.owns_authored(span);
+        next.inferred_return = inferred_return;
         next
     }
 
@@ -121,33 +117,51 @@ impl<'ast> DescendantAdapter<'ast> for RecoveryCollector {
                         && self.owns_authored(expression.span)
                 },
             );
-        if let Some(owner) = context.inferred_return.filter(|_| owner_return) {
-            self.inferred_return.get_or_insert(owner);
-        }
         let adjacent_return = matches!(statement.kind, StatementKind::Return(_))
             && next.is_some_and(|next| next.id == self.owner.statement)
             && statement.span.end <= self.authored.start;
-        if let Some(owner) = context.inferred_return.filter(|_| adjacent_return) {
-            self.inferred_return.get_or_insert(owner);
+        if let Some(owner) = context
+            .inferred_return
+            .filter(|_| owner_return || adjacent_return)
+        {
+            self.nodes.inferred_value.get_or_insert(owner);
         }
         if statement.id == self.owner.statement {
             let owner_is_return = matches!(statement.kind, StatementKind::Return(_));
-            self.absorbed = context.ancestors[..context.ancestors.len() - 1]
+            if let StatementKind::Variable(variable) = &statement.kind {
+                self.nodes.inferred_value = variable
+                    .declarators
+                    .iter()
+                    .any(|declarator| {
+                        declarator.annotation.is_none()
+                            && declarator
+                                .initializer
+                                .as_ref()
+                                .is_some_and(|initializer| self.owns_authored(initializer.span))
+                    })
+                    .then_some(statement.id);
+            }
+            if let Some((_, absorbed)) = context.ancestors[..context.ancestors.len() - 1]
                 .iter()
                 .filter(|(_, span, _)| {
                     span.start < self.extent.start && span.end <= self.extent.end
                 })
                 .map(|(id, span, _)| (span.len(), *id))
-                .min();
-            self.declaration = if owner_is_return {
+                .min()
+            {
+                self.nodes
+                    .owners
+                    .insert(absorbed, RecoveryRole::SemanticOwner);
+            }
+            self.nodes.declaration = if owner_is_return {
                 context
                     .ancestors
                     .iter()
                     .filter(|(_, span, declaration)| *declaration && self.owns_authored(*span))
-                    .map(|(id, span, _)| (span.len(), *id))
-                    .min()
+                    .min_by_key(|(_, span, _)| span.len())
+                    .map(|(id, _, _)| *id)
             } else {
-                Self::declaration(statement).then_some((statement.span.len(), statement.id))
+                Self::declaration(statement).then_some(statement.id)
             };
         }
         if self.extent.start <= statement.span.start && statement.span.start < self.extent.end {
@@ -156,20 +170,13 @@ impl<'ast> DescendantAdapter<'ast> for RecoveryCollector {
             } else {
                 RecoveryRole::RepresentationalFragment
             };
-            self.owners.insert(statement.id, role);
+            self.nodes.owners.insert(statement.id, role);
             if role == RecoveryRole::RepresentationalFragment && Self::declaration(statement) {
-                self.declaration_fragments.insert(statement.id);
+                self.nodes.declaration_fragments.insert(statement.id);
             }
         }
         NestedStatement::Descend
     }
-}
-
-pub(super) struct RecoveryNodes {
-    pub(super) owners: BTreeMap<NodeId, RecoveryRole>,
-    declaration_fragments: BTreeSet<NodeId>,
-    declaration: Option<NodeId>,
-    inferred_return: Option<NodeId>,
 }
 
 pub(super) fn recovery_nodes(
@@ -188,11 +195,7 @@ pub(super) fn recovery_nodes(
         owner,
         authored,
         extent,
-        owners: BTreeMap::new(),
-        declaration_fragments: BTreeSet::new(),
-        declaration: None,
-        inferred_return: None,
-        absorbed: None,
+        nodes: RecoveryNodes::default(),
     };
     walk_statement_list(
         &mut collector,
@@ -203,92 +206,107 @@ pub(super) fn recovery_nodes(
         &file.syntax.statements,
     );
     collector
+        .nodes
         .owners
         .insert(owner.statement, RecoveryRole::SemanticOwner);
-    if let Some((_, absorbed)) = collector.absorbed {
-        collector
-            .owners
-            .insert(absorbed, RecoveryRole::SemanticOwner);
-    }
-    RecoveryNodes {
-        owners: collector.owners,
-        declaration_fragments: collector.declaration_fragments,
-        declaration: collector.declaration.map(|(_, owner)| owner),
-        inferred_return: collector.inferred_return,
-    }
+    collector.nodes
 }
 
 fn add_nodes(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: FileId,
     nodes: RecoveryNodes,
     gap: SyntaxGap,
+    unmodeled_syntax: bool,
 ) {
     for (owner, role) in nodes.owners {
-        let scope = CapabilityScope::node(file, owner);
-        add_owner(nonclaims, scope, gap, role);
+        add_owner(nonclaims.node(file, owner), gap, role);
         if nodes.declaration_fragments.contains(&owner) {
-            add_syntax(nonclaims, &ALL_TARGETS[..2], scope, gap);
+            nonclaims.node(file, owner).syntax(&ALL_TARGETS[..2], gap);
         }
     }
-    if let Some(owner) = nodes.declaration {
-        add_nonclaims(
-            nonclaims,
+    if let Some(owner) = nodes.declaration.filter(|_| unmodeled_syntax) {
+        nonclaims.node(file, owner).syntax_owned_by(
             if gap == SyntaxGap::GeneratorFunctionLike {
                 &ALL_TARGETS[1..2]
             } else {
                 &ALL_TARGETS[..2]
             },
-            CapabilityScope::node(file, owner),
-            NonclaimReason::Syntax(gap),
-            DeletionCondition::DeepestSemanticOwner(gap),
+            gap,
+            true,
         );
     }
-    if let Some(owner) = nodes.inferred_return {
-        add_nonclaims(
-            nonclaims,
-            &ALL_TARGETS[1..2],
-            CapabilityScope::node(file, owner),
-            NonclaimReason::Syntax(gap),
-            DeletionCondition::DeepestSemanticOwner(gap),
-        );
+    if let Some(owner) = nodes.inferred_value {
+        nonclaims
+            .node(file, owner)
+            .syntax_owned_by(&ALL_TARGETS[1..2], gap, true);
     }
 }
 
-fn add_owner(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
-    scope: CapabilityScope,
-    gap: SyntaxGap,
-    role: RecoveryRole,
-) {
+fn add_owner(mut nonclaims: ScopedNonclaims<'_>, gap: SyntaxGap, role: RecoveryRole) {
     let semantic = role != RecoveryRole::RepresentationalFragment;
-    let deletion = match role {
-        RecoveryRole::SemanticOwner => DeletionCondition::DeepestSemanticOwner(gap),
-        RecoveryRole::RepresentationalFragment => DeletionCondition::SyntaxOwner(gap),
-    };
-    add_nonclaims(
-        nonclaims,
+    nonclaims.syntax_owned_by(
         if gap == SyntaxGap::TypeRecovery {
             &ALL_TARGETS[2..6]
         } else {
             &ALL_TARGETS[2..5]
         },
-        scope,
-        NonclaimReason::Syntax(gap),
-        deletion,
+        gap,
+        semantic,
     );
-    add_service_nonclaims(nonclaims, scope, gap, semantic);
+    nonclaims.syntax_owned_by(&ALL_TARGETS[7..], gap, semantic);
+}
+
+const fn parser_recovery_gap(kind: ParserRecoveryKind) -> SyntaxGap {
+    match kind {
+        ParserRecoveryKind::Declaration => SyntaxGap::Declaration,
+        ParserRecoveryKind::GeneratorFunctionLike => SyntaxGap::GeneratorFunctionLike,
+        Expression | MissingExpression | ConditionalExpression => SyntaxGap::Expression,
+        ParserRecoveryKind::ObjectMember => SyntaxGap::ObjectMember,
+        ParserRecoveryKind::ForStatement => SyntaxGap::ForStatement,
+        ParserRecoveryKind::ComputedPropertyName => SyntaxGap::ComputedPropertyName,
+        ParserRecoveryKind::ClassMember => SyntaxGap::Class,
+        ParserRecoveryKind::ClassExpression => SyntaxGap::ClassExpression,
+        ParserRecoveryKind::AngleAssertion => SyntaxGap::AngleAssertion,
+        ParserRecoveryKind::RejectedGenericArrowPrefix => SyntaxGap::RejectedGenericArrowPrefix,
+        ParserRecoveryKind::Type | ParserRecoveryKind::MissingType => SyntaxGap::TypeRecovery,
+        ParserRecoveryKind::Template => SyntaxGap::Template,
+    }
 }
 
 pub(super) fn add_parser_nodes(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: &ProgramFile,
     function_signatures: &[Span],
 ) {
-    let file_scope = CapabilityScope::File(file.source.id);
     for recovery in &file.syntax.parser_recovery_facts {
+        let gap = parser_recovery_gap(recovery.kind);
+        let literal_owned = file
+            .syntax
+            .authored_literal_facts
+            .iter()
+            .any(|fact| fact.owner == recovery.owner && fact.span == recovery.authored_span);
+        if !literal_owned
+            && !matches!(
+                recovery.kind,
+                ParserRecoveryKind::Declaration
+                    | ConditionalExpression
+                    | MissingExpression
+                    | ParserRecoveryKind::MissingType
+                    | ParserRecoveryKind::Template
+            )
+        {
+            nonclaims
+                .node(file.source.id, recovery.owner.statement)
+                .syntactic_diagnostics(gap);
+        }
         if recovery.kind == ParserRecoveryKind::Template {
-            add_both_emit(nonclaims, file_scope, SyntaxGap::Template);
+            nonclaims.emit(SyntaxGap::Template);
+        }
+        if matches!(recovery.kind, ConditionalExpression | MissingExpression) {
+            nonclaims
+                .node(file.source.id, recovery.owner.statement)
+                .javascript(gap);
         }
         if recovery.kind != ParserRecoveryKind::GeneratorFunctionLike
             && function_signatures.iter().any(|signature| {
@@ -298,19 +316,6 @@ pub(super) fn add_parser_nodes(
         {
             continue;
         }
-        let gap = match recovery.kind {
-            ParserRecoveryKind::Declaration => SyntaxGap::Declaration,
-            ParserRecoveryKind::GeneratorFunctionLike => SyntaxGap::GeneratorFunctionLike,
-            ParserRecoveryKind::Expression => SyntaxGap::Expression,
-            ParserRecoveryKind::ObjectMember => SyntaxGap::ObjectMember,
-            ParserRecoveryKind::ForStatement => SyntaxGap::ForStatement,
-            ParserRecoveryKind::ComputedPropertyName => SyntaxGap::ComputedPropertyName,
-            ParserRecoveryKind::ClassExpression => SyntaxGap::ClassExpression,
-            ParserRecoveryKind::AngleAssertion => SyntaxGap::AngleAssertion,
-            ParserRecoveryKind::RejectedGenericArrowPrefix => SyntaxGap::RejectedGenericArrowPrefix,
-            ParserRecoveryKind::Type => SyntaxGap::TypeRecovery,
-            ParserRecoveryKind::Template => SyntaxGap::Template,
-        };
         if matches!(
             recovery.kind,
             ParserRecoveryKind::ObjectMember
@@ -318,19 +323,18 @@ pub(super) fn add_parser_nodes(
                 | ParserRecoveryKind::ComputedPropertyName
                 | ParserRecoveryKind::ClassExpression
         ) {
-            add_both_emit(nonclaims, file_scope, gap);
+            nonclaims.emit(gap);
         }
-        let scope = CapabilityScope::node(file.source.id, recovery.owner.statement);
         if recovery.kind == ParserRecoveryKind::RejectedGenericArrowPrefix {
-            add_owner(nonclaims, scope, gap, RecoveryRole::SemanticOwner);
-            add_nonclaims(
-                nonclaims,
-                &ALL_TARGETS[1..2],
-                scope,
-                NonclaimReason::Syntax(gap),
-                DeletionCondition::DeepestSemanticOwner(gap),
+            let owner = recovery.owner.statement;
+            add_owner(
+                nonclaims.node(file.source.id, owner),
+                gap,
+                RecoveryRole::SemanticOwner,
             );
-            add_both_emit(nonclaims, scope, gap);
+            let mut owner_nonclaims = nonclaims.node(file.source.id, owner);
+            owner_nonclaims.syntax_owned_by(&ALL_TARGETS[1..2], gap, true);
+            owner_nonclaims.emit(gap);
             continue;
         }
         add_nodes(
@@ -343,12 +347,13 @@ pub(super) fn add_parser_nodes(
                 recovery.recovery_extent,
             ),
             gap,
+            recovery.kind != ConditionalExpression,
         );
     }
 }
 
 pub(super) fn add_literal_nodes(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: &ProgramFile,
     kind: AuthoredLiteralKind,
     gap: SyntaxGap,
@@ -359,11 +364,7 @@ pub(super) fn add_literal_nodes(
         .iter()
         .filter(|fact| fact.kind == kind)
     {
-        add_nodes(
-            nonclaims,
-            file.source.id,
-            recovery_nodes(file, fact.owner, fact.span, fact.recovery_extent),
-            gap,
-        );
+        let nodes = recovery_nodes(file, fact.owner, fact.span, fact.recovery_extent);
+        add_nodes(nonclaims, file.source.id, nodes, gap, true);
     }
 }

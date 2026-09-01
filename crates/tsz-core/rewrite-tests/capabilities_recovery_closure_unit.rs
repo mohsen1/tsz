@@ -22,10 +22,10 @@ fn typed_region_reason_does_not_poison_a_sibling_statement() {
     assert_eq!(reasons.len(), 1);
     assert_eq!(
         reasons[0].reason,
-        NonclaimReason::Syntax(SyntaxGap::Template)
+        NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::Template)
     );
     assert_eq!(
-        reasons[0].deletion,
+        reasons[0].deletion_condition(),
         DeletionCondition::DeepestSemanticOwner(SyntaxGap::Template)
     );
     assert_eq!(
@@ -100,13 +100,13 @@ fn recovered_binding_pattern_extent_includes_declarator_continuations() {
         (
             "let {} = missingPattern; const outside = 1;",
             "missingPattern",
-            RecoveryStatementRole::SemanticOwner,
+            RecoveryRole::SemanticOwner,
             false,
         ),
         (
             "let {}, recovered = missingComma; const outside = 1;",
             "missingComma",
-            RecoveryStatementRole::SemanticOwner,
+            RecoveryRole::SemanticOwner,
             false,
         ),
         (
@@ -115,7 +115,7 @@ fn recovered_binding_pattern_extent_includes_declarator_continuations() {
                 "MissingBody; }; const outside = 1;",
             ),
             "missingNested",
-            RecoveryStatementRole::SemanticOwner,
+            RecoveryRole::SemanticOwner,
             false,
         ),
     ] {
@@ -148,9 +148,7 @@ fn recovered_binding_pattern_extent_includes_declarator_continuations() {
         let analysis = default_analysis(&file);
         assert!(!analysis.semantic_check_node_is_claimed(file.source.id, dependent_owner));
         assert_eq!(
-            analysis
-                .semantic_check_node_descendant_permissions(file.source.id, dependent_owner,)
-                .1,
+            semantic_descendant_is_claimed(&analysis, file.source.id, dependent_owner, true,),
             allows_identifiers,
         );
     }
@@ -226,7 +224,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let recovered_body = statement_starting_at(&header, header_source, "MissingRecoveredBody");
     assert_eq!(
         header_roles.get(&recovered_body),
-        Some(&RecoveryStatementRole::SemanticOwner),
+        Some(&RecoveryRole::SemanticOwner),
         "a FunctionLike containing its own recovery remains closed",
     );
 
@@ -248,32 +246,14 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     );
     assert_eq!(
         template_roles.get(&template_recovery.owner.statement),
-        Some(&RecoveryStatementRole::SemanticOwner),
+        Some(&RecoveryRole::SemanticOwner),
     );
-    assert!(
-        template_roles
-            .values()
-            .any(|role| *role == RecoveryStatementRole::RepresentationalFragment),
-        "the reparsed property tail must not become a semantic owner: {template_roles:#?}",
-    );
-    let template_fragment = template_roles
-        .iter()
-        .find_map(|(owner, role)| {
-            (*role == RecoveryStatementRole::RepresentationalFragment).then_some(*owner)
-        })
-        .expect("represented template fragment");
+    assert_eq!(template_roles.len(), 1, "{template_roles:#?}");
     let template_analysis = default_analysis(&template);
     assert!(
-        template_analysis
-            .semantic_check_node_descendant_permissions(template.source.id, template_fragment,)
-            .0,
-        "mixed exact recovery may discover independently claimed nested owners",
-    );
-    assert!(
         !template_analysis
-            .semantic_check_node_descendant_permissions(template.source.id, template_fragment)
-            .1,
-        "a represented recovery fragment cannot publish direct names",
+            .semantic_check_node_is_claimed(template.source.id, template_recovery.owner.statement,),
+        "the one dependency-closed recovered owner stays nonclaimed",
     );
 
     let declaration_tail = program_file(
@@ -311,7 +291,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     let closed = closed.expect("closed declaration sibling");
     assert_eq!(
         declaration_tail_roles.get(&leaked),
-        Some(&RecoveryStatementRole::RepresentationalFragment),
+        Some(&RecoveryRole::RepresentationalFragment),
     );
     let declaration_tail_analysis = default_analysis(&declaration_tail);
     for target in [
@@ -364,7 +344,7 @@ fn concrete_object_method_bodies_are_real_while_spread_recovery_stays_flat() {
     );
     assert_eq!(
         signature_roles.get(&hidden.id),
-        Some(&RecoveryStatementRole::SemanticOwner),
+        Some(&RecoveryRole::SemanticOwner),
         "a represented statement in the real owner subtree keeps semantic identity",
     );
 
@@ -447,33 +427,33 @@ fn flow_contained_recovery_fragments_allow_name_only_descendant_discovery() {
                 let reasons = reasons.collect::<Vec<_>>();
                 let has_recovery = reasons.iter().any(|reason| {
                     matches!(
-                        reason.deletion,
+                        reason.deletion_condition(),
                         DeletionCondition::DeepestSemanticOwner(_)
                             | DeletionCondition::SyntaxOwner(_)
                     )
                 });
                 let has_flow_region = reasons.iter().any(|reason| {
-                    reason.deletion
+                    reason.deletion_condition()
                         == DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference)
                 });
                 if has_recovery && has_flow_region {
                     mixed_owner_count += 1;
                     assert!(
-                        analysis
-                            .semantic_check_node_descendant_permissions(
-                                file.source.id,
-                                statement.id,
-                            )
-                            .0,
+                        semantic_descendant_is_claimed(
+                            &analysis,
+                            file.source.id,
+                            statement.id,
+                            false,
+                        ),
                         "{name} must remain discoverable below {statement:#?}: {reasons:#?}",
                     );
                     assert!(
-                        analysis
-                            .semantic_check_node_descendant_permissions(
-                                file.source.id,
-                                statement.id,
-                            )
-                            .1,
+                        semantic_descendant_is_claimed(
+                            &analysis,
+                            file.source.id,
+                            statement.id,
+                            true,
+                        ),
                         "{name} must retain name discovery below {statement:#?}: {reasons:#?}",
                     );
                 }
@@ -595,11 +575,14 @@ fn recovered_return_continuations_nonclaim_only_the_nearest_inferred_function_va
         found.unwrap_or_else(|| panic!("function {name}"))
     };
 
-    for (name, gap) in [
-        ("chooseTree", SyntaxGap::Expression),
-        ("recoveredBranch", SyntaxGap::Template),
-        ("nestedTree", SyntaxGap::Expression),
-    ] {
+    assert!(
+        file.syntax
+            .parser_recovery_facts
+            .iter()
+            .all(|fact| fact.kind != ParserRecoveryKind::ConditionalExpression)
+    );
+
+    for name in ["chooseTree", "nestedTree"] {
         let scope = CapabilityScope::node(file.source.id, owner(name));
         let CapabilityClaim::Nonclaimed(reasons) =
             analysis.claim(CapabilityTarget::DeclarationValue, scope)
@@ -611,8 +594,7 @@ fn recovered_return_continuations_nonclaim_only_the_nearest_inferred_function_va
             vec![CapabilityNonclaim {
                 target: CapabilityTarget::DeclarationValue,
                 scope,
-                reason: NonclaimReason::Syntax(gap),
-                deletion: DeletionCondition::DeepestSemanticOwner(gap),
+                reason: NonclaimReason::Semantic(SemanticGap::DeclarationExpressionSummary),
             }]
         );
         for target in [
@@ -626,6 +608,27 @@ fn recovered_return_continuations_nonclaim_only_the_nearest_inferred_function_va
         }
     }
 
+    let recovered = CapabilityScope::node(file.source.id, owner("recoveredBranch"));
+    let CapabilityClaim::Nonclaimed(reasons) =
+        analysis.claim(CapabilityTarget::DeclarationValue, recovered)
+    else {
+        panic!("recoveredBranch must not publish its recovered inferred return")
+    };
+    assert_eq!(
+        reasons.copied().collect::<Vec<_>>(),
+        vec![CapabilityNonclaim {
+            target: CapabilityTarget::DeclarationValue,
+            scope: recovered,
+            reason: NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::Template),
+        }]
+    );
+    for target in [
+        CapabilityTarget::DeclarationModel,
+        CapabilityTarget::SemanticCheck,
+    ] {
+        assert!(analysis.claim(target, recovered).is_claimed());
+    }
+
     for name in ["typedFlag", "wrapper", "arrowWrapper", "independent"] {
         assert!(
             analysis
@@ -637,6 +640,124 @@ fn recovered_return_continuations_nonclaim_only_the_nearest_inferred_function_va
             "{name} has a complete return producer",
         );
     }
+}
+
+#[test]
+fn modeled_conditional_preserves_declaration_identity_and_withholds_inferred_products() {
+    let file = program_file(
+        0,
+        "conditional-values.ts",
+        "const inferred = true ? 1 : 2; const annotated: number = true ? 1 : 2;",
+    );
+    let analysis = default_analysis(&file);
+    let declarations = file
+        .syntax
+        .statements
+        .iter()
+        .filter_map(|statement| {
+            matches!(statement.kind, StatementKind::Variable(_)).then_some(statement.id)
+        })
+        .collect::<Vec<_>>();
+    let [inferred, annotated] = declarations.as_slice() else {
+        panic!("two variable statements expected: {declarations:?}");
+    };
+    for owner in [*inferred, *annotated] {
+        assert!(
+            analysis
+                .claim(
+                    CapabilityTarget::DeclarationModel,
+                    CapabilityScope::node(file.source.id, owner),
+                )
+                .is_claimed(),
+        );
+    }
+    assert!(
+        !analysis
+            .claim(
+                CapabilityTarget::DeclarationValue,
+                CapabilityScope::node(file.source.id, *inferred),
+            )
+            .is_claimed()
+    );
+    let summary_gap = SemanticGap::DeclarationExpressionSummary;
+    let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(
+        CapabilityTarget::Declaration,
+        CapabilityScope::node(file.source.id, *inferred),
+    ) else {
+        panic!("an inferred conditional needs an exact checked declaration summary")
+    };
+    assert_eq!(
+        reasons.copied().collect::<Vec<_>>(),
+        vec![CapabilityNonclaim {
+            target: CapabilityTarget::Declaration,
+            scope: CapabilityScope::node(file.source.id, *inferred),
+            reason: NonclaimReason::Semantic(summary_gap),
+        }],
+    );
+    assert!(
+        analysis
+            .claim(
+                CapabilityTarget::DeclarationValue,
+                CapabilityScope::node(file.source.id, *annotated),
+            )
+            .is_claimed()
+    );
+    assert!(
+        analysis
+            .claim(
+                CapabilityTarget::Declaration,
+                CapabilityScope::node(file.source.id, *annotated),
+            )
+            .is_claimed()
+    );
+}
+
+#[test]
+fn missing_conditional_colon_nonclaims_javascript_at_the_recovery_owner() {
+    let source = "flag ? 1 2; const independent = 3;";
+    let file = program_file(0, "conditional-recovery.ts", source);
+    let recovery = file
+        .syntax
+        .parser_recovery_facts
+        .iter()
+        .find(|fact| fact.kind == ParserRecoveryKind::ConditionalExpression)
+        .expect("conditional recovery");
+    let [conditional, following, independent] = file.syntax.statements.as_slice() else {
+        panic!("the unconsumed token and declaration must remain separate statements")
+    };
+    assert_eq!(recovery.owner.statement, conditional.id);
+    assert_eq!(recovery.authored_span, Span::new(file.source.id, 5, 6));
+    assert_eq!(recovery.recovery_extent, Span::new(file.source.id, 0, 8));
+
+    let analysis = default_analysis(&file);
+    let scope = CapabilityScope::node(file.source.id, conditional.id);
+    let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(CapabilityTarget::JavaScript, scope)
+    else {
+        panic!("the recovered conditional must not publish repaired JavaScript")
+    };
+    assert_eq!(
+        reasons.copied().collect::<Vec<_>>(),
+        [CapabilityNonclaim {
+            target: CapabilityTarget::JavaScript,
+            scope,
+            reason: NonclaimReason::Syntax(SyntaxGap::Expression),
+        }],
+    );
+    for statement in [following, independent] {
+        assert!(
+            analysis
+                .claim(
+                    CapabilityTarget::JavaScript,
+                    CapabilityScope::node(file.source.id, statement.id),
+                )
+                .is_claimed(),
+            "independent statement must remain locally claimed: {statement:#?}",
+        );
+    }
+    assert!(
+        !analysis
+            .requested_emit_is_claimed(std::slice::from_ref(&file), &CompilerOptions::default(),)
+    );
 }
 
 #[test]
@@ -710,9 +831,10 @@ fn opaque_namespace_extent_nonclaims_every_recovered_root_fragment() {
             }
         });
     }
-    assert!(
-        fragments.len() >= 4,
-        "fragments={fragments:#?}, host={host:#?}"
+    assert_eq!(
+        fragments.len(),
+        3,
+        "the modeled namespace body owns its class, declaration, and expression: fragments={fragments:#?}, host={host:#?}",
     );
     for statement in fragments {
         let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(
@@ -723,7 +845,8 @@ fn opaque_namespace_extent_nonclaims_every_recovered_root_fragment() {
         };
         assert!(reasons.into_iter().any(|reason| {
             reason.reason == NonclaimReason::Syntax(SyntaxGap::DeclarationHost)
-                && reason.deletion == DeletionCondition::SyntaxOwner(SyntaxGap::DeclarationHost)
+                && reason.deletion_condition()
+                    == DeletionCondition::SyntaxOwner(SyntaxGap::DeclarationHost)
         }));
     }
     let kept = file.syntax.statements.last().expect("following sibling");
@@ -755,19 +878,19 @@ fn recovery_separator_facts_are_orthogonal_and_records_are_deterministic() {
     ) {
         CapabilityClaim::Claimed => panic!("invalid separator recovery must defer"),
         CapabilityClaim::Nonclaimed(reasons) => reasons
-            .map(|reason| (reason.reason, reason.deletion, reason.scope))
+            .map(|reason| (reason.reason, reason.deletion_condition(), reason.scope))
             .collect::<std::collections::BTreeSet<_>>(),
     };
     assert_eq!(
         reasons,
         std::collections::BTreeSet::from([
             (
-                NonclaimReason::Syntax(SyntaxGap::NumericRecovery),
+                NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::NumericRecovery),
                 DeletionCondition::DeepestSemanticOwner(SyntaxGap::NumericRecovery),
                 CapabilityScope::node(recovery.source.id, statement.id),
             ),
             (
-                NonclaimReason::Syntax(SyntaxGap::NumericSeparator),
+                NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::NumericSeparator),
                 DeletionCondition::DeepestSemanticOwner(SyntaxGap::NumericSeparator),
                 CapabilityScope::node(recovery.source.id, statement.id),
             ),
@@ -802,8 +925,9 @@ fn module_local_declaration_groups_inherit_one_typed_peer_nonclaim() {
             panic!("the signature model must inherit its implementation peer nonclaim");
         };
         assert!(reasons.into_iter().any(|record| {
-            record.reason == NonclaimReason::Syntax(SyntaxGap::Template)
-                && record.deletion == DeletionCondition::DeepestSemanticOwner(SyntaxGap::Template)
+            record.reason == NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::Template)
+                && record.deletion_condition()
+                    == DeletionCondition::DeepestSemanticOwner(SyntaxGap::Template)
         }));
     }
     assert!(
@@ -868,7 +992,7 @@ fn every_temporary_owner_has_a_typed_deletion_condition() {
             .expect("missing essential library reason");
         assert_eq!(missing_reason.reason, NonclaimReason::MissingEssentialTypes);
         assert_eq!(
-            missing_reason.deletion,
+            missing_reason.deletion_condition(),
             DeletionCondition::EssentialLibraryUniverse
         );
     }
@@ -901,7 +1025,7 @@ fn every_temporary_owner_has_a_typed_deletion_condition() {
     let fatal_reason = fatal_reasons.next().expect("fatal option reason");
     assert_eq!(fatal_reason.reason, NonclaimReason::FatalCompilerOption);
     assert_eq!(
-        fatal_reason.deletion,
+        fatal_reason.deletion_condition(),
         DeletionCondition::CompilerOptionOwner
     );
 
@@ -954,12 +1078,12 @@ fn every_temporary_owner_has_a_typed_deletion_condition() {
     );
     assert!(option.nonclaims.iter().any(|record| {
         record.reason == NonclaimReason::UnsupportedCompilerOption(CompilerOptionKey::SourceMap)
-            && record.deletion == DeletionCondition::CompilerOptionOwner
+            && record.deletion_condition() == DeletionCondition::CompilerOptionOwner
     }));
 }
 
 #[test]
-fn global_no_check_ignores_only_semantic_diagnostic_nonclaims() {
+fn global_no_check_omits_the_semantic_diagnostic_product() {
     let mut options = CompilerOptions {
         no_check: true,
         ..CompilerOptions::default()
@@ -978,15 +1102,17 @@ fn global_no_check_ignores_only_semantic_diagnostic_nonclaims() {
         &options,
         CapabilityContext::default(),
     );
-    assert!(!analysis.semantic_diagnostics_are_claimed(&options));
+    assert!(analysis.semantic_diagnostics_are_claimed(&options));
 
     options.no_check = false;
-    let analysis = CapabilityAnalysis::derive(
-        std::slice::from_ref(&semantic),
-        &options,
-        CapabilityContext::default(),
-    );
-    assert!(!analysis.semantic_diagnostics_are_claimed(&options));
+    for file in [&semantic, &recovery] {
+        let analysis = CapabilityAnalysis::derive(
+            std::slice::from_ref(file),
+            &options,
+            CapabilityContext::default(),
+        );
+        assert!(!analysis.semantic_diagnostics_are_claimed(&options));
+    }
 }
 
 #[test]
@@ -1035,7 +1161,7 @@ fn flow_region_closes_over_the_container_suffix_but_not_function_like_bodies() {
         };
         assert!(reasons.into_iter().any(|record| {
             record.reason == NonclaimReason::Semantic(SemanticGap::FlowTypeOfReference)
-                && record.deletion
+                && record.deletion_condition()
                     == DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference)
         }));
         for target in [
@@ -1053,12 +1179,7 @@ fn flow_region_closes_over_the_container_suffix_but_not_function_like_bodies() {
             );
         }
         assert!(
-            analysis
-                .semantic_check_node_function_like_descendant_permissions(
-                    file.source.id,
-                    statement.id,
-                )
-                .0,
+            function_like_descendant_is_claimed(&analysis, file.source.id, statement.id, false,),
             "pure flow-region hosts may inventory independent arrows",
         );
     }
@@ -1142,21 +1263,18 @@ fn recovery_in_a_signature_seeds_only_its_executable_body_container() {
         &CompilerOptions::default(),
         CapabilityContext::default(),
     );
+    assert!(semantic_descendant_is_claimed(
+        &analysis,
+        file.source.id,
+        root.id,
+        false,
+    ));
     assert!(
-        analysis
-            .semantic_check_node_descendant_permissions(file.source.id, root.id)
-            .0
-    );
-    assert!(
-        !analysis
-            .semantic_check_node_descendant_permissions(file.source.id, root.id)
-            .1,
+        !semantic_descendant_is_claimed(&analysis, file.source.id, root.id, true),
         "a generic recovered signature may discover body statements, not header fragments",
     );
     assert!(
-        !analysis
-            .semantic_check_node_function_like_descendant_permissions(file.source.id, root.id)
-            .0,
+        !function_like_descendant_is_claimed(&analysis, file.source.id, root.id, false),
         "syntax-recovery hosts cannot publish arrow signatures",
     );
     assert!(
@@ -1177,9 +1295,7 @@ fn recovery_in_a_signature_seeds_only_its_executable_body_container() {
         "type-only declarations remain independently checkable",
     );
     assert!(
-        !analysis
-            .semantic_check_node_descendant_permissions(file.source.id, nested.id)
-            .0,
+        !semantic_descendant_is_claimed(&analysis, file.source.id, nested.id, false),
         "the nested function declaration belongs to the outer suffix",
     );
     let StatementKind::Function(nested_function) = &nested.kind else {
@@ -1204,32 +1320,27 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
     let recovery = |scope| CapabilityNonclaim {
         target: CapabilityTarget::SemanticCheck,
         scope,
-        reason: NonclaimReason::Syntax(SyntaxGap::TypeRecovery),
-        deletion: DeletionCondition::DeepestSemanticOwner(SyntaxGap::TypeRecovery),
+        reason: NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::TypeRecovery),
     };
     let fragment = |scope| CapabilityNonclaim {
         target: CapabilityTarget::SemanticCheck,
         scope,
         reason: NonclaimReason::Syntax(SyntaxGap::TypeRecovery),
-        deletion: DeletionCondition::SyntaxOwner(SyntaxGap::TypeRecovery),
     };
     let flow = |scope| CapabilityNonclaim {
         target: CapabilityTarget::SemanticCheck,
         scope,
         reason: NonclaimReason::Semantic(SemanticGap::FlowTypeOfReference),
-        deletion: DeletionCondition::SemanticOwner(SemanticGap::FlowTypeOfReference),
     };
     let function_like = |scope, gap| CapabilityNonclaim {
         target: CapabilityTarget::SemanticCheck,
         scope,
         reason: NonclaimReason::Semantic(gap),
-        deletion: DeletionCondition::SemanticOwner(gap),
     };
-    let required_recovery = |scope, deletion| CapabilityNonclaim {
+    let required_recovery = |scope, reason| CapabilityNonclaim {
         target: CapabilityTarget::RequiredType,
         scope,
-        reason: NonclaimReason::Syntax(SyntaxGap::TypeRecovery),
-        deletion,
+        reason,
     };
     let analysis = |nonclaims: Vec<CapabilityNonclaim>| CapabilityAnalysis {
         nonclaims: nonclaims.into_boxed_slice(),
@@ -1237,46 +1348,52 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
     };
 
     assert!(
-        analysis(vec![recovery(requested_scope)])
-            .semantic_check_node_descendant_permissions(file, owner)
-            .0,
+        semantic_descendant_is_claimed(
+            &analysis(vec![recovery(requested_scope)]),
+            file,
+            owner,
+            false,
+        ),
         "an exact-node semantic recovery owner may enter independently claimed descendants",
     );
     let mixed = analysis(vec![recovery(requested_scope), fragment(requested_scope)]);
     assert!(
-        mixed
-            .semantic_check_node_descendant_permissions(file, owner)
-            .0,
+        semantic_descendant_is_claimed(&mixed, file, owner, false),
         "an exact semantic owner may discover descendants through its represented fragment",
     );
     assert!(
-        !mixed
-            .semantic_check_node_descendant_permissions(file, owner)
-            .1,
+        !semantic_descendant_is_claimed(&mixed, file, owner, true),
         "a represented fragment does not publish direct names",
     );
     assert!(
-        !analysis(vec![fragment(requested_scope)])
-            .semantic_check_node_descendant_permissions(file, owner)
-            .0,
+        !semantic_descendant_is_claimed(
+            &analysis(vec![fragment(requested_scope)]),
+            file,
+            owner,
+            false,
+        ),
         "a representational fragment alone cannot discover semantic descendants",
     );
     assert!(
-        analysis(vec![recovery(requested_scope), flow(requested_scope)])
-            .semantic_check_node_descendant_permissions(file, owner)
-            .0,
+        semantic_descendant_is_claimed(
+            &analysis(vec![recovery(requested_scope), flow(requested_scope)]),
+            file,
+            owner,
+            false,
+        ),
         "an exact-node flow region may accompany its exact-node recovery owner",
     );
     assert!(
-        !analysis(vec![flow(requested_scope)])
-            .semantic_check_node_descendant_permissions(file, owner)
-            .0,
+        !semantic_descendant_is_claimed(&analysis(vec![flow(requested_scope)]), file, owner, false,),
         "a pure flow region does not itself authorize descendant traversal",
     );
     assert!(
-        analysis(vec![flow(requested_scope)])
-            .semantic_check_node_function_like_descendant_permissions(file, owner)
-            .0,
+        function_like_descendant_is_claimed(
+            &analysis(vec![flow(requested_scope)]),
+            file,
+            owner,
+            false,
+        ),
         "an exact-node flow region may inventory independent function-like expressions",
     );
     for gap in [
@@ -1285,70 +1402,97 @@ fn claimed_descendant_descent_requires_exact_node_scoped_reasons() {
         SemanticGap::FunctionExpressionBindingName,
     ] {
         assert_eq!(
-            analysis(vec![function_like(requested_scope, gap)])
-                .semantic_check_node_function_like_descendant_permissions(file, owner)
-                .0,
+            function_like_descendant_is_claimed(
+                &analysis(vec![function_like(requested_scope, gap)]),
+                file,
+                owner,
+                false,
+            ),
             gap != SemanticGap::FunctionLikeTypeParameters,
             "generic environments remain dependency-closed while local binding gaps may enter a nested FunctionLike gate",
         );
         assert!(
-            !analysis(vec![
-                function_like(requested_scope, gap),
-                fragment(requested_scope),
-            ])
-            .semantic_check_node_function_like_descendant_permissions(file, owner)
-            .0,
+            !function_like_descendant_is_claimed(
+                &analysis(vec![
+                    function_like(requested_scope, gap),
+                    fragment(requested_scope),
+                ]),
+                file,
+                owner,
+                false,
+            ),
             "syntax recovery must keep nested FunctionLike signatures dependency-closed",
         );
     }
     assert!(
-        analysis(vec![required_recovery(
-            requested_scope,
-            DeletionCondition::DeepestSemanticOwner(SyntaxGap::TypeRecovery),
-        )])
-        .required_type_node_allows_function_like_reentry(file, owner),
+        required_function_like_is_claimed(
+            &analysis(vec![required_recovery(
+                requested_scope,
+                NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::TypeRecovery),
+            )]),
+            file,
+            owner,
+        ),
         "an exact semantic recovery owner may re-enter a nested required-type owner",
     );
     assert!(
-        !analysis(vec![required_recovery(
-            requested_scope,
-            DeletionCondition::SyntaxOwner(SyntaxGap::TypeRecovery),
-        )])
-        .required_type_node_allows_function_like_reentry(file, owner),
+        !required_function_like_is_claimed(
+            &analysis(vec![required_recovery(
+                requested_scope,
+                NonclaimReason::Syntax(SyntaxGap::TypeRecovery),
+            )]),
+            file,
+            owner,
+        ),
         "a representational fragment cannot publish a nested function signature",
     );
 
     for broader_scope in [CapabilityScope::Program, CapabilityScope::File(file)] {
         assert!(
-            !analysis(vec![recovery(broader_scope)])
-                .semantic_check_node_descendant_permissions(file, owner)
-                .0,
+            !semantic_descendant_is_claimed(
+                &analysis(vec![recovery(broader_scope)]),
+                file,
+                owner,
+                false,
+            ),
             "a {broader_scope:?} recovery reason cannot unlock node descent",
         );
         assert!(
-            !analysis(vec![recovery(broader_scope), flow(requested_scope)])
-                .semantic_check_node_descendant_permissions(file, owner)
-                .0,
+            !semantic_descendant_is_claimed(
+                &analysis(vec![recovery(broader_scope), flow(requested_scope)]),
+                file,
+                owner,
+                false,
+            ),
             "an exact-node flow reason cannot narrow a {broader_scope:?} recovery reason",
         );
         assert!(
-            !analysis(vec![recovery(requested_scope), flow(broader_scope)])
-                .semantic_check_node_descendant_permissions(file, owner)
-                .0,
+            !semantic_descendant_is_claimed(
+                &analysis(vec![recovery(requested_scope), flow(broader_scope)]),
+                file,
+                owner,
+                false,
+            ),
             "an exact-node recovery reason cannot narrow a {broader_scope:?} flow reason",
         );
         assert!(
-            !analysis(vec![flow(broader_scope)])
-                .semantic_check_node_function_like_descendant_permissions(file, owner)
-                .0,
+            !function_like_descendant_is_claimed(
+                &analysis(vec![flow(broader_scope)]),
+                file,
+                owner,
+                false,
+            ),
             "a {broader_scope:?} flow reason cannot unlock node-owned function-like semantics",
         );
         assert!(
-            !analysis(vec![required_recovery(
-                broader_scope,
-                DeletionCondition::DeepestSemanticOwner(SyntaxGap::TypeRecovery),
-            )])
-            .required_type_node_allows_function_like_reentry(file, owner),
+            !required_function_like_is_claimed(
+                &analysis(vec![required_recovery(
+                    broader_scope,
+                    NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::TypeRecovery),
+                )]),
+                file,
+                owner,
+            ),
             "a {broader_scope:?} recovery reason cannot unlock nested required-type owners",
         );
     }

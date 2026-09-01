@@ -1114,6 +1114,10 @@ def check_semantic_api_boundary(root: Path) -> list[Violation]:
 ARCHITECTURE_RATCHET_PATH = "scripts/arch/rewrite-architecture-ratchet.json"
 
 
+class ArchitectureMetricAnchorError(ValueError):
+    """Raised when a lexical ratchet can no longer find its semantic owner."""
+
+
 def _rust_struct_body(text: str, name: str) -> str:
     code, _ = _rust_code_and_string_literals(_without_cfg_test_modules(text))
     declaration = re.search(
@@ -1183,6 +1187,21 @@ def _top_level_boolean_term_count(condition: str) -> int:
     return operators + 1 if condition.strip() else 0
 
 
+def _required_metric_condition(
+    text: str,
+    pattern: str,
+    metric: str,
+) -> str:
+    """Return one owner's condition or fail rather than reporting a false zero."""
+
+    matches = list(re.finditer(pattern, text, re.DOTALL))
+    if len(matches) != 1:
+        raise ArchitectureMetricAnchorError(
+            f"{metric} requires exactly one program owner anchor; found {len(matches)}"
+        )
+    return matches[0].group("condition")
+
+
 def rewrite_architecture_metrics(root: Path) -> dict[str, int]:
     """Measure distributed rewrite ownership that must not grow.
 
@@ -1221,20 +1240,19 @@ def rewrite_architecture_metrics(root: Path) -> dict[str, int]:
     product_capabilities = _rust_struct_body(modifiers_text, "ProductCapabilities")
     checker = _rust_struct_body(checker_text, "Checker")
     emit_plan = _rust_struct_body(emit_paths_text, "EmitPlan")
-    check_branch = re.search(
-        r"=\s*if\s+(?P<condition>options\.no_check.*?)\{\s*CheckResult\s*\{",
+    check_condition = _required_metric_condition(
         program_text,
-        re.DOTALL,
+        r"\blet\s+CheckResult\s*\{[^{}]*\}\s*=\s*if\s+"
+        r"(?P<condition>options\.no_check[^{}]*)\s*\{",
+        "program_whole_check_skip_terms",
     )
-    check_condition = check_branch.group("condition") if check_branch else ""
-    completion_branch = re.search(
-        r"diagnostics\.extend\(semantic_diagnostics\);\s*if\s+"
-        r"(?P<condition>.*?)\s*\{\s*semantic_completion\s*=",
+    completion_condition = _required_metric_condition(
         program_text,
-        re.DOTALL,
-    )
-    completion_condition = (
-        completion_branch.group("condition") if completion_branch else ""
+        r"\bif\s+(?P<condition>[^{}]*"
+        r"!capabilities\.semantic_diagnostics_are_claimed\s*\(\s*options\s*\)"
+        r"[^{}]*)\s*\{\s*checker_completion\s*=\s*"
+        r"checker_completion\.combine\s*\(\s*SemanticCompletion::Deferred\s*\)\s*;",
+        "program_completion_gate_terms",
     )
     force_type_calls = _rust_method_call_arguments(production, ("force_type",))
     force_deferred_calls = _rust_method_call_arguments(production, ("force_deferred",))
@@ -1315,7 +1333,8 @@ def rewrite_architecture_metrics(root: Path) -> dict[str, int]:
         ),
         "program_completion_deferred_assignments": len(
             re.findall(
-                r"semantic_completion\s*=\s*semantic_completion\.combine\s*\("
+                r"\b(?P<completion>[A-Za-z_][A-Za-z0-9_]*_completion)\s*=\s*"
+                r"(?P=completion)\.combine\s*\("
                 r"SemanticCompletion::Deferred\s*\)",
                 program_text,
             )
@@ -1381,7 +1400,17 @@ def check_rewrite_architecture_ratchet(root: Path) -> list[Violation]:
                 "metric baseline must be a JSON object",
             )
         ]
-    actual = rewrite_architecture_metrics(root)
+    try:
+        actual = rewrite_architecture_metrics(root)
+    except ArchitectureMetricAnchorError as error:
+        return [
+            Violation(
+                ARCHITECTURE_RATCHET_PATH,
+                1,
+                "architecture-ratchet",
+                f"cannot measure rewrite ownership: {error}",
+            )
+        ]
     violations: list[Violation] = []
     if set(baseline) != set(actual):
         violations.append(

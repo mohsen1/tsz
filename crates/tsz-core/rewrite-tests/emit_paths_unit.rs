@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::bind::bind_source;
+use crate::bind::bind_source_with_kind;
 use crate::program::{CapabilityContext, CompilerOptions};
 use crate::source::{FileId, SourceText};
 use crate::syntax::parse_source;
@@ -15,7 +15,11 @@ fn file_with_text(id: u32, path: &str, text: &str) -> ProgramFile {
     let source = SourceText::new(FileId(id), PathBuf::from(path), Arc::from(text));
     let parsed = parse_source(&source);
     ProgramFile {
-        bindings: bind_source(source.id, &parsed.unit),
+        bindings: bind_source_with_kind(
+            source.id,
+            crate::source::SourceKind::TypeScript,
+            &parsed.unit,
+        ),
         source,
         syntax: parsed.unit,
     }
@@ -123,15 +127,12 @@ fn unsupported_map_options_withhold_affected_products_in_both_root_orders() {
             reverse.for_file(id).declaration
         );
     }
-    assert_eq!(forward.diagnostics(), reverse.diagnostics());
-    assert_eq!(
-        forward.has_blocked_products(),
-        reverse.has_blocked_products()
-    );
+    assert_eq!(forward.program_diagnostics(), reverse.program_diagnostics());
+    assert_eq!(forward.emit_diagnostics(), reverse.emit_diagnostics());
     assert!(forward.for_file(FileId(0)).javascript.is_none());
     assert!(forward.for_file(FileId(1)).declaration.is_none());
-    assert!(!forward.has_blocked_products());
-    assert!(forward.diagnostics().is_empty());
+    assert!(forward.program_diagnostics().is_empty());
+    assert!(forward.emit_diagnostics().is_empty());
 }
 
 #[test]
@@ -159,10 +160,15 @@ fn capability_and_collision_gates_leave_independent_primary_products() {
         declaration_only.for_file(FileId(0)).declaration.as_deref(),
         Some(Path::new("types/value.d.ts"))
     );
-    assert!(declaration_only.has_blocked_products());
-    assert!(declaration_only.diagnostics().iter().any(|diagnostic| {
-        diagnostic.code == 5055 && diagnostic.message_text.contains("dist/value.js")
-    }));
+    assert!(!declaration_only.emit_diagnostics().is_empty());
+    assert!(
+        declaration_only
+            .emit_diagnostics()
+            .iter()
+            .any(|diagnostic| {
+                diagnostic.code == 5055 && diagnostic.message_text.contains("dist/value.js")
+            })
+    );
 }
 
 #[test]
@@ -191,12 +197,13 @@ fn unsupported_map_products_do_not_publish_collision_diagnostics() {
         let plan = plan(&files, &options);
         assert!(plan.for_file(FileId(0)).javascript.is_none());
         assert!(plan.for_file(FileId(0)).declaration.is_none());
-        assert!(!plan.has_blocked_products());
-        assert_eq!(plan.diagnostics().len(), 2);
+        assert!(plan.emit_diagnostics().is_empty());
+        assert_eq!(plan.program_diagnostics().len(), 2);
         assert!(
-            plan.diagnostics()
+            plan.program_diagnostics()
                 .iter()
                 .all(|diagnostic| diagnostic.code == 6059)
         );
+        assert!(plan.emit_diagnostics().is_empty());
     }
 }

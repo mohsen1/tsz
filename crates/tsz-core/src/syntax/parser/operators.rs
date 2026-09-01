@@ -1,22 +1,67 @@
-use super::super::{BinaryOperator, Expression, ExpressionKind, SourceSyntaxFact, TokenKind};
+use super::super::{
+    BinaryOperator, Expression, ExpressionKind, ParserRecoveryKind, SourceSyntaxFact, TokenKind,
+};
 use super::Parser;
-
+use crate::source::Span;
 impl Parser<'_> {
     pub(super) fn parse_expression(&mut self) -> Expression {
-        let expression = self.parse_assignment_expression();
-        self.observe_unmodeled_template_tail(&expression);
+        let mut expression = self.parse_assignment_expression();
+        while self.at(TokenKind::Comma) {
+            let operator_span = self.bump().span;
+            let right = self.parse_assignment_expression();
+            expression = Expression {
+                id: self.alloc_node(),
+                span: expression.span.merge(right.span),
+                kind: ExpressionKind::Binary {
+                    left: Box::new(expression),
+                    operator: BinaryOperator::Comma,
+                    operator_span,
+                    right: Box::new(right),
+                },
+            };
+        }
         expression
     }
-
-    pub(super) fn parse_binary_expression_with_shift_assignment_recovery(&mut self) -> Expression {
-        let expression = self.parse_binary_expression(0);
+    pub(super) fn parse_conditional_expression(&mut self) -> Expression {
+        let condition = self.parse_binary_expression(0);
         if !self.speculating && self.at(TokenKind::GreaterThanGreaterThanGreaterThanEquals) {
             self.source_syntax_facts
                 .insert(SourceSyntaxFact::UnsignedRightShiftAssignmentRecovery);
         }
-        expression
+        if !self.at(TokenKind::Question) {
+            return condition;
+        }
+        let question_span = self.bump().span;
+        let when_true = self.parse_assignment_expression();
+        let (colon_span, when_false) = if self.at(TokenKind::Colon) {
+            let colon_span = self.bump().span;
+            (Some(colon_span), self.parse_assignment_expression())
+        } else {
+            self.error_current("':' expected.", 1005);
+            let end = self.previous().span.end as usize;
+            let missing = Span::new(self.source.id, end, end);
+            (None, self.missing_expression(missing))
+        };
+        let span = condition.span.merge(when_false.span);
+        if colon_span.is_none() {
+            self.note_recovery(
+                ParserRecoveryKind::ConditionalExpression,
+                question_span,
+                span,
+            );
+        }
+        Expression {
+            id: self.alloc_node(),
+            span,
+            kind: ExpressionKind::Conditional {
+                condition: Box::new(condition),
+                question_span,
+                when_true: Box::new(when_true),
+                colon_span,
+                when_false: Box::new(when_false),
+            },
+        }
     }
-
     pub(super) fn observe_unsigned_shift_prefix_recovery(&mut self, kind: TokenKind) {
         if self.speculating {
             return;
@@ -33,7 +78,6 @@ impl Parser<'_> {
         self.source_syntax_facts.extend(fact);
     }
 }
-
 pub(super) const fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, u8)> {
     let operator = match kind {
         TokenKind::BarBar => (BinaryOperator::LogicalOr, 1),
@@ -64,7 +108,6 @@ pub(super) const fn binary_operator(kind: TokenKind) -> Option<(BinaryOperator, 
     };
     Some(operator)
 }
-
 pub(super) fn expression_has_recovered_left_edge(expression: &Expression) -> bool {
     match &expression.kind {
         ExpressionKind::Missing => true,
@@ -79,6 +122,9 @@ pub(super) fn expression_has_recovered_left_edge(expression: &Expression) -> boo
         }
         | ExpressionKind::Parenthesized(object) => expression_has_recovered_left_edge(object),
         ExpressionKind::Binary { left, .. }
+        | ExpressionKind::Conditional {
+            condition: left, ..
+        }
         | ExpressionKind::Assignment { left, .. }
         | ExpressionKind::As {
             expression: left, ..

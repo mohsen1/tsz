@@ -8,8 +8,15 @@ fn compile(source: &str) -> tsz::CompileOutput {
 }
 
 fn compile_with_strict(source: &str, strict: bool) -> tsz::CompileOutput {
+    compile_sources([("case.ts", source)], strict)
+}
+
+fn compile_sources<const N: usize>(sources: [(&str, &str); N], strict: bool) -> tsz::CompileOutput {
     Compiler::new().compile(
-        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
+        sources
+            .into_iter()
+            .map(|(path, source)| SourceInput::new(path, Arc::<str>::from(source)))
+            .collect(),
         &CompilerOptions {
             no_emit: false,
             strict,
@@ -305,6 +312,70 @@ fn this_without_a_lexical_owner_defers_and_keeps_independent_diagnostics() {
         SemanticCompletion::Deferred
     );
     assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+}
+
+#[test]
+fn script_global_this_shape_stays_symbolic_across_global_property_kinds() {
+    // TypeScript 7's program-global object includes `var` and function
+    // declarations but excludes `let`, `const`, and class declarations. It
+    // resolves the first two reads, reports TS2339 for the three block-scoped
+    // reads in both modes, and reports TS7017 for the unknown strict read.
+    // Until that merged object has one program-owned shape, TSZ must not turn
+    // any branch into definitive `any` or absence. This nonclaim graduates
+    // when the program supplies that shape to the checker session.
+    for strict in [true, false] {
+        for source in [
+            "var exposed=1;const value:number=this.exposed;",
+            "function exposed(){return 1;}const value:()=>number=this.exposed;",
+            "let hidden=1;this.hidden;",
+            "const hidden=1;this.hidden;",
+            "class Hidden{}this.Hidden;",
+            "this.unknownProperty;",
+        ] {
+            assert_deferred_without_diagnostics(&compile_with_strict(source, strict));
+        }
+    }
+}
+
+#[test]
+fn cross_file_global_this_projection_is_repeatable_and_root_order_independent() {
+    // Pinned TypeScript resolves these as `number` and `() => number` from
+    // either root order. TSZ retains the same program-global query identity
+    // across repetitions while its global-object producer remains deferred.
+    let declarations = (
+        "declarations.ts",
+        "var sharedCount=1;function sharedCall(){return 1;}",
+    );
+    let uses = (
+        "uses.ts",
+        concat!(
+            "const count:number=this.sharedCount;",
+            "const call:()=>number=this.sharedCall;",
+        ),
+    );
+    for strict in [true, false] {
+        for roots in [
+            [declarations, uses],
+            [declarations, uses],
+            [uses, declarations],
+        ] {
+            assert_deferred_without_diagnostics(&compile_sources(roots, strict));
+        }
+    }
+}
+
+#[test]
+fn global_this_nonclaim_stops_at_module_function_and_class_boundaries() {
+    // The program-global owner does not cross either boundary. TypeScript 7
+    // resolves module `this` as `undefined` and ordinary-function `this`
+    // through the function signature/context; both remain local nonclaims
+    // until those owners are modeled.
+    for source in ["export {};this.missing;", "function owner(){this.missing;}"] {
+        assert_deferred_without_diagnostics(&compile(source));
+    }
+
+    let class_owner = compile("class Owner{value=1;method(){const kept:number=this.value;}}");
+    assert_complete_without_diagnostics(&class_owner);
 }
 
 #[test]

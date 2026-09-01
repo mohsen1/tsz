@@ -343,7 +343,10 @@ fn diagnostics_survive_checked_no_check_and_no_emit_while_products_stay_owned() 
                     &text,
                     options(no_check, no_emit),
                 );
-                let semantic_complete = no_check || case.terminated && !case.invalid;
+                // The public compile result retains the definitive syntax
+                // diagnostic and also combines the checker's local nonclaim
+                // for a recovered literal. `noCheck` omits that semantic phase.
+                let semantic_complete = no_check || (case.terminated && !case.invalid);
                 let expected_completion = if semantic_complete {
                     SemanticCompletion::Complete
                 } else {

@@ -124,8 +124,13 @@ case "$FAKE_STATS_MODE" in
     FAKE_STATS_FILE="$stats_file" write_stats
     exit 3
     ;;
-  positive|root-mismatch|source-mismatch|root-path-mismatch|source-path-mismatch|oracle-timeout|source-oracle-timeout)
+  positive|root-mismatch|source-mismatch|root-path-mismatch|source-path-mismatch|oracle-timeout|source-oracle-timeout|graph-input-mutation|oracle-input-mutation)
     FAKE_STATS_FILE="$stats_file" write_stats
+    exit 0
+    ;;
+  input-mutation)
+    FAKE_STATS_FILE="$stats_file" write_stats
+    printf '\n// changed while compiler result was being produced\n' >> "$FAKE_PROJECT_ROOT/src/index.ts"
     exit 0
     ;;
   diagnostic-parity)
@@ -213,6 +218,10 @@ function runCase(
     writeFile(compiler, fakeCompilerScript(), 0o755);
     fs.mkdirSync(oracleLibDir, { recursive: true });
     writeFile(
+      path.join(oracleLibDir, "lib.es2022.d.ts"),
+      "interface Array<T> { readonly length: number; }\n",
+    );
+    writeFile(
       oracleCompiler,
       `#!/usr/bin/env bash
 if [[ " $* " == *" --noLib "* ]]; then
@@ -240,6 +249,9 @@ if [[ " $* " == *" --listFilesOnly "* ]]; then
       "$FAKE_PROJECT_ROOT/src/three.ts" "$FAKE_PROJECT_ROOT/src/four.ts" \
       "$FAKE_PROJECT_ROOT/src/five.ts" "$FAKE_PROJECT_ROOT/src/six.ts" \
       "$FAKE_PROJECT_ROOT/src/seven.ts"
+  fi
+  if [[ "$FAKE_STATS_MODE" == "graph-input-mutation" ]]; then
+    printf '\n// changed while graph evidence was being produced\n' >> "$FAKE_PROJECT_ROOT/src/index.ts"
   fi
   exit 0
 fi
@@ -281,6 +293,10 @@ case "$FAKE_STATS_MODE" in
   blank-nonzero)
     exit 1
     ;;
+  oracle-input-mutation)
+    printf '\n// changed while diagnostic oracle evidence was being produced\n' >> "$FAKE_PROJECT_ROOT/src/index.ts"
+    exit 0
+    ;;
   *)
     exit 0
     ;;
@@ -320,13 +336,32 @@ esac
     const first = invoke();
     assert.equal(first.status, 0, `${mode}:\n${first.stdout}\n${first.stderr}`);
     const firstRow = readOnlyRow(fixtureRoot);
-    if (!repeat) return { row: firstRow, output: `${first.stdout}\n${first.stderr}` };
-
     const oracleCache = path.join(
       fixtureRoot,
       ".tsc-oracle-cache",
       "utility-types-project",
     );
+    if (mode === "graph-input-mutation") {
+      assert.equal(
+        fs.existsSync(`${oracleCache}.graph-counts`),
+        false,
+        "moving graph inputs must not publish evidence under the pre-run fingerprint",
+      );
+    }
+    if (mode === "oracle-input-mutation") {
+      assert.equal(
+        fs.existsSync(oracleCache),
+        false,
+        "moving diagnostic inputs must not publish evidence under the pre-run fingerprint",
+      );
+      assert.equal(
+        fs.existsSync(`${oracleCache}.log`),
+        false,
+        "moving diagnostic inputs must not publish an uncommitted oracle log",
+      );
+    }
+    if (!repeat) return { row: firstRow, output: `${first.stdout}\n${first.stderr}` };
+
     if (tamperOracleLog) {
       const metadata = fs.readFileSync(oracleCache, "utf8");
       assert.match(metadata, /^SCHEMA=2$/m);
@@ -397,12 +432,21 @@ esac
         output: `${second.stdout}\n${second.stderr}`,
       };
     }
-    assert.match(second.stdout, /result cache hit/);
+    const secondRow = readOnlyRow(fixtureRoot);
+    const cacheText = fs.existsSync(cacheFile) ? fs.readFileSync(cacheFile, "utf8") : "";
+    assert.match(
+      second.stdout,
+      /result cache hit/,
+      JSON.stringify({
+        firstFingerprint: firstRow.compile_input_fingerprint,
+        secondFingerprint: secondRow.compile_input_fingerprint,
+        cachedFingerprint: cacheText.match(/^FINGERPRINT=(.*)$/m)?.[1] ?? null,
+      }),
+    );
     assert.equal(fs.readFileSync(runCount, "utf8"), "1", "cache hit must not rerun tsz");
-    const cacheText = fs.readFileSync(cacheFile, "utf8");
     return {
       firstRow,
-      row: readOnlyRow(fixtureRoot),
+      row: secondRow,
       cacheText,
       output: `${second.stdout}\n${second.stderr}`,
     };
@@ -413,10 +457,33 @@ esac
 
 {
   const { row } = runCase("positive");
-  assert.equal(row.state, "green");
+  assert.equal(row.state, "gray", "a fake binary without a build manifest is non-evidence");
+  assert.ok(row.evidence_failures.includes("build_manifest_sha256"));
+  assert.equal(row.compile_input_stable, true);
+  assert.match(row.evidence_protocol_fingerprint, /^[0-9a-f]{64}$/);
   assert.equal(row.files_reached, 7, "source_files, not a directory walk, is recorded");
   assert.equal(row.files_reached_reason, null);
   assert.deepEqual(row.exit_codes.tsc, [0], "green requires a clean pinned oracle run");
+}
+
+{
+  const { firstRow, row, cacheText } = runCase("input-mutation", {
+    repeat: true,
+    cacheExpected: false,
+  });
+  for (const [label, value] of [["fresh", firstRow], ["repeated", row]]) {
+    assert.equal(value.state, "gray", `${label}: moving compile inputs are non-evidence`);
+    assert.equal(value.compile_input_stable, false);
+    assert.ok(value.evidence_failures.includes("compile_input_stable"));
+  }
+  assert.equal(cacheText, "", "a moving project tree never enters the result cache");
+}
+
+for (const mode of ["graph-input-mutation", "oracle-input-mutation"]) {
+  const { row } = runCase(mode, { resultCache: false });
+  assert.equal(row.state, "gray", `${mode}: moving oracle inputs are non-evidence`);
+  assert.equal(row.compile_input_stable, false);
+  assert.ok(row.evidence_failures.includes("compile_input_stable"));
 }
 
 {
@@ -529,7 +596,7 @@ for (const mode of ["oracle-timeout", "source-oracle-timeout"]) {
     oracle: true,
   });
   for (const [label, value] of [["fresh", firstRow], ["cached", row]]) {
-    assert.equal(value.state, "green", `${label}: matching diagnostics are parity`);
+    assert.equal(value.state, "gray", `${label}: parity without build provenance remains gray`);
     assert.equal(
       value.oracle_classification,
       "both-fail-same",
@@ -577,7 +644,7 @@ for (const [mode, expectedReason] of [
     tamperOracleLog: true,
   });
   for (const [label, value] of [["fresh", firstRow], ["after interrupted publication", row]]) {
-    assert.equal(value.state, "green", `${label}: a complete matching pair is evidence`);
+    assert.equal(value.state, "gray", `${label}: a complete pair without build provenance remains gray`);
     assert.deepEqual(value.exit_codes.tsz, [1]);
     assert.deepEqual(value.exit_codes.tsc, [1]);
   }

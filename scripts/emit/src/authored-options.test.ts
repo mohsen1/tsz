@@ -44,18 +44,34 @@ assert.equal(optionBoolean(precedence, 'allowUnreachableCode'), true, 'directive
 assert.equal(precedence.get('allowunreachablecode')?.source, 'directive');
 assert.equal(authoredOptionDisposition('base'), 'harness-only');
 assert.equal(authoredOptionDisposition('noImplicitReferences'), 'harness-only');
-assert.equal(authoredOptionDisposition('checkJs'), 'unhandled');
+assert.equal(authoredOptionDisposition('noTypesAndSymbols'), 'harness-only');
+assert.equal(authoredOptionDisposition('checkJs'), 'forwarded');
 
-const unhandled = resolveAuthoredOptions({
+const newlyForwarded = resolveAuthoredOptions({
   variant: { base: 'case' },
-  directives: { noimplicitany: true },
+  directives: {
+    checkjs: true,
+    noimplicitany: true,
+    nounusedlocals: false,
+    nounusedparameters: true,
+    skiplibcheck: false,
+    strictpropertyinitialization: true,
+    notypesandsymbols: true,
+  },
   embeddedConfig: {},
 });
 assert.deepEqual(
-  unhandledAuthoredOptions(unhandled).map(option => ({ key: option.key, value: option.value, source: option.source })),
-  [{ key: 'noimplicitany', value: true, source: 'directive' }],
-  'an unhandled authored option is retained with exact value and provenance',
+  unhandledAuthoredOptions(newlyForwarded),
+  [],
+  'owned compiler options and harness controls are classified without being dropped',
 );
+assert.equal(optionBoolean(newlyForwarded, 'checkJs'), true);
+assert.equal(optionBoolean(newlyForwarded, 'noImplicitAny'), true);
+assert.equal(optionBoolean(newlyForwarded, 'noUnusedLocals'), false);
+assert.equal(optionBoolean(newlyForwarded, 'noUnusedParameters'), true);
+assert.equal(optionBoolean(newlyForwarded, 'skipLibCheck'), false);
+assert.equal(optionBoolean(newlyForwarded, 'strictPropertyInitialization'), true);
+assert.deepEqual(authoredOptionFailureReasons(newlyForwarded), []);
 
 const unrepresentedRoots = resolveAuthoredOptions({
   variant: { base: 'case' },
@@ -70,23 +86,28 @@ assert.deepEqual(
   ],
   'unrepresented root-selection directives are terminal rather than silently ignored',
 );
-assert.deepEqual(
-  authoredOptionFailureReasons(unhandled),
-  ['unhandled-authored-option:noimplicitany(directive)'],
-  'an unhandled compiler option makes the canonical row explicitly nonpassing',
-);
-
 const headerAccounting = resolveAuthoredOptions({
   variant: { base: 'case' },
-  directives: { checkjs: true, noimplicitreferences: false },
+  directives: { checkjs: true, noimplicitreferences: false, notypesandsymbols: true },
   embeddedConfig: {},
 });
 assert.deepEqual(
   unhandledAuthoredOptions(headerAccounting).map(option => option.key),
-  ['checkjs'],
+  [],
   'every parsed header directive is classified; compiler options are never silently dropped',
 );
 assert.deepEqual(invalidAuthoredOptions(headerAccounting), []);
+
+const invalidHarnessControl = resolveAuthoredOptions({
+  variant: { base: 'case' },
+  directives: { notypesandsymbols: 'sometimes' },
+  embeddedConfig: {},
+});
+assert.deepEqual(
+  invalidAuthoredOptions(invalidHarnessControl).map(option => option.key),
+  ['notypesandsymbols'],
+  'harness controls require exact boolean values instead of being silently coerced',
+);
 
 const provenanceInvalid = resolveAuthoredOptions({
   variant: extractAuthoredVariantFromFilename('case(strict= false).js'),

@@ -1,7 +1,8 @@
 use super::Parser;
 use crate::source::Span;
 use crate::syntax::{
-    Parameter, ParameterModifier, ParameterModifierNode, ParameterNameKind, TokenKind,
+    Parameter, ParameterModifier, ParameterModifierNode, ParameterNameKind, SourceSyntaxFact,
+    TokenKind,
 };
 
 impl Parser<'_> {
@@ -76,6 +77,10 @@ impl Parser<'_> {
         let rest_span = self.at(TokenKind::DotDotDot).then(|| self.bump().span);
         let rest = rest_span.is_some();
         let token_kind = self.kind();
+        if token_kind == TokenKind::At {
+            self.source_syntax_facts
+                .insert(SourceSyntaxFact::DecoratorRecovery);
+        }
         let ordinary_identifier = token_kind == TokenKind::Identifier;
         let this_parameter = allow_this && token_kind == TokenKind::This;
         let binding_start = self.index;
@@ -144,10 +149,12 @@ impl Parser<'_> {
         } else {
             None
         };
-        let initializer = self.eat(TokenKind::Equals).then(|| self.parse_expression());
+        let initializer = self
+            .eat(TokenKind::Equals)
+            .then(|| self.parse_assignment_expression());
         let end = self.previous_end().max(start);
-        let completion_supported =
-            modifiers.is_empty() && self.diagnostics.len() == diagnostic_count;
+        let completion_supported = modifiers.iter().all(|modifier| modifier.kind.is_property())
+            && self.diagnostics.len() == diagnostic_count;
         let overload_completion_supported =
             (ordinary_identifier || this_parameter) && completion_supported;
         let function_implementation_completion_supported =

@@ -1,19 +1,10 @@
-//! Program-owned import aliases used by semantic and service queries.
-//!
-//! The binder gives an import one file-local declaration identity. This module
-//! connects the bounded direct-relative/named-export form to the target's
-//! program identity without admitting external-module declarations to the
-//! script global scope.
-
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-
+//! Program-owned import aliases connect local binder identity to bounded direct exports.
+use super::{Program, ProgramFile};
 use crate::bind::{BoundFile, DeclarationKind, Meaning, ScopeId};
 use crate::source::{DeclId, FileId, normalize_import_path_lexically as normalize_path};
 use crate::syntax::{Statement, StatementKind};
-
-use super::{Program, ProgramFile};
-
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TypeQueryRoot {
     Declaration(DeclId),
@@ -22,7 +13,6 @@ pub(crate) enum TypeQueryRoot {
         target: Option<DeclId>,
     },
 }
-
 impl TypeQueryRoot {
     #[must_use]
     pub(crate) const fn semantic_declaration(self) -> DeclId {
@@ -37,7 +27,6 @@ impl TypeQueryRoot {
             },
         }
     }
-
     #[must_use]
     pub(crate) const fn navigation_declaration(self) -> DeclId {
         match self {
@@ -45,18 +34,15 @@ impl TypeQueryRoot {
         }
     }
 }
-
 #[derive(Debug, Default)]
 pub(super) struct ImportAliases {
     targets: BTreeMap<DeclId, ImportAliasTargets>,
 }
-
 #[derive(Debug, Default, Clone, Copy)]
 struct ImportAliasTargets {
     value: Option<DeclId>,
     r#type: Option<DeclId>,
 }
-
 impl ImportAliases {
     pub(super) fn build(files: &[ProgramFile], allow_js: bool) -> Self {
         let source_paths = files
@@ -64,7 +50,6 @@ impl ImportAliases {
             .map(|file| (normalize_path(&file.source.host_path), file.source.id))
             .collect::<BTreeMap<_, _>>();
         let mut targets = BTreeMap::new();
-
         for file in files {
             for statement in &file.syntax.statements {
                 let StatementKind::Import(import) = &statement.kind else {
@@ -99,12 +84,23 @@ impl ImportAliases {
                 }
             }
         }
-
         Self { targets }
     }
 }
-
 impl Program {
+    /// Return the bounded direct-relative targets for one local import alias.
+    /// The tuple keeps value and type meanings distinct; callers decide which
+    /// public product owns alias following rather than reconstructing imports.
+    #[must_use]
+    pub(crate) fn import_alias_targets(
+        &self,
+        declaration: DeclId,
+    ) -> Option<(Option<DeclId>, Option<DeclId>)> {
+        self.import_aliases
+            .targets
+            .get(&declaration)
+            .map(|targets| (targets.value, targets.r#type))
+    }
     /// Resolve the root of a `typeof` type query without confusing a
     /// type-only import with a runtime use. Lexical values win, then a local
     /// import alias, then the script global value scope.
@@ -133,7 +129,6 @@ impl Program {
         self.resolve_global(name, Meaning::Value)
             .map(TypeQueryRoot::Declaration)
     }
-
     /// Resolve a semantic reference through the lexical/global binder tables.
     /// Direct named type imports use the exported declaration when that exact
     /// structural form is owned; navigation continues to use the local id.
@@ -159,7 +154,6 @@ impl Program {
             declaration
         })
     }
-
     fn resolve_import_alias(
         &self,
         bound: &BoundFile,
@@ -181,7 +175,6 @@ impl Program {
         }
     }
 }
-
 fn resolve_relative_source(
     source_paths: &BTreeMap<PathBuf, FileId>,
     importer: &ProgramFile,
@@ -199,7 +192,6 @@ fn resolve_relative_source(
         }
         return source_paths.get(&base).copied();
     }
-
     let extensions = [
         "ts", "tsx", "d.ts", "mts", "d.mts", "cts", "d.cts", "js", "jsx", "mjs", "cjs",
     ];
@@ -210,12 +202,10 @@ fn resolve_relative_source(
             return Some(file);
         }
     }
-
     // Keep every unowned directory/package/export-map form typed as an
     // unresolved alias. Module-resolution diagnostics own those cases later.
     None
 }
-
 fn exact_source_kind_supported(path: &Path, allow_js: bool) -> bool {
     let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
         return false;
@@ -223,7 +213,6 @@ fn exact_source_kind_supported(path: &Path, allow_js: bool) -> bool {
     matches!(extension, "ts" | "tsx" | "mts" | "cts")
         || allow_js && matches!(extension, "js" | "jsx" | "mjs" | "cjs")
 }
-
 fn direct_exported(file: &ProgramFile, name: &str, meaning: Meaning) -> Option<DeclId> {
     let ids = file.bindings.scopes.first()?.names.get(name)?;
     let mut declarations = ids.iter().copied().filter(|id| {
@@ -238,7 +227,6 @@ fn direct_exported(file: &ProgramFile, name: &str, meaning: Meaning) -> Option<D
         .next()
         .filter(|_| declarations.next().is_none())
 }
-
 const fn statement_directly_exports(statement: &Statement) -> bool {
     match &statement.kind {
         StatementKind::Variable(declaration) => declaration.exported,

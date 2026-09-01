@@ -52,6 +52,54 @@ fn every_typescript_line_terminator_starts_a_new_utf16_line() {
 }
 
 #[test]
+fn revision_coordinates_round_trip_mixed_terminators_and_astral_columns() {
+    let text = Arc::<str>::from("a\r\nb\rc\nd\u{2028}e\u{2029}😀f");
+    let source = SourceText::new(FileId(4), PathBuf::from("mixed.ts"), Arc::clone(&text));
+
+    for (byte, position) in [
+        (0, (1, 1)),
+        (1, (1, 2)),
+        (2, (1, 3)),
+        (3, (2, 1)),
+        (4, (2, 2)),
+        (5, (3, 1)),
+        (6, (3, 2)),
+        (7, (4, 1)),
+        (8, (4, 2)),
+        (11, (5, 1)),
+        (12, (5, 2)),
+        (15, (6, 1)),
+        (19, (6, 3)),
+        (20, (6, 4)),
+    ] {
+        assert_eq!(source.position(byte), Some(position));
+        assert_eq!(source.byte_offset(position.0, position.1), Some(byte));
+    }
+    assert_eq!(source.utf16_range(15, 4), Some((11, 2)));
+    assert_eq!(source.text(), text.as_ref());
+}
+
+#[test]
+fn revision_coordinates_reject_invalid_protocol_positions_and_byte_offsets() {
+    let text = Arc::<str>::from("a\r\n😀z");
+    let source = SourceText::new(FileId(5), PathBuf::from("invalid.ts"), text);
+
+    for (line, column) in [(0, 1), (1, 0), (1, 4), (2, 2), (3, 1)] {
+        assert_eq!(source.byte_offset(line, column), None);
+    }
+    assert_eq!(source.position(4), None, "byte inside astral scalar");
+    assert_eq!(source.position(2), Some((1, 3)), "byte at LF in CRLF");
+    assert_eq!(source.position(9), None, "byte beyond source");
+    assert_eq!(source.utf16_range(3, 1), None);
+    assert_eq!(source.utf16_range(u32::MAX, 2), None);
+
+    let trailing = SourceText::new(FileId(6), PathBuf::from("trailing.ts"), Arc::from("a\n"));
+    assert_eq!(trailing.byte_offset(2, 1), Some(2));
+    assert_eq!(trailing.position(2), Some((2, 1)));
+    assert_eq!(trailing.byte_offset(1, 3), None, "next-line alias");
+}
+
+#[test]
 fn declaration_source_paths_match_case_sensitive_cross_platform_basenames() {
     for path in [
         "value.d.ts",

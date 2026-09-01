@@ -59,7 +59,8 @@ fn recovered_generator_declarator_keeps_its_exact_typed_owner() {
         .copied()
         .filter(|reason| {
             reason.scope == scope
-                && reason.reason == NonclaimReason::Syntax(SyntaxGap::GeneratorFunctionLike)
+                && reason.reason
+                    == NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::GeneratorFunctionLike)
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -67,20 +68,21 @@ fn recovered_generator_declarator_keeps_its_exact_typed_owner() {
         vec![CapabilityNonclaim {
             target: CapabilityTarget::SemanticCheck,
             scope,
-            reason: NonclaimReason::Syntax(SyntaxGap::GeneratorFunctionLike),
-            deletion: DeletionCondition::DeepestSemanticOwner(SyntaxGap::GeneratorFunctionLike,),
+            reason: NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::GeneratorFunctionLike),
         }],
     );
-    assert!(
-        analysis
-            .semantic_check_node_descendant_permissions(file.source.id, owner)
-            .0
-    );
-    assert!(
-        !analysis
-            .semantic_check_node_descendant_permissions(file.source.id, owner)
-            .1
-    );
+    assert!(semantic_descendant_is_claimed(
+        &analysis,
+        file.source.id,
+        owner,
+        false,
+    ));
+    assert!(!semantic_descendant_is_claimed(
+        &analysis,
+        file.source.id,
+        owner,
+        true,
+    ));
     assert!(
         analysis
             .claim(CapabilityTarget::DeclarationModel, scope)
@@ -107,8 +109,9 @@ fn recovered_generator_declarator_keeps_its_exact_typed_owner() {
     };
     assert!(value_reasons.into_iter().any(|reason| {
         reason.scope == function_scope
-            && reason.reason == NonclaimReason::Syntax(SyntaxGap::GeneratorFunctionLike)
-            && reason.deletion
+            && reason.reason
+                == NonclaimReason::SyntaxAtSemanticOwner(SyntaxGap::GeneratorFunctionLike)
+            && reason.deletion_condition()
                 == DeletionCondition::DeepestSemanticOwner(SyntaxGap::GeneratorFunctionLike)
     }));
 }
@@ -126,7 +129,7 @@ fn jsx_text_and_entity_fragments_share_the_opening_expression_recovery_owner() {
         .iter()
         .find(|recovery| recovery.authored_span.start == 0)
         .expect("opening JSX recovery");
-    assert_eq!(opening.kind, ParserRecoveryKind::Expression);
+    assert_eq!(opening.kind, ParserRecoveryKind::MissingExpression);
     assert_eq!(
         opening.recovery_extent,
         Span::new(file.source.id, 0, source.lines().next().unwrap().len()),
@@ -148,9 +151,86 @@ fn jsx_text_and_entity_fragments_share_the_opening_expression_recovery_owner() {
             .expect("represented JSX fragment");
         assert_eq!(
             nodes.owners.get(&statement.id),
-            Some(&RecoveryStatementRole::RepresentationalFragment),
+            Some(&RecoveryRole::RepresentationalFragment),
             "{marker}: {:#?}",
             file.syntax.statements,
         );
+    }
+}
+
+#[test]
+fn missing_conditional_expression_hosts_have_one_local_javascript_fence() {
+    // TypeScript 7 does not synthesize `void 0` for an absent conditional
+    // branch. Until emit owns that recovery transform, immutable capability
+    // analysis withholds only the JavaScript product that consumes the fact.
+    for (source, kind) in [
+        (
+            "const renamed = flag ? : 1; const independent = 2;",
+            ParserRecoveryKind::MissingExpression,
+        ),
+        (
+            "const renamed = flag ? 1 : ; const independent = 2;",
+            ParserRecoveryKind::MissingExpression,
+        ),
+        (
+            "const renamed = flag ? 1 2; const independent = 3;",
+            ParserRecoveryKind::ConditionalExpression,
+        ),
+        (
+            "consume(flag ? : 1); const independent = 2;",
+            ParserRecoveryKind::MissingExpression,
+        ),
+        (
+            "[flag ? 1 : ]; const independent = 2;",
+            ParserRecoveryKind::MissingExpression,
+        ),
+        (
+            "({ value: flag ? : 1 }); const independent = 2;",
+            ParserRecoveryKind::MissingExpression,
+        ),
+    ] {
+        let file = program_file(0, "conditional-recovery.ts", source);
+        let recovery = file
+            .syntax
+            .parser_recovery_facts
+            .iter()
+            .find(|fact| fact.kind == kind)
+            .unwrap_or_else(|| panic!("missing {kind:?} fact for {source}"));
+        let scope = CapabilityScope::node(file.source.id, recovery.owner.statement);
+        let analysis = default_analysis(&file);
+        let CapabilityClaim::Nonclaimed(reasons) =
+            analysis.claim(CapabilityTarget::JavaScript, scope)
+        else {
+            panic!("recovered JavaScript owner was claimed for {source}")
+        };
+        assert_eq!(
+            reasons.copied().collect::<Vec<_>>(),
+            [CapabilityNonclaim {
+                target: CapabilityTarget::JavaScript,
+                scope,
+                reason: NonclaimReason::Syntax(SyntaxGap::Expression),
+            }],
+            "{source}",
+        );
+        let independent = file
+            .syntax
+            .statements
+            .last()
+            .expect("independent statement");
+        assert_ne!(independent.id, recovery.owner.statement, "{source}");
+        assert!(
+            analysis
+                .claim(
+                    CapabilityTarget::JavaScript,
+                    CapabilityScope::node(file.source.id, independent.id),
+                )
+                .is_claimed(),
+            "independent same-file JavaScript was withheld for {source}",
+        );
+        assert!(!analysis.product_is_claimed(
+            CapabilityTarget::JavaScript,
+            CapabilityScope::File(file.source.id),
+            &CompilerOptions::default(),
+        ));
     }
 }

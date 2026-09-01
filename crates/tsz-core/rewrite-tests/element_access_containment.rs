@@ -67,6 +67,16 @@ fn open_service(files: &[(&str, &str)]) -> LanguageService {
     service
 }
 
+fn compile_files(files: &[(&str, &str)]) -> tsz::CompileOutput {
+    Compiler::new().compile(
+        files
+            .iter()
+            .map(|(path, source)| SourceInput::new(*path, Arc::<str>::from(*source)))
+            .collect(),
+        &service_options(),
+    )
+}
+
 #[test]
 fn loose_unused_accesses_still_run_the_owned_query() {
     // Graduation: constructor indexing becomes Complete only after class value-side static shapes
@@ -548,19 +558,15 @@ fn binary_recovery_propagates_an_existing_complete_error_sentinel() {
         CompileExitStatus::DiagnosticsPresentOutputsSkipped
     );
 
-    for (source, owned_code) in [
-        ("const mismatch:number='x'+Missing;", 2304),
+    for (source, expected) in [
+        ("const mismatch:number='x'+Missing;", &[2322, 2304][..]),
         (
             "declare const values:number[];const mismatch:number='x'+values[];",
-            1011,
+            &[1011][..],
         ),
     ] {
         let output = compile(source, true, None);
-        assert_eq!(
-            diagnostic_codes(&output),
-            vec![2322, owned_code],
-            "{source}"
-        );
+        assert_eq!(diagnostic_codes(&output), expected, "{source}");
         assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
     }
 }
@@ -592,11 +598,15 @@ fn repeated_declaration_value_queries_preserve_incomplete_provenance_in_every_ro
         ("a-producer.ts", "z-consumer.ts"),
         ("z-producer.ts", "a-consumer.ts"),
     ] {
-        let service = open_service(&[
+        let files = [
             (producer_path, producer),
             (consumer_path, consumer),
             ("m-safe.ts", safe),
-        ]);
+        ];
+        let output = compile_files(&files);
+        assert_eq!(diagnostic_codes(&output), vec![2322, 2322]);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        let service = open_service(&files);
         for _ in 0..2 {
             let consumer_result = service.semantic_diagnostics(consumer_path);
             assert_eq!(
@@ -662,6 +672,9 @@ fn wrapped_declaration_values_cannot_publish_completion_erasing_force_entries() 
         ],
     ] {
         let consumer_path = files[2].0;
+        let output = compile_files(&files);
+        assert_eq!(diagnostic_codes(&output), vec![2322]);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
         let service = open_service(&files);
         for _ in 0..2 {
             let result = service.semantic_diagnostics(consumer_path);

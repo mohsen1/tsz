@@ -23,7 +23,18 @@ impl Parser<'_> {
         let previous_await_binding_reserved = self.await_binding_reserved;
         let previous_yield_binding_reserved = self.yield_binding_reserved;
         self.yield_binding_reserved |= unmodeled_generator;
-        let (name, name_span) = self.parse_name();
+        let (name, name_span) = if modifiers.default_export && !self.kind().is_identifier() {
+            let at = self.current().span;
+            (
+                String::new(),
+                crate::source::Span {
+                    end: at.start,
+                    ..at
+                },
+            )
+        } else {
+            self.parse_name()
+        };
         self.in_yield_context = unmodeled_generator;
         self.in_await_context = false;
         self.await_binding_reserved = false;

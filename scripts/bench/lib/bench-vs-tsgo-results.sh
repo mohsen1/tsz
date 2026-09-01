@@ -42,6 +42,15 @@ record_project_compatibility() {
         fi
     fi
 
+    # The compiler/fixture proof ran before timing. Fence the same checkout,
+    # binary, and compile inputs again at publication so a mid-benchmark edit
+    # downgrades the row instead of attaching fresh timing to stale evidence.
+    project_evidence_refresh_publication "$name" "$tsconfig_path" "$source_root" || true
+    local published_tsz_binary_sha256=""
+    if [[ "$PROJECT_EVIDENCE_BINARY_STABLE" == "true" ]]; then
+        published_tsz_binary_sha256="${_TSZ_BINARY_HASH:-}"
+    fi
+
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
     COMPAT_OUTPUT_ROOT="$TEMP_DIR" \
     COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
@@ -62,6 +71,18 @@ record_project_compatibility() {
     COMPAT_TSZ_COMMAND_ENV_PREFIX="$tsz_command_env_prefix" \
     COMPAT_FIXTURE_SOURCES="$fixture_sources" \
     COMPAT_EVIDENCE_SCHEMA="${PROJECT_EVIDENCE_SCHEMA:-}" \
+    COMPAT_SOURCE_COMMIT="${TSZ_COMPAT_SOURCE_COMMIT:-}" \
+    COMPAT_SOURCE_DIRTY="${TSZ_COMPAT_SOURCE_DIRTY:-}" \
+    COMPAT_SOURCE_STABLE="${TSZ_COMPAT_SOURCE_STABLE:-}" \
+    COMPAT_SOURCE_TREE_FINGERPRINT="${TSZ_COMPAT_SOURCE_TREE_FINGERPRINT:-}" \
+    COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT="${TSZ_COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT:-}" \
+    COMPAT_TSZ_BINARY_SHA256="$published_tsz_binary_sha256" \
+    COMPAT_BUILD_MANIFEST_SHA256="${TSZ_COMPAT_BUILD_MANIFEST_SHA256:-}" \
+    COMPAT_BUILD_INPUTS_SHA256="${TSZ_COMPAT_BUILD_INPUTS_SHA256:-}" \
+    COMPAT_BUILD_MANIFEST_BINARY_SHA256="${TSZ_COMPAT_BUILD_MANIFEST_BINARY_SHA256:-}" \
+    COMPAT_COMPILE_INPUT_FINGERPRINT="${LAST_COMPILE_INPUT_FINGERPRINT:-}" \
+    COMPAT_COMPILE_INPUT_STABLE="${LAST_COMPILE_INPUT_STABLE:-}" \
+    COMPAT_ORACLE_FINGERPRINT="${PROJECT_EVIDENCE_ORACLE_FINGERPRINT:-}" \
     COMPAT_SEMANTIC_COMPLETION="${PROJECT_EVIDENCE_SEMANTIC_COMPLETION:-}" \
     COMPAT_ROOT_FILES="${PROJECT_EVIDENCE_TSZ_ROOT_FILES:-}" \
     COMPAT_SOURCE_FILES="${PROJECT_EVIDENCE_TSZ_SOURCE_FILES:-}" \
@@ -79,6 +100,7 @@ record_project_compatibility() {
     COMPAT_STUBBED_MODULES="${PROJECT_EVIDENCE_STUBBED_MODULES:-}" \
     COMPAT_STUBBED_ANY_MEMBERS="${PROJECT_EVIDENCE_STUBBED_ANY_MEMBERS:-}" \
     COMPAT_STUB_INVENTORY_FINGERPRINT="${PROJECT_EVIDENCE_STUB_INVENTORY_FINGERPRINT:-}" \
+    COMPAT_STUB_INVENTORY_OWNERS="${PROJECT_EVIDENCE_STUB_INVENTORY_OWNERS:-[]}" \
     node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
 }
 
@@ -465,6 +487,7 @@ run_project_benchmark() {
         PROJECT_EVIDENCE_TSZ_CMD+=("RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
     fi
     PROJECT_EVIDENCE_TSZ_CMD+=("$TSZ")
+    PROJECT_EVIDENCE_TSZ_BINARY="$TSZ"
 
     # One TSZ proof run must expose the exact admitted program and agree with
     # pinned TypeScript 7 before hyperfine is reachable. This applies equally to
@@ -1055,6 +1078,19 @@ function compatibilityFor(row, compatibilityRows) {
       last_successful_phase: lastSuccessfulPhaseFrom(recorded),
       diagnostic_status: recorded.diagnostic_status || "unknown",
       evidence_schema: recorded.evidence_schema ?? null,
+      evidence_status: recorded.evidence_status ?? "incomplete",
+      evidence_failures: Array.isArray(recorded.evidence_failures) ? recorded.evidence_failures : ["evidence_schema"],
+      source_dirty: recorded.source_dirty ?? null,
+      source_stable: recorded.source_stable ?? null,
+      source_tree_fingerprint: recorded.source_tree_fingerprint ?? null,
+      evidence_protocol_fingerprint: recorded.evidence_protocol_fingerprint ?? null,
+      tsz_binary_sha256: recorded.tsz_binary_sha256 ?? null,
+      build_manifest_sha256: recorded.build_manifest_sha256 ?? null,
+      build_inputs_sha256: recorded.build_inputs_sha256 ?? null,
+      build_manifest_binary_sha256: recorded.build_manifest_binary_sha256 ?? null,
+      compile_input_fingerprint: recorded.compile_input_fingerprint ?? null,
+      compile_input_stable: recorded.compile_input_stable ?? null,
+      oracle_fingerprint: recorded.oracle_fingerprint ?? null,
       semantic_completion: recorded.semantic_completion ?? null,
       root_files: recorded.root_files ?? null,
       source_files: recorded.source_files ?? null,
@@ -1072,6 +1108,7 @@ function compatibilityFor(row, compatibilityRows) {
       stubbed_modules: recorded.stubbed_modules ?? null,
       stubbed_any_members: recorded.stubbed_any_members ?? null,
       stub_inventory_fingerprint: recorded.stub_inventory_fingerprint ?? null,
+      stub_inventory_owners: Array.isArray(recorded.stub_inventory_owners) ? recorded.stub_inventory_owners : null,
       oracle_classification: recorded.oracle_classification ?? "unknown",
       diagnostic_deltas: diagnosticDeltas,
       diagnostic_codes: aggregate.codes,

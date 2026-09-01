@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::source::{DeclId, FileId};
+use crate::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 use super::*;
 use crate::semantics::types::{
@@ -24,13 +25,7 @@ fn relate<C: RelationContext>(
     target: TypeId,
     mode: RelationMode,
 ) -> Result<(), RelationFailure> {
-    relate_with_property_order(
-        context,
-        source,
-        target,
-        mode,
-        RelationPropertyOrder::default(),
-    )
+    relate_types(context, source, target, mode)
 }
 
 struct TestContext {
@@ -89,6 +84,155 @@ fn property(name: &str, ty: u32) -> Property {
         optional: false,
         readonly: false,
     }
+}
+
+#[test]
+fn equal_object_shapes_keep_authored_order_across_allocation_and_root_order() {
+    let options = CompilerOptions {
+        no_emit: true,
+        strict: true,
+        ..CompilerOptions::default()
+    };
+    let ab = Arc::<str>::from(concat!(
+        "declare const ab:{alpha:string;beta:number};const abOk:{beta:number;alpha:string}=ab;",
+        "const abBad:{alpha:\"a\";beta:1}=ab;declare function takesAB(value:{alpha:\"a\";beta:1}):void;takesAB(ab);",
+    ));
+    let ba = Arc::<str>::from(concat!(
+        "declare const ba:{beta:number;alpha:string};const baOk:{alpha:string;beta:number}=ba;",
+        "const baBad:{beta:1;alpha:\"a\"}=ba;declare function takesBA(value:{beta:1;alpha:\"a\"}):void;takesBA(ba);",
+    ));
+    let compiler = Compiler::new();
+    let run = |inputs| compiler.compile(inputs, &options);
+    let verify = |output: &crate::CompileOutput| {
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            [2322, 2345, 2322, 2345]
+        );
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        for (suffix, source, target, property, leaf) in [
+            (
+                "ab.ts",
+                "{ alpha: string; beta: number; }",
+                "{ alpha: \"a\"; beta: 1; }",
+                "alpha",
+                "Type 'string' is not assignable to type '\"a\"'.",
+            ),
+            (
+                "ba.ts",
+                "{ beta: number; alpha: string; }",
+                "{ beta: 1; alpha: \"a\"; }",
+                "beta",
+                "Type 'number' is not assignable to type '1'.",
+            ),
+        ] {
+            let diagnostics = output
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.file.ends_with(suffix))
+                .collect::<Vec<_>>();
+            assert_eq!(diagnostics.len(), 2, "{suffix}: {:?}", output.diagnostics);
+            assert_eq!(
+                diagnostics[0].message_text,
+                format!("Type '{source}' is not assignable to type '{target}'.")
+            );
+            assert_eq!(
+                diagnostics[1].message_text,
+                format!(
+                    "Argument of type '{source}' is not assignable to parameter of type '{target}'."
+                )
+            );
+            for diagnostic in diagnostics {
+                assert_eq!(
+                    diagnostic
+                        .related_information
+                        .iter()
+                        .map(|information| information.message_text.as_str())
+                        .collect::<Vec<_>>(),
+                    [
+                        format!("Types of property '{property}' are incompatible."),
+                        leaf.to_string()
+                    ]
+                );
+            }
+        }
+    };
+    let ab_first = vec![
+        SourceInput::new("a-ab.ts", ab.clone()),
+        SourceInput::new("z-ba.ts", ba.clone()),
+    ];
+    let cold = run(ab_first.clone());
+    verify(&cold);
+    for inputs in [ab_first.clone(), ab_first.into_iter().rev().collect()] {
+        let output = run(inputs);
+        verify(&output);
+        assert_eq!(
+            serde_json::to_vec(&output.diagnostics).unwrap(),
+            serde_json::to_vec(&cold.diagnostics).unwrap()
+        );
+    }
+    let ba_first = vec![
+        SourceInput::new("a-ba.ts", ba),
+        SourceInput::new("z-ab.ts", ab),
+    ];
+    for inputs in [ba_first.clone(), ba_first.into_iter().rev().collect()] {
+        verify(&run(inputs));
+    }
+}
+
+#[test]
+fn multiple_missing_properties_keep_authored_order_across_renamed_reversed_roots() {
+    let options = CompilerOptions {
+        no_emit: true,
+        strict: true,
+        ..CompilerOptions::default()
+    };
+    let zeta_first = Arc::<str>::from(
+        "declare const zetaFirst:{present:number};const target:{zeta:string;alpha:string}=zetaFirst;",
+    );
+    let alpha_first = Arc::<str>::from(
+        "declare const alphaFirst:{present:number};const target:{alpha:string;zeta:string}=alphaFirst;",
+    );
+    let compiler = Compiler::new();
+    let inputs = vec![
+        SourceInput::new("a-zeta-first.ts", zeta_first),
+        SourceInput::new("z-alpha-first.ts", alpha_first),
+    ];
+    let cold = compiler.compile(inputs.clone(), &options);
+    assert_eq!(
+        cold.diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>(),
+        [2322, 2322]
+    );
+    assert_eq!(cold.semantic_completion, SemanticCompletion::Complete);
+    for (suffix, properties) in [
+        ("a-zeta-first.ts", "zeta, alpha"),
+        ("z-alpha-first.ts", "alpha, zeta"),
+    ] {
+        let diagnostic = cold
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.file.ends_with(suffix))
+            .expect("one diagnostic per authored shape");
+        assert!(
+            diagnostic
+                .related_information
+                .last()
+                .is_some_and(|related| related.message_text.contains(properties)),
+            "{diagnostic:?}"
+        );
+    }
+    let reversed = compiler.compile(inputs.into_iter().rev().collect(), &options);
+    assert_eq!(reversed.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        serde_json::to_vec(&reversed.diagnostics).unwrap(),
+        serde_json::to_vec(&cold.diagnostics).unwrap()
+    );
 }
 
 #[test]
@@ -407,12 +551,11 @@ fn nested_relation_structure_preserves_the_active_evaluator_seed() {
     };
 
     assert_eq!(
-        relate_with_property_order_at_evaluation_depth(
+        relate_types_at_evaluation_depth(
             &mut context,
             TypeId(0),
             TypeId(1),
             RelationMode::Assignment,
-            RelationPropertyOrder::default(),
             EvaluationDepth::from_active_depth(7),
         ),
         Ok(())
@@ -604,4 +747,74 @@ fn invalid_projection_is_a_relation_failure_not_a_success_type() {
 
     let failure = relate(&mut context, TypeId(0), TypeId(1), RelationMode::Assignment).unwrap_err();
     assert_eq!(failure.kind, RelationFailureKind::InvalidProjection);
+}
+
+#[test]
+fn diagnostic_display_truncation_does_not_become_semantic_exhaustion() {
+    fn nested_object(mut leaf: String, depth: usize) -> String {
+        for index in (0..depth).rev() {
+            leaf = format!("{{ level{index}: {leaf} }}");
+        }
+        leaf
+    }
+
+    let compiler = Compiler::new();
+    let options = CompilerOptions {
+        no_emit: true,
+        strict: true,
+        ..CompilerOptions::default()
+    };
+    for depth in [24, 25, 26] {
+        let source = nested_object("string".to_owned(), depth);
+        let target = nested_object("number".to_owned(), depth);
+        let text = format!("declare const cedar: {source}; const willow: {target} = cedar;");
+        let output = compiler.compile(
+            vec![SourceInput::new(
+                format!("display-depth-{depth}.ts"),
+                Arc::<str>::from(text),
+            )],
+            &options,
+        );
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            [if depth <= 24 { 2322 } else { 2719 }],
+            "depth {depth}: {:?}",
+            output.diagnostics
+        );
+        if depth > 24 {
+            assert!(
+                output.diagnostics[0]
+                    .message_text
+                    .ends_with("Two different types with this name exist, but they are unrelated.")
+            );
+        }
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsSkipped
+        );
+        assert!(
+            !output
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == 2589)
+        );
+    }
+
+    let equal = nested_object("string".to_owned(), 26);
+    let output = compiler.compile(
+        vec![SourceInput::new(
+            "display-depth-equal.ts",
+            Arc::<str>::from(format!(
+                "declare const cedar: {equal}; const willow: {equal} = cedar;"
+            )),
+        )],
+        &options,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
 }

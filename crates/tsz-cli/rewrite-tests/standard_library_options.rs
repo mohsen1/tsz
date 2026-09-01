@@ -25,7 +25,7 @@ fn command_line_preserves_explicit_lib_and_false_boolean_patches() {
     );
     assert_eq!(invocation.options.no_lib, Some(false));
     assert_eq!(invocation.options.allow_js, Some(false));
-    assert!(invocation.unknown_options.is_empty());
+    assert!(invocation.command_line_diagnostics.is_empty());
 }
 
 #[test]

@@ -1,22 +1,17 @@
 //! Per-file binding. This phase owns declarations and lexical scopes, and
 //! intentionally performs no type computation.
-
-use std::collections::{BTreeMap, BTreeSet};
-
-use rustc_hash::FxHashMap;
-
 use crate::source::{DeclId, FileId, NodeId, SourceKind, Span};
 use crate::syntax::{
-    AssignmentOperator, ClassDeclaration, ClassMember, ClassMemberKind, Expression, ExpressionKind,
-    FunctionDeclaration, FunctionLikeBody, Literal, ParameterNameKind, PropertyNameKind,
-    SourceUnit, Statement, StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind,
-    TypeMemberNameKind, TypeNode, TypeNodeKind, UnmodeledDeclarationHostFact,
-    UnmodeledDeclarationHostKind, parse_number_literal,
+    AssignmentOperator, ClassDeclaration, ClassMember, ClassMemberKind,
+    DeclarationHostBodyRepresentation, Expression, ExpressionKind, FunctionDeclaration,
+    FunctionLikeBody, Literal, ParameterNameKind, PropertyNameKind, SourceUnit, Statement,
+    StatementKind, SwitchClauseKind, TypeMember, TypeMemberKind, TypeMemberNameKind, TypeNode,
+    TypeNodeKind, UnmodeledDeclarationHostFact, UnmodeledDeclarationHostKind, parse_number_literal,
 };
-
+use rustc_hash::FxHashMap;
+use std::collections::{BTreeMap, BTreeSet};
 mod flow;
 mod navigation;
-
 pub(crate) use flow::{
     BoundFlowGraph, BoundFlowNode, FlowAssignmentSource, FlowNarrowing, FlowPathSegment,
     TypeofWitness, TypeofWitnessSet,
@@ -26,10 +21,8 @@ use flow::{
     PendingFlowFacts, PendingFlowMutation, PendingFlowReference,
 };
 use navigation::PendingReferenceFact;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ScopeId(pub u32);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeclarationKind {
     Variable,
@@ -44,20 +37,19 @@ pub enum DeclarationKind {
     TypeParameter,
     TypeMember,
     AnonymousSignature,
+    AnonymousType,
     UnmodeledHost,
 }
-
 /// Binder-owned symbol category for a type element. Internal signature
 /// symbols are typed variants so a user property named `__call` cannot
 /// collide with a call-signature group.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TypeMemberSymbol {
-    Named(String),
+    Named(Vec<u16>),
     Call,
     Construct,
     Index,
 }
-
 /// Binder-owned identity for class member groups. Static and instance
 /// declarations occupy distinct symbol spaces, matching TypeScript's class
 /// constructor and instance sides.
@@ -72,13 +64,11 @@ pub(crate) enum ClassMemberSymbol {
         private_identifier: bool,
     },
 }
-
 #[derive(Debug, Clone)]
 struct BoundClassMember {
     container: ScopeId,
     symbol: ClassMemberSymbol,
 }
-
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ClassMemberGroupFacts {
     declarations: Vec<DeclId>,
@@ -89,20 +79,17 @@ pub(crate) struct ClassMemberGroupFacts {
     pub(crate) properties: usize,
     pub(crate) private_callable: bool,
 }
-
 #[derive(Debug, Clone)]
 pub struct BoundTypeMember {
     pub declaration: DeclId,
     pub container: ScopeId,
     pub symbol: Option<TypeMemberSymbol>,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Meaning {
     Value,
     Type,
 }
-
 /// Binder-owned lexical `this` identity. Arrow and block scopes inherit this
 /// value; non-arrow function and class container scopes reset it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +97,6 @@ pub enum LexicalThisOwner {
     ClassInstance(DeclId),
     ClassConstructor(DeclId),
 }
-
 #[derive(Debug, Clone)]
 pub struct BoundDeclaration {
     pub id: DeclId,
@@ -121,7 +107,6 @@ pub struct BoundDeclaration {
     pub kind: DeclarationKind,
     pub meaning: Meaning,
 }
-
 #[derive(Debug, Clone)]
 pub struct Scope {
     pub id: ScopeId,
@@ -132,7 +117,6 @@ pub struct Scope {
     this_type_owner: Option<DeclId>,
     flow_container: Option<FlowContainer>,
 }
-
 #[derive(Debug, Clone)]
 pub struct BoundFile {
     pub file: FileId,
@@ -155,7 +139,6 @@ pub struct BoundFile {
     pub(crate) flow: BoundFlowGraph,
     flow_facts: PendingFlowFacts,
 }
-
 #[derive(Debug, Clone)]
 pub(crate) struct BoundJavaScriptPropertyAssignment {
     pub(crate) left: NodeId,
@@ -166,14 +149,12 @@ pub(crate) struct BoundJavaScriptPropertyAssignment {
     pub(crate) properties: Vec<String>,
     pub(crate) target: JavaScriptPropertyAssignmentTarget,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum JavaScriptPropertyAssignmentTarget {
     NamedMember,
     CanonicalElementProperty,
     OrdinaryIndex,
 }
-
 impl BoundFile {
     #[must_use]
     pub fn declaration(&self, id: DeclId) -> Option<&BoundDeclaration> {
@@ -181,19 +162,30 @@ impl BoundFile {
             .then(|| self.declarations.get(id.local as usize))
             .flatten()
     }
-
     #[must_use]
     pub(crate) fn reference_facts(&self) -> &[navigation::BoundReferenceFact] {
         &self.reference_facts
     }
-
+    #[must_use]
+    pub(crate) fn reference_declaration(&self, span: Span) -> Option<DeclId> {
+        self.reference_facts
+            .iter()
+            .find(|reference| reference.span == span)
+            .and_then(|reference| reference.declaration(|_, _| None))
+    }
+    #[must_use]
+    pub(crate) fn anonymous_type_literal(&self, span: Span) -> Option<DeclId> {
+        self.declarations.iter().find_map(|declaration| {
+            (declaration.kind == DeclarationKind::AnonymousType && declaration.name_span == span)
+                .then_some(declaration.id)
+        })
+    }
     #[must_use]
     pub(crate) fn export_specifier_target(&self, span: Span) -> Option<&BoundDeclaration> {
         self.export_specifier_targets
             .get(&span)
             .and_then(|declaration| self.declaration(*declaration))
     }
-
     #[must_use]
     pub fn resolve(&self, mut scope: ScopeId, name: &str, meaning: Meaning) -> Option<DeclId> {
         loop {
@@ -209,7 +201,6 @@ impl BoundFile {
             scope = current.parent?;
         }
     }
-
     #[must_use]
     pub fn type_member_group(&self, node: NodeId) -> Option<&[DeclId]> {
         let member = self.type_members.get(&node)?;
@@ -218,45 +209,33 @@ impl BoundFile {
             .get(&(member.container, symbol.clone()))
             .map(Vec::as_slice)
     }
-
-    #[must_use]
-    pub fn canonical_type_member_declaration(&self, node: NodeId) -> Option<DeclId> {
-        self.type_member_group(node)?.first().copied()
-    }
-
     #[must_use]
     pub(crate) fn class_member_group(&self, node: NodeId) -> Option<&[DeclId]> {
         Some(&self.class_member_group_facts(node)?.declarations)
     }
-
     #[must_use]
     pub(crate) fn class_member_group_facts(&self, node: NodeId) -> Option<&ClassMemberGroupFacts> {
         let member = self.class_members.get(&node)?;
         self.class_member_groups
             .get(&(member.container, member.symbol.clone()))
     }
-
     #[must_use]
     pub(crate) fn class_member_symbol(&self, node: NodeId) -> Option<&ClassMemberSymbol> {
         self.class_members.get(&node).map(|member| &member.symbol)
     }
-
     #[must_use]
     pub fn lexical_this_owner(&self, scope: ScopeId) -> Option<LexicalThisOwner> {
         self.scopes
             .get(scope.0 as usize)
             .and_then(|scope| scope.lexical_this)
     }
-
     pub(crate) fn scope_is_function_local(&self, scope: ScopeId) -> bool {
         self.scopes[scope.0 as usize].flow_container.is_some()
     }
-
     #[must_use]
     pub(crate) fn this_type_declaration(&self, span: Span) -> Option<DeclId> {
         self.this_type_references.get(&span).copied()
     }
-
     pub(crate) fn finalize_flow(
         &mut self,
         unit: &SourceUnit,
@@ -265,12 +244,7 @@ impl BoundFile {
         self.flow = BoundFlowGraph::build(unit, self, &self.flow_facts, resolve_global);
     }
 }
-
-pub fn bind_source(file: FileId, unit: &SourceUnit) -> BoundFile {
-    bind_source_with_kind(file, SourceKind::TypeScript, unit)
-}
-
-pub(crate) fn bind_source_with_kind(
+pub fn bind_source_with_kind(
     file: FileId,
     source_kind: SourceKind,
     unit: &SourceUnit,
@@ -346,7 +320,6 @@ pub(crate) fn bind_source_with_kind(
     }
     bound
 }
-
 struct Binder {
     file: FileId,
     source_kind: SourceKind,
@@ -366,7 +339,6 @@ struct Binder {
     flow_facts: PendingFlowFacts,
     unmodeled_declaration_hosts: Vec<UnmodeledDeclarationHostFact>,
 }
-
 impl Binder {
     fn bind_statement(&mut self, statement: &Statement, scope: ScopeId, control: Option<NodeId>) {
         self.scope_for_node.insert(statement.id, scope);
@@ -376,7 +348,7 @@ impl Binder {
             .filter(|host| host.owner_start == statement.span.start)
             .cloned()
             .collect::<Vec<_>>();
-        for host in unmodeled_hosts {
+        for host in &unmodeled_hosts {
             let Some(name) = host.name.as_deref() else {
                 continue;
             };
@@ -402,8 +374,37 @@ impl Binder {
                 );
             }
         }
+        if let Some(host) = unmodeled_hosts
+            .iter()
+            .find(|host| host.body == DeclarationHostBodyRepresentation::ParsedStatements)
+        {
+            let StatementKind::Block(statements) = &statement.kind else {
+                debug_assert!(false, "parsed declaration-host body must retain statements");
+                return;
+            };
+            let body_scope = match host.kind {
+                UnmodeledDeclarationHostKind::Namespace
+                | UnmodeledDeclarationHostKind::Module
+                | UnmodeledDeclarationHostKind::ExternalModule => {
+                    self.new_scope(scope, statement.id)
+                }
+                UnmodeledDeclarationHostKind::Global => scope,
+                UnmodeledDeclarationHostKind::Enum | UnmodeledDeclarationHostKind::Using => {
+                    debug_assert!(
+                        false,
+                        "opaque declaration host cannot own parsed statements"
+                    );
+                    return;
+                }
+            };
+            for nested in statements {
+                self.bind_statement(nested, body_scope, control);
+            }
+            return;
+        }
         if self.unmodeled_declaration_hosts.iter().any(|host| {
-            host.owner_start != statement.span.start
+            host.body == DeclarationHostBodyRepresentation::Omitted
+                && host.owner_start != statement.span.start
                 && host.recovery_extent.start <= statement.span.start
                 && statement.span.start < host.recovery_extent.end
         }) {
@@ -610,20 +611,22 @@ impl Binder {
             | StatementKind::Unknown => {}
         }
     }
-
     fn bind_type_members(&mut self, members: &[TypeMember], container: ScopeId) {
         for member in members.iter().filter(|member| !member.recovered) {
             self.bind_type_member(member, container);
         }
     }
-
     fn bind_type_member(&mut self, member: &TypeMember, container: ScopeId) {
         let named_symbol = |name: &crate::syntax::TypeMemberName| match &name.kind {
-            TypeMemberNameKind::Identifier(name) => Some(TypeMemberSymbol::Named(name.clone())),
-            TypeMemberNameKind::StringLiteral(_)
-            | TypeMemberNameKind::NumericLiteral(_)
-            | TypeMemberNameKind::BigIntLiteral(_)
-            | TypeMemberNameKind::Computed(_) => None,
+            TypeMemberNameKind::Identifier(name) => {
+                Some(TypeMemberSymbol::Named(name.encode_utf16().collect()))
+            }
+            TypeMemberNameKind::StringLiteral(_, value) => value
+                .as_ref()
+                .map(|value| TypeMemberSymbol::Named(value.units().to_vec())),
+            TypeMemberNameKind::NumericLiteral(name) => parse_number_literal(name)
+                .map(|number| TypeMemberSymbol::Named(number.display.encode_utf16().collect())),
+            TypeMemberNameKind::BigIntLiteral(_) | TypeMemberNameKind::Computed(_) => None,
         };
         let symbol = match &member.kind {
             TypeMemberKind::Property { name, .. }
@@ -644,7 +647,7 @@ impl Binder {
                         | TypeMemberKind::Construct { .. }
                         | TypeMemberKind::Index { .. } => member.span,
                     };
-                    (name.clone(), span)
+                    (String::from_utf16_lossy(name), span)
                 }
                 TypeMemberSymbol::Call => ("__call".to_string(), member.span),
                 TypeMemberSymbol::Construct => ("__new".to_string(), member.span),
@@ -674,7 +677,6 @@ impl Binder {
                 symbol,
             },
         );
-
         let member_scope = self.new_scope(container, member.id);
         if let TypeMemberKind::Property {
             name,
@@ -701,13 +703,11 @@ impl Binder {
         self.bind_type_parameters(type_parameters, member_scope);
         self.bind_signature_types(parameters, return_type, member_scope, member_scope);
     }
-
     fn bind_type_member_name(&mut self, name: &crate::syntax::TypeMemberName, scope: ScopeId) {
         if let TypeMemberNameKind::Computed(expression) = &name.kind {
             self.bind_expression(expression, scope, None);
         }
     }
-
     fn bind_type_parameters(
         &mut self,
         parameters: &[crate::syntax::TypeParameterDeclaration],
@@ -735,7 +735,6 @@ impl Binder {
             }
         }
     }
-
     fn bind_signature_types(
         &mut self,
         parameters: &[crate::syntax::Parameter],
@@ -783,12 +782,10 @@ impl Binder {
             self.bind_type_node(return_type, return_scope);
         }
     }
-
     fn bind_type_node(&mut self, node: &TypeNode, scope: ScopeId) {
         let owner = self.nearest_scope_owner(scope);
         self.bind_type_node_with_owner(node, scope, owner);
     }
-
     fn bind_type_node_with_owner(
         &mut self,
         node: &TypeNode,
@@ -843,6 +840,14 @@ impl Binder {
                     ));
             }
             TypeNodeKind::Object(members) => {
+                self.declare_unscoped(
+                    scope,
+                    owner.expect("object type literal must have a declaration owner"),
+                    String::from("__type"),
+                    node.span,
+                    DeclarationKind::AnonymousType,
+                    Meaning::Type,
+                );
                 let member_scope = self.new_type_literal_scope(scope);
                 self.bind_type_members(members, member_scope);
             }
@@ -932,7 +937,6 @@ impl Binder {
             TypeNodeKind::Keyword(_) | TypeNodeKind::Literal(_) | TypeNodeKind::Missing => {}
         }
     }
-
     fn bind_class(
         &mut self,
         owner: NodeId,
@@ -1032,7 +1036,6 @@ impl Binder {
             }
         }
     }
-
     fn bind_class_member_symbol(&mut self, member: &ClassMember, container: ScopeId) {
         let symbol = match &member.kind {
             ClassMemberKind::Constructor { .. } => Some(ClassMemberSymbol::Constructor),
@@ -1110,7 +1113,6 @@ impl Binder {
         self.class_members
             .insert(member.id, BoundClassMember { container, symbol });
     }
-
     fn bind_expression(
         &mut self,
         expression: &Expression,
@@ -1119,7 +1121,6 @@ impl Binder {
     ) {
         self.bind_expression_with_demand(expression, scope, control, FlowDemandPath::root(), false);
     }
-
     fn bind_expression_with_demand(
         &mut self,
         expression: &Expression,
@@ -1306,6 +1307,16 @@ impl Binder {
                 self.bind_expression(left, scope, control);
                 self.bind_expression(right, scope, control);
             }
+            ExpressionKind::Conditional {
+                condition,
+                when_true,
+                when_false,
+                ..
+            } => {
+                self.bind_expression(condition, scope, control);
+                self.bind_expression(when_true, scope, control);
+                self.bind_expression(when_false, scope, control);
+            }
             ExpressionKind::Assignment {
                 left,
                 operator,
@@ -1340,13 +1351,11 @@ impl Binder {
             }
         }
     }
-
     fn bind_javascript_property_use(&mut self, expression: &Expression) {
         if !self.source_kind.supports_expression_type_arguments() {
             self.javascript_property_uses.push(expression.id);
         }
     }
-
     fn bind_javascript_property_assignment(
         &mut self,
         expression: &Expression,
@@ -1400,7 +1409,6 @@ impl Binder {
                 target,
             });
     }
-
     fn bind_function(&mut self, owner: NodeId, declaration: &FunctionDeclaration, parent: ScopeId) {
         let scope = self.new_flow_scope(parent, owner, None, None, FlowContainerKind::Ordinary);
         self.bind_type_parameters(&declaration.type_parameters, scope);
@@ -1419,7 +1427,6 @@ impl Binder {
             self.bind_statement(statement, body_scope, None);
         }
     }
-
     fn new_scope(&mut self, parent: ScopeId, owner: NodeId) -> ScopeId {
         let context = &self.scopes[parent.0 as usize];
         self.new_scope_with_context(
@@ -1429,7 +1436,6 @@ impl Binder {
             context.this_type_owner,
         )
     }
-
     fn new_scope_with_context(
         &mut self,
         parent: ScopeId,
@@ -1453,7 +1459,6 @@ impl Binder {
         }
         id
     }
-
     fn new_flow_scope(
         &mut self,
         parent: ScopeId,
@@ -1466,12 +1471,10 @@ impl Binder {
         self.scopes[scope.0 as usize].flow_container = Some(FlowContainer { owner, kind });
         scope
     }
-
     fn new_anonymous_scope(&mut self, parent: ScopeId) -> ScopeId {
         let this_type_owner = self.scopes[parent.0 as usize].this_type_owner;
         self.new_anonymous_scope_with_this_type(parent, this_type_owner)
     }
-
     fn new_anonymous_scope_with_this_type(
         &mut self,
         parent: ScopeId,
@@ -1480,11 +1483,9 @@ impl Binder {
         let lexical_this = self.scopes[parent.0 as usize].lexical_this;
         self.new_scope_with_context(parent, None, lexical_this, this_type_owner)
     }
-
     fn new_type_literal_scope(&mut self, parent: ScopeId) -> ScopeId {
         self.new_anonymous_scope_with_this_type(parent, None)
     }
-
     fn nearest_scope_owner(&self, mut scope: ScopeId) -> Option<NodeId> {
         loop {
             let current = self.scopes.get(scope.0 as usize)?;
@@ -1494,7 +1495,6 @@ impl Binder {
             scope = current.parent?;
         }
     }
-
     fn declare_unscoped(
         &mut self,
         scope: ScopeId,
@@ -1519,7 +1519,6 @@ impl Binder {
         });
         id
     }
-
     fn declare(
         &mut self,
         scope: ScopeId,
@@ -1537,7 +1536,6 @@ impl Binder {
             .push(id);
         id
     }
-
     fn declare_parameter(
         &mut self,
         scope: ScopeId,
@@ -1561,12 +1559,10 @@ impl Binder {
         }
     }
 }
-
 fn simple_assignment_target(expression: &Expression) -> Option<&Expression> {
     let expression = expression.peel_parentheses();
     matches!(expression.kind, ExpressionKind::Identifier { .. }).then_some(expression)
 }
-
 fn flow_assignment_root(expression: &Expression) -> Option<&Expression> {
     let expression = expression.peel_parentheses();
     match &expression.kind {
@@ -1577,7 +1573,6 @@ fn flow_assignment_root(expression: &Expression) -> Option<&Expression> {
         _ => None,
     }
 }
-
 fn element_assignment_receiver(expression: &Expression) -> Option<&Expression> {
     let expression = expression.peel_parentheses();
     let ExpressionKind::ElementAccess { object, .. } = &expression.kind else {
@@ -1585,12 +1580,10 @@ fn element_assignment_receiver(expression: &Expression) -> Option<&Expression> {
     };
     simple_assignment_target(object)
 }
-
 fn is_empty_array_expression(expression: &Expression) -> bool {
     let expression = expression.peel_parentheses();
     matches!(&expression.kind, ExpressionKind::Array(elements) if elements.is_empty())
 }
-
 fn javascript_named_property_path(
     mut expression: &Expression,
 ) -> Option<(String, Vec<String>, Span)> {
@@ -1613,7 +1606,6 @@ fn javascript_named_property_path(
         }
     }
 }
-
 fn is_javascript_expando_initializer(expression: &Expression) -> bool {
     let expression = expression.peel_parentheses();
     matches!(&expression.kind, ExpressionKind::Object(properties) if properties.is_empty())

@@ -159,7 +159,11 @@ function readJsonl(file) {
 }
 
 function assertRequiredCompatibilityFields(row) {
-  for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
+  for (const field of [
+    ...REQUIRED_COMPATIBILITY_FIELDS,
+    "compile_input_stable",
+    "evidence_protocol_fingerprint",
+  ]) {
     assert.ok(
       Object.prototype.hasOwnProperty.call(row, field),
       `project compatibility row is missing ${field}`,
@@ -470,7 +474,8 @@ withTempDir((dir) => {
   assert.equal(rows.length, 1);
   assertRequiredCompatibilityFields(rows[0]);
   assert.equal(rows[0].name, "type-challenges-solutions-project");
-  assert.equal(rows[0].state, "green");
+  assert.equal(rows[0].state, "gray", "a run without a verified build manifest is non-evidence");
+  assert.ok(rows[0].evidence_failures.includes("build_manifest_sha256"));
   assert.equal(rows[0].exit_class, "exit success");
   assert.equal(rows[0].phase, "check");
   assert.equal(rows[0].diagnostic_status, "none");
@@ -593,7 +598,8 @@ printf '%s' "$((count+1))" > ${JSON.stringify(runCountFile)}
   assert.equal(rows.length, 1);
   assertRequiredCompatibilityFields(rows[0]);
   assert.equal(rows[0].name, "utility-types-project");
-  assert.equal(rows[0].state, "green");
+  assert.equal(rows[0].state, "gray", "a run without a verified build manifest is non-evidence");
+  assert.ok(rows[0].evidence_failures.includes("build_manifest_sha256"));
   assert.equal(rows[0].exit_class, "exit success");
 });
 

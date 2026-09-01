@@ -1,12 +1,20 @@
 use std::sync::Arc;
 
 use tsz::diagnostics::DiagnosticCategory;
-use tsz::service::LanguageService;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
 
 #[path = "capability_analysis_parts/support.rs"]
 mod support;
 use support::*;
+
+#[path = "capability_analysis_parts/diagnostic_phases.rs"]
+mod diagnostic_phases;
 
 #[test]
 fn plain_template_file_is_complete_and_preserves_unrelated_sibling_diagnostic() {
@@ -97,14 +105,14 @@ fn no_check_keeps_owned_plain_template_program_complete() {
 }
 
 #[test]
-fn fatal_options_do_not_execute_or_aggregate_emit_capabilities() {
+fn fatal_unknown_targets_do_not_execute_or_aggregate_emit_capabilities() {
     let output = Compiler::new().compile(
         vec![SourceInput::new(
             "case.ts",
             Arc::<str>::from("const gap = `plain`; 1e_"),
         )],
         &CompilerOptions {
-            target: "es5".to_string(),
+            target: "future".to_string(),
             ..CompilerOptions::default()
         },
     );
@@ -122,12 +130,16 @@ fn fatal_options_do_not_execute_or_aggregate_emit_capabilities() {
         diagnostic_fingerprint(&output),
         vec![(
             String::new(),
-            5108,
+            6046,
             0,
             0,
             DiagnosticCategory::Error,
-            "Option 'target=ES5' has been removed. Please remove it from your configuration."
-                .to_string(),
+            concat!(
+                "Argument for '--target' option must be: 'es6', 'es2015', 'es2016', ",
+                "'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', ",
+                "'es2023', 'es2024', 'es2025', 'esnext'."
+            )
+            .to_string(),
             Vec::new(),
         )]
     );
@@ -224,143 +236,6 @@ fn plain_template_cross_file_demands_are_complete_and_keep_exact_diagnostics() {
             "a literal gap must not suppress an owned sibling statement or declaration demand"
         );
     }
-}
-
-#[test]
-fn flow_region_keeps_cross_file_binding_identity_but_defers_its_value() {
-    let producer = concat!(
-        "let subject: string | number = 0;\n",
-        "switch (subject.) { default: break; }\n",
-        "const produced = subject;\n",
-    );
-    let consumer = concat!(
-        "declare function acceptsString(value: string): void;\n",
-        "const composed = produced + 1;\n",
-        "const alias = composed;\n",
-        "const dependent: string = alias;\n",
-        "acceptsString(composed);\n",
-        "const member = (produced + 1).toFixed;\n",
-        "const subtracted = produced - 1;\n",
-        "const multiplied = produced * 1;\n",
-        "const divided = produced / 1;\n",
-        "const remainder = produced % 1;\n",
-        "const subtractDependent: string = subtracted;\n",
-        "const multiplyDependent: string = multiplied;\n",
-        "const divideDependent: string = divided;\n",
-        "const remainderDependent: string = remainder;\n",
-        "let assignmentTarget: string | number = 0;\n",
-        "const assignmentValue = (assignmentTarget = produced + 1);\n",
-        "const assignmentDependent: string = assignmentValue;\n",
-        "const concrete = 4 - 2;\n",
-        "const concreteWrong: string = concrete;\n",
-        "const stableLeft = \"\" + produced;\n",
-        "const stableLeftWrong: number = stableLeft;\n",
-        "const stableRight = produced + \"\";\n",
-        "const stableRightWrong: number = stableRight;\n",
-        "const independent: string = 1;\n",
-        "type Kept = MissingConsumerSibling;\n",
-    );
-    let compiler = Compiler::new();
-    let roots = vec![
-        SourceInput::new("producer.ts", Arc::<str>::from(producer)),
-        SourceInput::new("consumer.ts", Arc::<str>::from(consumer)),
-    ];
-    let mut reversed = roots.clone();
-    reversed.reverse();
-    let forward = compiler.compile(roots.clone(), &semantic_options());
-    let repeated = compiler.compile(roots, &semantic_options());
-    let reverse = compiler.compile(reversed, &semantic_options());
-    let expected = vec![
-        (
-            "consumer.ts".to_string(),
-            2322,
-            consumer
-                .find("concreteWrong")
-                .expect("complete arithmetic relation") as u32,
-            "concreteWrong".len() as u32,
-            DiagnosticCategory::Error,
-            "Type 'number' is not assignable to type 'string'.".to_string(),
-            Vec::new(),
-        ),
-        (
-            "consumer.ts".to_string(),
-            2322,
-            consumer
-                .find("stableLeftWrong")
-                .expect("left string add relation") as u32,
-            "stableLeftWrong".len() as u32,
-            DiagnosticCategory::Error,
-            "Type 'string' is not assignable to type 'number'.".to_string(),
-            Vec::new(),
-        ),
-        (
-            "consumer.ts".to_string(),
-            2322,
-            consumer
-                .find("stableRightWrong")
-                .expect("right string add relation") as u32,
-            "stableRightWrong".len() as u32,
-            DiagnosticCategory::Error,
-            "Type 'string' is not assignable to type 'number'.".to_string(),
-            Vec::new(),
-        ),
-        (
-            "consumer.ts".to_string(),
-            2322,
-            consumer.find("independent").expect("independent relation") as u32,
-            "independent".len() as u32,
-            DiagnosticCategory::Error,
-            "Type 'number' is not assignable to type 'string'.".to_string(),
-            Vec::new(),
-        ),
-        (
-            "consumer.ts".to_string(),
-            2304,
-            consumer
-                .find("MissingConsumerSibling")
-                .expect("independent required type") as u32,
-            "MissingConsumerSibling".len() as u32,
-            DiagnosticCategory::Error,
-            "Cannot find name 'MissingConsumerSibling'.".to_string(),
-            Vec::new(),
-        ),
-        (
-            "producer.ts".to_string(),
-            1003,
-            producer.find(".)").expect("recovered member") as u32 + 1,
-            1,
-            DiagnosticCategory::Error,
-            "Identifier expected.".to_string(),
-            Vec::new(),
-        ),
-        (
-            "producer.ts".to_string(),
-            1005,
-            producer.find(") {").expect("recovered switch close") as u32 + 2,
-            1,
-            DiagnosticCategory::Error,
-            "')' expected.".to_string(),
-            Vec::new(),
-        ),
-    ];
-
-    for output in [&forward, &repeated, &reverse] {
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-        assert_eq!(diagnostic_fingerprint(output), expected);
-        assert!(
-            output.diagnostics.iter().all(|diagnostic| ![
-                consumer.find("produced").unwrap() as u32,
-                consumer.find("composed").unwrap() as u32,
-                consumer.find("alias").unwrap() as u32,
-                consumer.find("dependent").unwrap() as u32,
-            ]
-            .contains(&diagnostic.start)),
-            "the bound deferred value must not become absent or a cached concrete type",
-        );
-    }
-    assert_eq!(forward.stats.types, repeated.stats.types);
-    assert_eq!(forward.stats.types, reverse.stats.types);
 }
 
 #[test]
@@ -493,10 +368,13 @@ fn template_recovery_extent_defers_attached_fragments_but_not_closed_siblings() 
             )],
             "{path}",
         );
+        let output = service.compile();
         assert_eq!(
-            service.compile().exit_status,
+            output.exit_status,
             CompileExitStatus::SemanticIncomplete,
-            "{path}",
+            "{path}: completion={:?}, diagnostics={:?}",
+            output.semantic_completion,
+            diagnostic_fingerprint(&output),
         );
     }
 }
@@ -824,10 +702,12 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
 
     let gap = service
         .quick_info("gap.ts", 7)
+        .expect_claimed("plain template quick info capability")
         .expect("plain template quick info is definitive");
     assert_eq!(gap.display, "const local: \"plain\"");
     let sibling = service
         .quick_info("sibling.ts", 7)
+        .expect_claimed("sibling quick info capability")
         .expect("unrelated sibling quick info remains definitive");
     assert_eq!(sibling.display, "const sibling: string");
 
@@ -841,7 +721,10 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
 
     service.change("gap.ts", Arc::<str>::from("const local = 'plain';"));
     assert!(
-        service.quick_info("gap.ts", 7).is_some(),
+        service
+            .quick_info("gap.ts", 7)
+            .expect_claimed("revised quick info")
+            .is_some(),
         "a source revision must invalidate the compiled capability snapshot"
     );
 
@@ -883,6 +766,7 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     assert_eq!(
         mixed_service
             .quick_info("mixed.ts", local_offset)
+            .expect_claimed("mixed local quick info capability")
             .expect("plain template quick info")
             .display,
         "const local: \"plain\""
@@ -890,6 +774,7 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     assert_eq!(
         mixed_service
             .quick_info("mixed.ts", sibling_offset)
+            .expect_claimed("mixed sibling quick info capability")
             .expect("same-file sibling quick info")
             .display,
         "const sibling: string"
@@ -897,64 +782,121 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     assert!(
         mixed_service
             .definition_and_bound_span("mixed.ts", local_offset)
+            .expect_claimed("mixed local definition")
             .is_some()
     );
     assert!(
         mixed_service
             .definition_and_bound_span("mixed.ts", sibling_offset)
+            .expect_claimed("mixed sibling definition")
             .is_some()
     );
-    assert!(
-        !mixed_service
-            .references("mixed.ts", local_offset)
-            .is_empty()
+    assert!(matches!(
+        mixed_service.references("mixed.ts", local_offset),
+        tsz::service::ServiceQuery::Nonclaimed(_)
+    ));
+    let sibling_references = mixed_service
+        .references("mixed.ts", sibling_offset)
+        .expect_claimed("authored sibling reference display");
+    assert_eq!(sibling_references.len(), 1);
+    assert_eq!(
+        sibling_references[0].definition.name,
+        "const sibling: string"
     );
-    assert!(
-        !mixed_service
-            .references("mixed.ts", sibling_offset)
-            .is_empty()
+    assert_eq!(
+        sibling_references[0]
+            .definition
+            .display_parts
+            .iter()
+            .map(|part| (part.text.as_str(), part.kind.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("const", "keyword"),
+            (" ", "space"),
+            ("sibling", "localName"),
+            (":", "punctuation"),
+            (" ", "space"),
+            ("string", "keyword"),
+        ]
     );
     assert!(
         !mixed_service
             .document_highlights("mixed.ts", local_offset, &["mixed.ts".to_string()])
+            .expect_claimed("mixed local highlights")
             .is_empty()
     );
     assert!(
         !mixed_service
             .document_highlights("mixed.ts", sibling_offset, &["mixed.ts".to_string()])
+            .expect_claimed("mixed sibling highlights")
             .is_empty()
     );
     assert!(
         mixed_service
             .rename("mixed.ts", local_offset)
+            .expect_claimed("mixed local rename")
             .info
             .can_rename
     );
     assert!(
         mixed_service
             .rename("mixed.ts", sibling_offset)
+            .expect_claimed("mixed sibling rename")
             .info
             .can_rename
+    );
+
+    let reference_source = "interface Box {} function useValue(value: Box) { return value; }";
+    let mut reference_service = LanguageService::new(CompilerOptions::default());
+    reference_service.open("references.ts", Arc::<str>::from(reference_source));
+    let parameter = reference_source.find("value: Box").expect("parameter") as u32;
+    assert!(matches!(
+        reference_service.quick_info("references.ts", parameter),
+        tsz::service::ServiceQuery::Nonclaimed(_)
+    ));
+    let references = reference_service
+        .references("references.ts", parameter)
+        .expect_claimed("annotated parameter has a complete reference display");
+    assert_eq!(references.len(), 1);
+    assert_eq!(references[0].references.len(), 2);
+    assert_eq!(references[0].definition.name, "(parameter) value: Box");
+    assert_eq!(
+        references[0]
+            .definition
+            .display_parts
+            .iter()
+            .map(|part| (part.text.as_str(), part.kind.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("(", "punctuation"),
+            ("parameter", "text"),
+            (")", "punctuation"),
+            (" ", "space"),
+            ("value", "parameterName"),
+            (":", "punctuation"),
+            (" ", "space"),
+            ("Box", "text"),
+        ]
     );
 
     let result_scope_source = "const safe = 1; const gap = `${safe}`; const useSafe = safe;";
     let mut result_scope_service = LanguageService::new(CompilerOptions::default());
     result_scope_service.open("results.ts", Arc::<str>::from(result_scope_source));
     let safe_declaration = result_scope_source.find("safe").expect("safe") as u32;
-    assert!(
-        !result_scope_service
-            .references("results.ts", safe_declaration)
-            .is_empty(),
-        "represented template substitutions publish exhaustive references"
-    );
+    assert!(matches!(
+        result_scope_service.references("results.ts", safe_declaration),
+        tsz::service::ServiceQuery::Nonclaimed(_)
+    ));
     assert!(
         !result_scope_service
             .document_highlights("results.ts", safe_declaration, &["results.ts".to_string()])
+            .expect_claimed("template substitution highlights")
             .is_empty()
     );
     assert!(
         result_scope_service
             .rename("results.ts", safe_declaration)
+            .expect_claimed("template substitution rename")
             .info
             .can_rename
     );
@@ -963,15 +905,14 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     let mut literal_scope_service = LanguageService::new(CompilerOptions::default());
     literal_scope_service.open("literal-results.ts", Arc::<str>::from(literal_scope_source));
     let literal_safe = literal_scope_source.find("safe").expect("safe") as u32;
-    assert!(
-        !literal_scope_service
-            .references("literal-results.ts", literal_safe)
-            .is_empty(),
-        "identifier-free substitutions do not poison reference enumeration"
-    );
+    assert!(matches!(
+        literal_scope_service.references("literal-results.ts", literal_safe),
+        tsz::service::ServiceQuery::Nonclaimed(_)
+    ));
     assert!(
         literal_scope_service
             .rename("literal-results.ts", literal_safe)
+            .expect_claimed("literal substitution rename")
             .info
             .can_rename
     );
@@ -982,15 +923,14 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
         "template-use.ts",
         Arc::<str>::from("const gap = `${shared}`;"),
     );
-    assert!(
-        !cross_file_service
-            .references("declaration.ts", "const ".len() as u32)
-            .is_empty(),
-        "a represented substitution publishes exhaustive cross-file references"
-    );
+    assert!(matches!(
+        cross_file_service.references("declaration.ts", "const ".len() as u32),
+        tsz::service::ServiceQuery::Nonclaimed(_)
+    ));
     assert!(
         cross_file_service
             .rename("declaration.ts", "const ".len() as u32)
+            .expect_claimed("cross-file template rename")
             .info
             .can_rename
     );
@@ -1007,6 +947,7 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     assert!(
         declaration_scope_service
             .definition_and_bound_span("declaration.ts", use_gap)
+            .expect_claimed("template declaration navigation")
             .is_some(),
         "a plain template declaration publishes its owned definition"
     );
@@ -1022,12 +963,14 @@ fn quick_info_uses_completed_plain_templates_without_poisoning_unsupported_sibli
     assert!(
         module_group_service
             .definition_and_bound_span("module.ts", signature)
+            .expect_claimed("module group navigation")
             .is_some(),
         "a modeled implementation keeps module-local binder navigation claimed"
     );
     assert!(
         module_group_service
             .rename("module.ts", signature)
+            .expect_claimed("module group rename")
             .info
             .can_rename
     );
@@ -1214,21 +1157,40 @@ fn represented_nested_templates_preserve_service_query_origins() {
         assert_eq!(
             service
                 .quick_info(path, broken)
+                .expect_claimed("annotated recovered quick info capability")
                 .expect("annotated template declaration quick info")
                 .display,
             "const broken: string"
         );
-        assert!(service.definition_and_bound_span(path, broken).is_some());
-        assert!(!service.references(path, broken).is_empty());
+        assert!(
+            service
+                .definition_and_bound_span(path, broken)
+                .expect_claimed("annotated recovered definition")
+                .is_some()
+        );
+        assert!(
+            !service
+                .references(path, broken)
+                .expect_claimed("annotated recovered references")
+                .is_empty()
+        );
         assert!(
             !service
                 .document_highlights(path, broken, &[path.to_string()])
+                .expect_claimed("annotated recovered highlights")
                 .is_empty()
         );
-        assert!(service.rename(path, broken).info.can_rename);
+        assert!(
+            service
+                .rename(path, broken)
+                .expect_claimed("annotated recovered rename")
+                .info
+                .can_rename
+        );
 
         let quick_info = service
             .quick_info(path, sibling)
+            .expect_claimed("nested sibling quick info capability")
             .expect("nested sibling quick info remains claimed");
         assert_eq!(quick_info.kind, "const");
         assert_eq!(quick_info.text_span.start, sibling);
@@ -1237,6 +1199,7 @@ fn represented_nested_templates_preserve_service_query_origins() {
 
         let definition = service
             .definition_and_bound_span(path, sibling_use)
+            .expect_claimed("nested sibling definition capability")
             .expect("nested sibling definition remains claimed");
         assert_eq!(definition.text_span.start, sibling_use);
         assert_eq!(definition.text_span.length, "nestedSibling".len() as u32);
@@ -1245,7 +1208,9 @@ fn represented_nested_templates_preserve_service_query_origins() {
         assert_eq!(definition.definitions[0].name, "nestedSibling");
         assert_eq!(definition.definitions[0].text_span.start, sibling);
 
-        let references = service.references(path, sibling);
+        let references = service
+            .references(path, sibling)
+            .expect_claimed("nested sibling references");
         assert_eq!(references.len(), 1);
         assert_eq!(references[0].definition.name, "const nestedSibling: string");
         assert_eq!(
@@ -1257,7 +1222,9 @@ fn represented_nested_templates_preserve_service_query_origins() {
             vec![sibling, sibling_use]
         );
 
-        let highlights = service.document_highlights(path, sibling, &[path.to_string()]);
+        let highlights = service
+            .document_highlights(path, sibling, &[path.to_string()])
+            .expect_claimed("nested sibling highlights");
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].file_name, path);
         assert_eq!(
@@ -1269,7 +1236,9 @@ fn represented_nested_templates_preserve_service_query_origins() {
             vec![sibling, sibling_use]
         );
 
-        let rename = service.rename(path, sibling);
+        let rename = service
+            .rename(path, sibling)
+            .expect_claimed("nested sibling rename");
         assert!(rename.info.can_rename);
         assert_eq!(rename.info.display_name.as_deref(), Some("nestedSibling"));
         assert_eq!(
@@ -1294,11 +1263,14 @@ fn represented_nested_templates_preserve_service_query_origins() {
     for offset in [edge_use, edge_use + "edgeSibling".len() as u32] {
         let definition = edge_service
             .definition_and_bound_span("edge-service.ts", offset)
+            .expect_claimed("right-edge definition capability")
             .expect("right-edge query keeps its statement owner");
         assert_eq!(definition.definitions.len(), 1);
         assert_eq!(definition.definitions[0].name, "edgeSibling");
         assert_eq!(definition.definitions[0].text_span.start, edge_declaration);
-        let references = edge_service.references("edge-service.ts", offset);
+        let references = edge_service
+            .references("edge-service.ts", offset)
+            .expect_claimed("right-edge references");
         assert_eq!(references.len(), 1);
         assert_eq!(
             references[0]

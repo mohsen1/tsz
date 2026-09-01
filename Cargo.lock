@@ -846,6 +846,7 @@ version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -1016,16 +1017,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-serde"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
-dependencies = [
- "serde",
- "tracing-core",
-]
-
-[[package]]
 name = "tracing-subscriber"
 version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1035,15 +1026,12 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
- "serde",
- "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
- "tracing-serde",
 ]
 
 [[package]]
@@ -1051,12 +1039,9 @@ name = "tsz-cli"
 version = "0.1.75"
 dependencies = [
  "anyhow",
- "clap",
  "serde",
  "serde_json",
  "tempfile",
- "tracing",
- "tracing-subscriber",
  "tsz-core",
 ]
 
@@ -1091,7 +1076,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tracing",
+ "unicode-ident",
 ]
 
 [[package]]

@@ -2,15 +2,13 @@ use std::sync::Arc;
 
 use crate::bind::ScopeId;
 use crate::diagnostics::Diagnostic;
-use crate::program::{CapabilityAnalysis, CompilerOptions, Program, SemanticCompletion};
+use crate::program::{
+    CapabilityAnalysis, CompilerOptions, DeclarationDisplaySummaries, Program, SemanticCompletion,
+};
 
 use super::{Checker, relation_diagnostic::ContextualType};
 
 mod display_summary;
-
-pub(crate) use display_summary::{
-    DeclarationDisplayParts, DeclarationDisplaySummaries, DeclarationDisplaySummary,
-};
 
 #[derive(Debug)]
 pub struct CheckResult {
@@ -34,7 +32,8 @@ pub fn summarize_program(
     options: &CompilerOptions,
     capabilities: &CapabilityAnalysis,
 ) -> DeclarationDisplaySummaries {
-    Checker::new(program, options, capabilities).declaration_display_summaries()
+    let mut checker = Checker::new(program, options, capabilities);
+    checker.declaration_display_summaries()
 }
 
 impl Checker<'_> {
@@ -90,7 +89,7 @@ impl Checker<'_> {
                 ScopeId(0),
                 &file.syntax.statements,
                 ContextualType::Absent,
-                None,
+                super::statement_model::ROOT_JUMP_TARGETS,
             );
         }
         self.completion.set_current(None);
@@ -98,13 +97,11 @@ impl Checker<'_> {
         self.flush_indexed_access_diagnostics();
         self.flush_construct_diagnostics();
         let declaration_display_summaries = self.declaration_display_summaries();
-        let semantic_completion = self.completion.program();
-        let file_semantic_completions = self.completion.into_file_verdicts();
         CheckResult {
             diagnostics: self.diagnostics,
             type_count: self.store.len(),
-            semantic_completion,
-            file_semantic_completions,
+            semantic_completion: self.completion.program(),
+            file_semantic_completions: self.completion.into_file_verdicts(),
             declaration_display_summaries,
         }
     }

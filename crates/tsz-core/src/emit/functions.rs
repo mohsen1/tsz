@@ -1,42 +1,12 @@
 use crate::syntax::{
     ArrowBody, Expression, ExpressionKind, FunctionDeclaration, FunctionLikeExpression,
-    FunctionLikeFunctionKind, FunctionLikeSyntax, Literal, ObjectProperty, SourceUnit, Statement,
+    FunctionLikeFunctionKind, FunctionLikeSyntax, Literal, ObjectProperty, Statement,
     StatementKind, erased_assertion_expression,
 };
 
 use super::{End, Gap, ModuleFormat, PREC_ASSIGNMENT, PREC_LOWEST, Printer};
 
 impl Printer<'_> {
-    pub(super) fn write_commonjs_declaration_prologue(&mut self, unit: &SourceUnit) {
-        let output_start = self.output.len();
-        for statement in unit.statements.iter().rev() {
-            if let StatementKind::Class(declaration) = &statement.kind
-                && declaration.exported
-                && !declaration.default_export
-                && !declaration.declared
-            {
-                self.write_parts(&["exports.", &declaration.name, " = "]);
-            }
-        }
-        if self.output.len() != output_start {
-            self.output.push_str("void 0;\n");
-        }
-        for statement in &unit.statements {
-            if let StatementKind::Function(declaration) = &statement.kind
-                && declaration.exported
-                && !declaration.declared
-                && declaration.has_body
-            {
-                let export_name = if declaration.default_export {
-                    "default"
-                } else {
-                    declaration.name.as_str()
-                };
-                self.write_commonjs_export(export_name, &declaration.name, None);
-            }
-        }
-    }
-
     pub(super) fn write_javascript_function(
         &mut self,
         _statement: &Statement,
@@ -55,7 +25,8 @@ impl Printer<'_> {
         }
         self.output.push_str("function ");
         if top_level && declaration.exported && self.module_format == ModuleFormat::CommonJs {
-            self.output.push_str(&declaration.name);
+            self.output
+                .push_str(&self.declaration_runtime_name(&declaration.name));
         } else {
             self.write_authored_identifier(&declaration.name, declaration.name_span);
         }
@@ -64,7 +35,6 @@ impl Printer<'_> {
         self.write_function_body(declaration.body_span, &declaration.body);
         self.output.push('\n');
     }
-
     pub(super) fn write_object_property(&mut self, property: &ObjectProperty) {
         self.write_property_name(&property.name, property.name_span, property.name_kind);
         if matches!(
@@ -74,6 +44,11 @@ impl Printer<'_> {
             self.write_expression(&property.value, PREC_LOWEST);
         } else if !property.shorthand {
             self.output.push_str(": ");
+            self.write_expression(&property.value, PREC_ASSIGNMENT);
+        } else if let ExpressionKind::Identifier { name_span, .. } = &property.value.kind
+            && self.expression_is_commonjs_exported_variable(*name_span)
+        {
+            self.output.push_str(": ");
             self.write_expression(&property.value, PREC_LOWEST);
         } else if let (Some(_), ExpressionKind::Assignment { right, .. }) =
             (property.shorthand_equals_span, &property.value.kind)
@@ -82,7 +57,6 @@ impl Printer<'_> {
             self.write_expression(right, PREC_ASSIGNMENT);
         }
     }
-
     pub(super) fn write_function_like(
         &mut self,
         function: &FunctionLikeExpression,
@@ -113,7 +87,6 @@ impl Printer<'_> {
             }
         }
     }
-
     pub(super) fn write_function_body(
         &mut self,
         body_span: Option<crate::source::Span>,
@@ -143,14 +116,12 @@ impl Printer<'_> {
         }
         self.output.push_str(" }");
     }
-
     pub(super) fn body_span_is_single_line(&self, span: crate::source::Span) -> bool {
         !self
             .source
             .slice(span)
             .contains(['\n', '\r', '\u{2028}', '\u{2029}'])
     }
-
     pub(super) fn write_expression_statement_expression(&mut self, expression: &Expression) {
         let erased = erased_assertion_expression(expression).unwrap_or(expression);
         if let ExpressionKind::Call {
@@ -174,7 +145,6 @@ impl Printer<'_> {
             self.output.push(')');
         }
     }
-
     fn write_arrow(
         &mut self,
         parameters: &[crate::syntax::Parameter],
@@ -215,7 +185,6 @@ impl Printer<'_> {
             ArrowBody::Block(statements) => self.write_function_body(body_span, statements),
         }
     }
-
     fn write_arrow_expression(&mut self, expression: &Expression, precedence: u8) {
         let parenthesize = starts_with_erased_expression(expression, |expression| {
             matches!(expression.kind, ExpressionKind::Object(_))

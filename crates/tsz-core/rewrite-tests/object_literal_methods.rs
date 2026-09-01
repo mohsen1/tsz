@@ -1,12 +1,61 @@
 use std::sync::Arc;
 
-use tsz::diagnostics::DiagnosticCategory;
-use tsz::service::LanguageService;
+use tsz::diagnostics::{Diagnostic, DiagnosticCategory, RelatedInformation};
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{
     ExpressionKind, FunctionLikeFunctionKind, FunctionLikeSyntax, StatementKind, parse_source,
 };
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
+
+type RelatedDiagnosticIdentity = (String, u32, u32, u32, String, u32);
+type DiagnosticIdentity = (
+    String,
+    u32,
+    u32,
+    u32,
+    DiagnosticCategory,
+    String,
+    Vec<RelatedDiagnosticIdentity>,
+);
+
+fn related_diagnostic_identities(related: &[RelatedInformation]) -> Vec<RelatedDiagnosticIdentity> {
+    related
+        .iter()
+        .map(|related| {
+            (
+                related.file.clone(),
+                related.code,
+                related.start,
+                related.length,
+                related.message_text.clone(),
+                related.depth,
+            )
+        })
+        .collect()
+}
+
+fn diagnostic_identities(diagnostics: &[Diagnostic]) -> Vec<DiagnosticIdentity> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.file.clone(),
+                diagnostic.code,
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.category,
+                diagnostic.message_text.clone(),
+                related_diagnostic_identities(&diagnostic.related_information),
+            )
+        })
+        .collect()
+}
 
 fn parse(source: &str) -> tsz::syntax::ParseOutput {
     let source = SourceText::new(
@@ -39,13 +88,26 @@ fn assert_services_nonclaimed(
     offset: u32,
     files: &[String],
 ) {
-    assert!(service.quick_info(path, offset).is_none());
-    assert!(service.definition_and_bound_span(path, offset).is_none());
-    assert!(service.references(path, offset).is_empty());
-    assert!(service.document_highlights(path, offset, files).is_empty());
-    let rename = service.rename(path, offset);
-    assert!(!rename.info.can_rename);
-    assert!(rename.locations.is_empty());
+    assert!(matches!(
+        service.quick_info(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.definition_and_bound_span(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.references(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.document_highlights(path, offset, files),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.rename(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    ));
 }
 
 #[test]
@@ -489,6 +551,33 @@ fn private_and_malformed_method_shapes_remain_parser_recovery() {
         "const independent: MissingIndependent = 1;\n",
     );
     let output = compile(malformed, false, "es2022");
+    let mut service = LanguageService::new(CompilerOptions::default());
+    service.open("object-literal-method.ts", Arc::<str>::from(malformed));
+    let semantic = service.semantic_diagnostics("object-literal-method.ts");
+    assert_eq!(
+        diagnostic_identities(&semantic.diagnostics),
+        vec![
+            (
+                "object-literal-method.ts".to_string(),
+                2304,
+                61,
+                14,
+                DiagnosticCategory::Error,
+                "Cannot find name 'MissingSibling'.".to_string(),
+                Vec::new(),
+            ),
+            (
+                "object-literal-method.ts".to_string(),
+                2304,
+                99,
+                18,
+                DiagnosticCategory::Error,
+                "Cannot find name 'MissingIndependent'.".to_string(),
+                Vec::new(),
+            ),
+        ],
+    );
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
     assert_eq!(
         output
             .diagnostics
@@ -505,35 +594,15 @@ fn private_and_malformed_method_shapes_remain_parser_recovery() {
                 )
             })
             .collect::<Vec<_>>(),
-        vec![
-            (
-                "object-literal-method.ts",
-                1005,
-                47,
-                1,
-                "'{' expected.",
-                DiagnosticCategory::Error,
-                &[][..],
-            ),
-            (
-                "object-literal-method.ts",
-                2304,
-                61,
-                14,
-                "Cannot find name 'MissingSibling'.",
-                DiagnosticCategory::Error,
-                &[][..],
-            ),
-            (
-                "object-literal-method.ts",
-                2304,
-                99,
-                18,
-                "Cannot find name 'MissingIndependent'.",
-                DiagnosticCategory::Error,
-                &[][..],
-            ),
-        ]
+        vec![(
+            "object-literal-method.ts",
+            1005,
+            47,
+            1,
+            "'{' expected.",
+            DiagnosticCategory::Error,
+            &[][..],
+        ),]
     );
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
     assert!(output.emitted_files.is_empty());
@@ -579,26 +648,31 @@ fn object_method_navigation_waits_for_program_owned_member_identity() {
     assert!(
         control_service
             .quick_info("control.ts", reference + 1)
+            .expect_claimed("control quick info")
             .is_some()
     );
     assert!(
         control_service
             .definition_and_bound_span("control.ts", reference + 1)
+            .expect_claimed("control definition")
             .is_some()
     );
     assert!(
         !control_service
             .references("control.ts", reference + 1)
+            .expect_claimed("control references")
             .is_empty()
     );
     assert!(
         !control_service
             .document_highlights("control.ts", reference + 1, &control_files)
+            .expect_claimed("control highlights")
             .is_empty()
     );
     assert!(
         control_service
             .rename("control.ts", reference + 1)
+            .expect_claimed("control rename")
             .info
             .can_rename
     );

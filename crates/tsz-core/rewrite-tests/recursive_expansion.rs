@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
-use tsz::service::LanguageService;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{ExpressionKind, StatementKind, parse_source};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
 
 fn options() -> CompilerOptions {
     CompilerOptions {
@@ -752,6 +757,56 @@ fn recursive_results_are_cold_warm_and_root_order_independent() {
 }
 
 #[test]
+fn recursive_relation_diagnostics_are_cold_warm_root_order_and_binder_independent() {
+    fn run(declaration_name: &str, property_name: &str) -> Vec<tsz::CompileOutput> {
+        let declarations = SourceInput::new(
+            "models.ts",
+            Arc::<str>::from(format!(
+                "interface {declaration_name}<Value> {{ {property_name}: {declaration_name}<Value>; value: Value }}"
+            )),
+        );
+        let mismatch = SourceInput::new(
+            "use.ts",
+            Arc::<str>::from(format!(
+                "declare let expected: {declaration_name}<string>; declare let actual: {declaration_name}<number>; expected=actual;"
+            )),
+        );
+        let compiler = Compiler::new();
+        vec![
+            compiler.compile(vec![declarations.clone(), mismatch.clone()], &options()),
+            compiler.compile(vec![declarations.clone(), mismatch.clone()], &options()),
+            compiler.compile(vec![mismatch, declarations], &options()),
+        ]
+    }
+
+    let cases = [run("Chain", "next"), run("Branch", "child")];
+    for outputs in cases {
+        let fingerprint = |output: &tsz::CompileOutput| {
+            (
+                serde_json::to_vec(&output.diagnostics).unwrap(),
+                output.semantic_completion,
+                output.exit_status,
+                output.stats.types,
+            )
+        };
+        assert_eq!(
+            codes(&outputs[0]),
+            vec![2322],
+            "{:?}",
+            outputs[0].diagnostics
+        );
+        assert_complete(&outputs[0]);
+        assert_eq!(
+            outputs[0].exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsSkipped
+        );
+        assert_eq!(fingerprint(&outputs[0]), fingerprint(&outputs[1]));
+        assert_eq!(fingerprint(&outputs[0]), fingerprint(&outputs[2]));
+        assert!(outputs[0].stats.types < 512, "{:?}", outputs[0].stats);
+    }
+}
+
+#[test]
 fn interface_heritage_rejects_shapes_outside_the_property_only_boundary() {
     let supported = compile(
         r#"
@@ -978,17 +1033,24 @@ fn generic_call_type_arguments_keep_type_scope_and_relational_grammar() {
     for reference in &positions[1..] {
         let definition = service
             .definition_and_bound_span("case.ts", *reference + 1)
+            .expect_claimed("function type-parameter navigation")
             .expect("function type-parameter definition");
         assert_eq!(definition.definitions[0].text_span.start, positions[0]);
     }
     assert_eq!(
-        service.references("case.ts", positions[0] + 1)[0]
+        service
+            .references("case.ts", positions[0] + 1)
+            .expect_claimed("function type-parameter references")[0]
             .references
             .len(),
         3
     );
     assert_eq!(
-        service.rename("case.ts", positions[0] + 1).locations.len(),
+        service
+            .rename("case.ts", positions[0] + 1)
+            .expect_claimed("function type-parameter rename")
+            .locations
+            .len(),
         3
     );
 
@@ -1003,6 +1065,7 @@ fn generic_call_type_arguments_keep_type_scope_and_relational_grammar() {
     for reference in &class_positions[1..] {
         let definition = class_service
             .definition_and_bound_span("case.ts", *reference + 1)
+            .expect_claimed("class type-parameter navigation")
             .expect("class type-parameter definition");
         assert_eq!(
             definition.definitions[0].text_span.start,
@@ -1010,7 +1073,9 @@ fn generic_call_type_arguments_keep_type_scope_and_relational_grammar() {
         );
     }
     assert_eq!(
-        class_service.references("case.ts", class_positions[0] + 1)[0]
+        class_service
+            .references("case.ts", class_positions[0] + 1)
+            .expect_claimed("class type-parameter references")[0]
             .references
             .len(),
         3
@@ -1018,6 +1083,7 @@ fn generic_call_type_arguments_keep_type_scope_and_relational_grammar() {
     assert_eq!(
         class_service
             .rename("case.ts", class_positions[0] + 1)
+            .expect_claimed("class type-parameter rename")
             .locations
             .len(),
         3

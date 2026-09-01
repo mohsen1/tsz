@@ -26,7 +26,7 @@ fn bodyless_object_method_records_typed_model_and_program_service_nonclaims() {
         assert!(reasons.into_iter().any(|reason| {
             reason.scope == scope
                 && reason.reason == NonclaimReason::Semantic(SemanticGap::FunctionLikeService)
-                && reason.deletion
+                && reason.deletion_condition()
                     == DeletionCondition::SemanticOwner(SemanticGap::FunctionLikeService)
         }));
     }
@@ -79,191 +79,8 @@ fn typescript_type_declarations_preserve_emit_claims() {
     );
 }
 
-#[test]
-fn inferred_implementation_returns_have_one_typed_declaration_boundary() {
-    let affected = program_file(
-        0,
-        "affected.ts",
-        "export function cedar(){return 1} export function birch(){const value=1}",
-    );
-    let [cedar, birch] = affected.syntax.statements.as_slice() else {
-        panic!("two function declarations expected")
-    };
-    let analysis = default_analysis(&affected);
-    assert!(
-        analysis
-            .claim(
-                CapabilityTarget::JavaScript,
-                CapabilityScope::File(affected.source.id),
-            )
-            .is_claimed()
-    );
-    let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(
-        CapabilityTarget::Declaration,
-        CapabilityScope::File(affected.source.id),
-    ) else {
-        panic!("the declaration product requires checked return summaries")
-    };
-    assert_eq!(
-        reasons.copied().collect::<Vec<_>>(),
-        [cedar.id, birch.id]
-            .map(|owner| CapabilityNonclaim {
-                target: CapabilityTarget::Declaration,
-                scope: CapabilityScope::node(affected.source.id, owner),
-                reason: NonclaimReason::Semantic(SemanticGap::DeclarationFunctionSummary),
-                deletion: DeletionCondition::SemanticOwner(
-                    SemanticGap::DeclarationFunctionSummary,
-                ),
-            })
-            .to_vec()
-    );
-
-    for (path, source) in [
-        (
-            "controls.ts",
-            "function empty(){} declare function bodyless(); function typed():number{return 1}",
-        ),
-        (
-            "nested.ts",
-            "function wrapper():void{function nested(){return 1}}",
-        ),
-    ] {
-        let file = program_file(0, path, source);
-        let claims = default_analysis(&file);
-        for target in [CapabilityTarget::JavaScript, CapabilityTarget::Declaration] {
-            assert!(
-                claims
-                    .claim(target, CapabilityScope::File(file.source.id))
-                    .is_claimed(),
-                "{path}: {target:?}",
-            );
-        }
-    }
-}
-
-#[test]
-fn inferred_return_nonclaim_withholds_only_its_file_declaration_product() {
-    let output = Compiler::new().compile(
-        vec![
-            SourceInput::new(
-                "affected.ts",
-                Arc::<str>::from(
-                    "export function cedar(){return 1} export const same:string='ok';",
-                ),
-            ),
-            SourceInput::new(
-                "stable.ts",
-                Arc::<str>::from(
-                    "export function birch():number{return 2} export const other:number=3;",
-                ),
-            ),
-        ],
-        &CompilerOptions {
-            declaration: true,
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        },
-    );
-    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    assert_eq!(
-        output
-            .emitted_files
-            .iter()
-            .map(|file| file.path.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        ["affected.js", "stable.d.ts", "stable.js"]
-    );
-    assert_eq!(
-        output.emitted_files[0].text,
-        "export function cedar() { return 1; }\nexport const same = 'ok';\n"
-    );
-    assert_eq!(
-        output.emitted_files[1].text,
-        "export declare function birch(): number;\nexport declare const other: number;\n"
-    );
-}
-
-#[test]
-fn inferred_call_products_have_one_typed_declaration_boundary() {
-    let file = program_file(
-        0,
-        "inferred-calls.ts",
-        concat!(
-            "declare const values:number[];",
-            "const inferred=values.indexOf(1);",
-            "const typed:number=values.indexOf(1);",
-            "function defaulted(value=values.indexOf(1)):void{}",
-            "function typedDefault(value:number=values.indexOf(1)):void{}",
-            "class Holder{inferred=values.indexOf(1);",
-            "typed:number=values.indexOf(1);",
-            "method(value=values.indexOf(1)):void{}",
-            "typedMethod(value:number=values.indexOf(1)):void{}}",
-            "export = values.indexOf(1);",
-        ),
-    );
-    let [_, inferred, typed, defaulted, typed_default, class, export] =
-        file.syntax.statements.as_slice()
-    else {
-        panic!("seven declarations expected")
-    };
-    let StatementKind::Class(class_declaration) = &class.kind else {
-        panic!("class declaration expected")
-    };
-    let analysis = default_analysis(&file);
-    let affected = [
-        inferred.id,
-        defaulted.id,
-        class_declaration.members[0].id,
-        class_declaration.members[2].id,
-        export.id,
-    ];
-    for owner in affected {
-        let scope = CapabilityScope::node(file.source.id, owner);
-        let CapabilityClaim::Nonclaimed(reasons) =
-            analysis.claim(CapabilityTarget::Declaration, scope)
-        else {
-            panic!("inferred call declaration product must stay nonclaimed")
-        };
-        assert_eq!(
-            reasons.copied().collect::<Vec<_>>(),
-            [CapabilityNonclaim {
-                target: CapabilityTarget::Declaration,
-                scope,
-                reason: NonclaimReason::Semantic(SemanticGap::DeclarationExpressionSummary),
-                deletion: DeletionCondition::SemanticOwner(
-                    SemanticGap::DeclarationExpressionSummary,
-                ),
-            }]
-        );
-    }
-    for owner in [
-        typed.id,
-        typed_default.id,
-        class_declaration.members[1].id,
-        class_declaration.members[3].id,
-    ] {
-        assert!(
-            analysis
-                .claim(
-                    CapabilityTarget::Declaration,
-                    CapabilityScope::node(file.source.id, owner),
-                )
-                .is_claimed(),
-            "authored type makes the declaration product independent"
-        );
-    }
-    assert!(
-        analysis
-            .claim(
-                CapabilityTarget::JavaScript,
-                CapabilityScope::File(file.source.id),
-            )
-            .is_claimed()
-    );
-}
+#[path = "capabilities_emit_parts/declaration_products.rs"]
+mod declaration_products;
 
 #[test]
 fn unsigned_shift_withholds_only_inferred_declaration_and_quick_info_products() {
@@ -292,7 +109,6 @@ fn unsigned_shift_withholds_only_inferred_declaration_and_quick_info_products() 
                 target,
                 scope,
                 reason: NonclaimReason::Semantic(SemanticGap::UnsignedRightShift),
-                deletion: DeletionCondition::SemanticOwner(SemanticGap::UnsignedRightShift),
             }]
         );
         for owner in [typed.id, stable.id] {
@@ -338,7 +154,7 @@ fn unsigned_shift_withholds_only_inferred_declaration_and_quick_info_products() 
         assert!(reasons.into_iter().any(|reason| {
             reason.scope == scope
                 && reason.reason == NonclaimReason::Semantic(SemanticGap::UnsignedRightShift)
-                && reason.deletion
+                && reason.deletion_condition()
                     == DeletionCondition::SemanticOwner(SemanticGap::UnsignedRightShift)
         }));
     }
@@ -391,7 +207,7 @@ fn unsigned_shift_withholds_only_inferred_declaration_and_quick_info_products() 
                 reason.target == target
                     && reason.scope == scope
                     && reason.reason == NonclaimReason::Syntax(gap)
-                    && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+                    && reason.deletion_condition() == DeletionCondition::SyntaxOwner(gap)
             }));
         }
     }
@@ -433,9 +249,6 @@ fn commonjs_namespace_import_reexport_has_one_typed_javascript_boundary() {
                 target: CapabilityTarget::JavaScript,
                 scope: CapabilityScope::node(file.source.id, export.id),
                 reason: NonclaimReason::Syntax(SyntaxGap::CommonJsNamespaceImportReexport),
-                deletion: DeletionCondition::SyntaxOwner(
-                    SyntaxGap::CommonJsNamespaceImportReexport,
-                ),
             }]
         );
         for target in [
@@ -618,7 +431,6 @@ fn async_functions_keep_declaration_emit_and_defer_only_downlevel_javascript() {
                 target: CapabilityTarget::JavaScript,
                 scope: node,
                 reason: NonclaimReason::Syntax(SyntaxGap::AsyncFunctionTransform),
-                deletion: DeletionCondition::SyntaxOwner(SyntaxGap::AsyncFunctionTransform),
             }],
         );
         assert!(
@@ -992,9 +804,6 @@ fn type_member_accessor_pairs_defer_declaration_emit_until_pair_summaries_exist(
                     target,
                     scope,
                     reason: NonclaimReason::Semantic(SemanticGap::DeclarationAccessorSummary),
-                    deletion: DeletionCondition::SemanticOwner(
-                        SemanticGap::DeclarationAccessorSummary,
-                    ),
                 }],
             );
         }
@@ -1104,7 +913,7 @@ fn accessor_summaries_follow_only_published_declaration_surfaces() {
         let output = Compiler::new().compile(
             vec![SourceInput::new(
                 "hidden-accessors.ts",
-                Arc::<str>::from(hidden.source.text.as_ref()),
+                Arc::<str>::from(hidden.source.text()),
             )],
             &CompilerOptions {
                 no_check,
@@ -1240,10 +1049,7 @@ fn accessor_summaries_follow_inferred_function_results_but_not_local_temporaries
 
     let output = Compiler::new().compile(
         vec![
-            SourceInput::new(
-                "accessor-results.ts",
-                Arc::<str>::from(file.source.text.as_ref()),
-            ),
+            SourceInput::new("accessor-results.ts", Arc::<str>::from(file.source.text())),
             SourceInput::new(
                 "stable.ts",
                 Arc::<str>::from("export const stable:number=1;"),
@@ -1305,7 +1111,6 @@ fn private_method_groups_use_binder_identity_for_declaration_summaries() {
             target: CapabilityTarget::Declaration,
             scope,
             reason: NonclaimReason::Syntax(SyntaxGap::DeclarationOverloadSummary),
-            deletion: DeletionCondition::SyntaxOwner(SyntaxGap::DeclarationOverloadSummary),
         }],
     );
 
@@ -1559,7 +1364,6 @@ fn private_identifiers_keep_declaration_emit_until_javascript_can_preserve_them(
             target: CapabilityTarget::JavaScript,
             scope: node,
             reason: NonclaimReason::Syntax(SyntaxGap::PrivateIdentifierTransform),
-            deletion: DeletionCondition::SyntaxOwner(SyntaxGap::PrivateIdentifierTransform),
         }];
         if matches!(member.kind, ClassMemberKind::Property { .. }) {
             expected.insert(
@@ -1568,7 +1372,6 @@ fn private_identifiers_keep_declaration_emit_until_javascript_can_preserve_them(
                     target: CapabilityTarget::JavaScript,
                     scope: node,
                     reason: NonclaimReason::Syntax(SyntaxGap::ClassFieldTransform),
-                    deletion: DeletionCondition::SyntaxOwner(SyntaxGap::ClassFieldTransform),
                 },
             );
         }
@@ -1682,7 +1485,6 @@ fn class_fields_keep_declaration_emit_until_javascript_can_preserve_them() {
                 target: CapabilityTarget::JavaScript,
                 scope: node,
                 reason: NonclaimReason::Syntax(SyntaxGap::ClassFieldTransform),
-                deletion: DeletionCondition::SyntaxOwner(SyntaxGap::ClassFieldTransform),
             }],
         );
         assert!(

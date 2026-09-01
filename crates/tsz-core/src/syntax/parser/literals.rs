@@ -11,7 +11,6 @@ use super::super::{
 use super::{ParenthesizedArrowToken, Parser, parameters::parameter_modifier, scan_at};
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceKind, Span};
-
 impl Parser<'_> {
     pub(super) fn authored_literal_facts(
         &self,
@@ -75,7 +74,6 @@ impl Parser<'_> {
         });
         facts
     }
-
     fn authored_literal_owner(
         &self,
         statements: &[Statement],
@@ -89,7 +87,6 @@ impl Parser<'_> {
             .or_else(|| super::recovery::recovery_owner(statements, span))
             .expect("a scanner-authored literal token must have a represented statement owner")
     }
-
     /// Extend a recovered numeric token through the parser's same-line
     /// recovery segment. Explicit statement terminators, a closed block, and
     /// line boundaries end the syntax-owned extent.
@@ -113,7 +110,6 @@ impl Parser<'_> {
             end,
         }
     }
-
     pub(super) fn parse_primary_expression(&mut self) -> Expression {
         let token = *self.current();
         let has_leading_jsdoc = self.current_has_leading_jsdoc();
@@ -288,17 +284,24 @@ impl Parser<'_> {
                 self.observe_unsigned_shift_prefix_recovery(token.kind);
                 self.observe_unmodeled_regular_expression_if_current();
                 self.observe_unmodeled_template_if_current();
-                self.retain_recovery_extent(ParserRecoveryKind::Expression, token.span);
+                self.retain_recovery_extent(ParserRecoveryKind::MissingExpression, token.span);
                 self.error_expression_expected();
-                if token.kind != TokenKind::Semicolon {
+                if !self.at_any(&[
+                    TokenKind::Colon,
+                    TokenKind::Semicolon,
+                    TokenKind::RightParen,
+                    TokenKind::RightBracket,
+                    TokenKind::RightBrace,
+                    TokenKind::Comma,
+                    TokenKind::EndOfFile,
+                ]) {
                     self.bump();
                 }
                 self.missing_expression(token.span)
             }
         }
     }
-
-    fn error_expression_expected(&mut self) {
+    pub(super) fn error_expression_expected(&mut self) {
         let mut span = self.current().span;
         if self.at_any(&[TokenKind::TemplateMiddle, TokenKind::TemplateTail]) {
             span.end = span.start + 1;
@@ -310,7 +313,6 @@ impl Parser<'_> {
             1109,
         ));
     }
-
     fn async_parenthesized_arrow_is_arrow(&mut self) -> bool {
         let saved = self.index;
         self.index += 1;
@@ -318,7 +320,6 @@ impl Parser<'_> {
         self.index = saved;
         arrow
     }
-
     fn parse_rejected_generic_arrow_type_assertion(&mut self) -> Expression {
         let left = self.bump().span;
         let ty = self.parse_type();
@@ -333,7 +334,6 @@ impl Parser<'_> {
             },
         }
     }
-
     fn parse_type_assertion(&mut self) -> Expression {
         let left = self.bump().span;
         let ty = self.parse_type();
@@ -356,7 +356,6 @@ impl Parser<'_> {
         self.retain_parser_recovery(recovery, left, span);
         assertion
     }
-
     fn primary_parenthesized_arrow_index(&mut self) -> Option<usize> {
         if self.parenthesis_follows_recovered_generic_prefix()
             || self.parenthesis_continues_recovered_function_declaration()
@@ -370,7 +369,6 @@ impl Parser<'_> {
                 ParenthesizedArrowToken::Missing => self.index,
             })
     }
-
     fn parenthesized_arrow_head_certainty(&self) -> Option<bool> {
         match self.peek_kind(1) {
             TokenKind::RightParen
@@ -418,7 +416,6 @@ impl Parser<'_> {
             _ => None,
         }
     }
-
     fn parse_parenthesized_arrow(&mut self, generic: bool, is_async: bool) -> Expression {
         let diagnostic_count = self.diagnostics.len();
         let has_leading_jsdoc = self.current_has_leading_jsdoc();
@@ -491,7 +488,6 @@ impl Parser<'_> {
         self.await_binding_reserved = previous_await_binding_reserved;
         expression
     }
-
     fn generic_arrow_is_parenthesized_arrow(&mut self) -> bool {
         if !self.source.kind().supports_expression_type_arguments()
             || !self.at(TokenKind::LessThan)
@@ -528,7 +524,6 @@ impl Parser<'_> {
         }
         is_arrow
     }
-
     fn generic_arrow_is_unambiguous_in_jsx(&self) -> bool {
         let mut cursor = self.index + 1;
         if self.source.kind() != SourceKind::TypeScriptJsx {
@@ -551,7 +546,6 @@ impl Parser<'_> {
             _ => false,
         }
     }
-
     fn parse_object_literal(&mut self) -> Expression {
         let object_extent = self.balanced_recovery_brace_extent(self.index);
         let left = self.bump().span;
@@ -630,7 +624,7 @@ impl Parser<'_> {
             let shorthand =
                 !has_colon && !method_start && name_kind == PropertyNameKind::Identifier;
             let value = if has_colon {
-                self.parse_expression()
+                self.parse_assignment_expression()
             } else if method_start {
                 self.parse_block_function_like(
                     start,
@@ -708,7 +702,7 @@ impl Parser<'_> {
         }
         self.expect(TokenKind::RightBrace, "'}' expected.", 1005);
         for (kind, authored_span, recovery_extent) in member_recoveries {
-            self.record_parser_recovery_for_analysis(kind, authored_span, recovery_extent);
+            self.note_recovery(kind, authored_span, recovery_extent);
         }
         Expression {
             id: self.alloc_node(),
@@ -716,10 +710,8 @@ impl Parser<'_> {
             kind: ExpressionKind::Object(properties),
         }
     }
-
     fn parse_unsupported_class_expression(&mut self) -> Expression {
         use TokenKind::{LeftBrace, RightBrace};
-
         let start = self.bump().span;
         let previous_yield_binding_reserved = self.yield_binding_reserved;
         let previous_class_yield_binding_reserved = self.class_yield_binding_reserved;
@@ -750,14 +742,12 @@ impl Parser<'_> {
         self.yield_binding_reserved = previous_yield_binding_reserved;
         self.class_yield_binding_reserved = previous_class_yield_binding_reserved;
         let span = start.merge(body);
-        self.record_parser_recovery_for_analysis(ParserRecoveryKind::ClassExpression, start, span);
+        self.note_recovery(ParserRecoveryKind::ClassExpression, start, span);
         self.missing_expression(span)
     }
-
     fn parse_class_heritage_element(&mut self) {
         let _ = (self.parse_postfix_expression(), self.parse_type_arguments());
     }
-
     pub(super) fn observe_unmodeled_template_tail(&mut self, expression: &Expression) {
         if self.at(TokenKind::QuestionDot)
             && erased_expression_separated_number(expression).is_some()
@@ -770,6 +760,8 @@ impl Parser<'_> {
                 TokenKind::RightBrace,
                 TokenKind::RightParen,
                 TokenKind::RightBracket,
+                TokenKind::TemplateMiddle,
+                TokenKind::TemplateTail,
                 TokenKind::EndOfFile,
             ])
         {
@@ -790,7 +782,6 @@ impl Parser<'_> {
         }
         self.retain_recovery_extent(ParserRecoveryKind::Template, expression.span);
     }
-
     pub(super) fn parse_new_expression(&mut self) -> Expression {
         let left = self.bump().span;
         let mut callee = self.parse_primary_expression();
@@ -808,7 +799,7 @@ impl Parser<'_> {
         let has_argument_list = self.eat(TokenKind::LeftParen);
         if has_argument_list {
             while !self.at_any(&[TokenKind::RightParen, TokenKind::EndOfFile]) {
-                arguments.push(self.parse_expression());
+                arguments.push(self.parse_assignment_expression());
                 if !self.eat(TokenKind::Comma) {
                     break;
                 }
@@ -832,7 +823,6 @@ impl Parser<'_> {
             },
         }
     }
-
     pub(super) fn parse_unsupported_await_template(&mut self) -> Option<Expression> {
         if !self.at(TokenKind::Await)
             || !matches!(
@@ -849,14 +839,12 @@ impl Parser<'_> {
         let template_span = self.consume_template_extent();
         Some(self.missing_expression(await_token.span.merge(template_span)))
     }
-
     pub(super) fn consume_non_null_postfix(&mut self) -> Option<Span> {
         (self.source.kind().supports_expression_type_arguments()
             && self.at(TokenKind::Bang)
             && self.tokens_are_on_same_line(self.index.saturating_sub(1), self.index))
         .then(|| self.bump().span)
     }
-
     pub(super) fn observe_unmodeled_non_null_template_adjacency(&mut self) {
         if self.at(TokenKind::Bang)
             && matches!(
@@ -870,7 +858,6 @@ impl Parser<'_> {
             self.retain_recovery_extent(ParserRecoveryKind::Template, bang);
         }
     }
-
     pub(super) fn parse_no_substitution_template_literal(&mut self) -> Expression {
         let token = *self.current();
         let literal = scan_no_substitution_template(self.source.slice(token.span));
@@ -886,7 +873,6 @@ impl Parser<'_> {
             kind: ExpressionKind::Literal(Literal::NoSubstitutionTemplate(literal)),
         }
     }
-
     fn parse_template_expression(&mut self) -> Expression {
         let head = *self.current();
         let head_cooked = self.cook_template_chunk(head);
@@ -935,7 +921,6 @@ impl Parser<'_> {
             }
         }
     }
-
     fn template_tail_index(&self, mut nesting: u32) -> Option<usize> {
         self.tokens[self.index..]
             .iter()
@@ -950,12 +935,10 @@ impl Parser<'_> {
                 (nesting == 0).then_some(self.index + offset)
             })
     }
-
     fn cook_template_chunk(&mut self, token: Token) -> Option<String> {
         let cooked = scan_template_chunk(self.source.slice(token.span), token.kind);
         self.cooked_template(token, cooked)
     }
-
     fn cooked_template<T>(&mut self, token: Token, cooked: Result<T, CookError>) -> Option<T> {
         if scan_at(&self.unterminated_template_spans, token.span, |span| *span).is_some() {
             return None;
@@ -979,14 +962,12 @@ impl Parser<'_> {
             }
         }
     }
-
     fn recover_template_expression(&mut self, head: Token) -> Expression {
         let tail_index = self.template_tail_index(1).unwrap_or(self.tokens.len() - 1);
         let span = self.consume_template_through(head, tail_index);
         self.retain_parser_recovery(ParserRecoveryKind::Template, head.span, span);
         self.missing_expression(span)
     }
-
     fn consume_template_extent(&mut self) -> Span {
         let first = *self.current();
         let end = if first.kind == TokenKind::TemplateHead {
@@ -996,7 +977,6 @@ impl Parser<'_> {
         };
         self.consume_template_through(first, end)
     }
-
     fn consume_template_through(&mut self, first: Token, end: usize) -> Span {
         let start =
             self.tokens[..=end].partition_point(|token| token.span.start < first.span.start);
@@ -1016,19 +996,16 @@ impl Parser<'_> {
         }
         first.span.merge(self.tokens[end].span)
     }
-
-    pub(super) fn reject_tagged_template(&mut self, tag_span: Span) -> bool {
+    pub(super) fn reject_tagged_template(&mut self, tag_span: Span) -> Option<Span> {
         if !matches!(
             self.kind(),
             TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
         ) {
-            return false;
+            return None;
         }
         self.retain_recovery_extent(ParserRecoveryKind::Template, tag_span);
-        self.consume_template_extent();
-        true
+        Some(tag_span.merge(self.consume_template_extent()))
     }
-
     pub(super) fn observe_unmodeled_template_if_current(&mut self) {
         if matches!(
             self.kind(),
@@ -1041,7 +1018,6 @@ impl Parser<'_> {
             self.retain_recovery_extent(ParserRecoveryKind::Template, authored_span);
         }
     }
-
     pub(super) fn literal_from(&self, token: Token) -> Literal {
         match token.kind {
             TokenKind::True => Literal::Boolean(true),
@@ -1057,7 +1033,6 @@ impl Parser<'_> {
             _ => Literal::Number(self.number_literal(token)),
         }
     }
-
     pub(super) fn parse_module_specifier(&mut self) -> (String, Span) {
         let token = *self.current();
         if token.kind == TokenKind::StringLiteral {
@@ -1071,7 +1046,6 @@ impl Parser<'_> {
         }
     }
 }
-
 pub(super) fn unquote(text: &str) -> String {
     if text.len() >= 2 {
         let first = text.as_bytes()[0];

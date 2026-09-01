@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tsz::diagnostics::DiagnosticCategory;
-use tsz::service::LanguageService;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 fn options() -> CompilerOptions {
@@ -440,7 +440,6 @@ fn inferred_search_declaration_products_fail_closed_across_supported_hosts() {
         "export class Holder{found=([] as number[]).indexOf(1);}",
         "export function locate(value=([] as number[]).indexOf(1)):void{}",
         "export class Holder{constructor(value=([] as number[]).indexOf(1)){}}",
-        "export default ([] as number[]).indexOf(1);",
     ] {
         let output = compile_with(source, emit_options.clone());
         assert_eq!(
@@ -449,8 +448,16 @@ fn inferred_search_declaration_products_fail_closed_across_supported_hosts() {
             "{source}: {:#?}",
             output.diagnostics
         );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{source}"
+        );
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::SemanticIncomplete,
+            "{source}"
+        );
         assert_eq!(
             output
                 .emitted_files
@@ -461,6 +468,40 @@ fn inferred_search_declaration_products_fail_closed_across_supported_hosts() {
             "{source}"
         );
     }
+
+    let default_export = compile_with(
+        "export default ([] as number[]).indexOf(1);",
+        emit_options.clone(),
+    );
+    assert_eq!(default_export.diagnostics, []);
+    assert_eq!(
+        default_export.semantic_completion,
+        SemanticCompletion::Complete
+    );
+    assert_eq!(default_export.exit_status, CompileExitStatus::Success);
+    assert_eq!(
+        default_export
+            .emitted_files
+            .iter()
+            .map(|file| (
+                file.path.to_string_lossy().into_owned(),
+                file.declaration,
+                file.text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "case.d.ts".to_string(),
+                true,
+                "declare const _default: number;\nexport default _default;\n",
+            ),
+            (
+                "case.js".to_string(),
+                false,
+                "export default [].indexOf(1);\n",
+            ),
+        ]
+    );
 
     for source in [
         "export const values:number[]=[];export const found:number=values.indexOf(1);",
@@ -534,12 +575,14 @@ fn array_search_property_service_responses_remain_unavailable() {
     let mut service = LanguageService::new(options());
     service.open("case.ts", Arc::<str>::from(source));
     let member = source.find("indexOf").unwrap() as u32 + 1;
-    assert!(service.quick_info("case.ts", member).is_none());
-    assert!(
-        service
-            .definition_and_bound_span("case.ts", member)
-            .is_none()
-    );
+    assert!(matches!(
+        service.quick_info("case.ts", member),
+        ServiceQuery::Nonclaimed(_)
+    ));
+    assert!(matches!(
+        service.definition_and_bound_span("case.ts", member),
+        ServiceQuery::Nonclaimed(_)
+    ));
 }
 
 #[test]

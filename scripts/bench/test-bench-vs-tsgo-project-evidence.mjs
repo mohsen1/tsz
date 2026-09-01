@@ -146,6 +146,33 @@ EXTERNAL_BENCH_DIR=${quote(path.join(dir, "external"))}
 source ${quote(PREREQS)}
 source ${quote(EVIDENCE)}
 source ${quote(RESULTS)}
+# The shared provenance primitives have their own filesystem/build-manifest
+# contracts. This adapter test pins deterministic exact values so it can focus
+# on whether the benchmark producer transports and rechecks every schema-3
+# field without building a real compiler inside its temporary fixture.
+project_evidence_pin_run_provenance() {
+  TSZ_COMPAT_SOURCE_COMMIT=${quote("1".repeat(40))}
+  TSZ_COMPAT_SOURCE_DIRTY=false
+  TSZ_COMPAT_SOURCE_STABLE=true
+  TSZ_COMPAT_SOURCE_TREE_FINGERPRINT=${quote("2".repeat(64))}
+  TSZ_COMPAT_INITIAL_SOURCE_TREE_FINGERPRINT="$TSZ_COMPAT_SOURCE_TREE_FINGERPRINT"
+  TSZ_COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT=${quote("8".repeat(64))}
+  TSZ_COMPAT_BUILD_MANIFEST_SHA256=${quote("4".repeat(64))}
+  TSZ_COMPAT_BUILD_INPUTS_SHA256=${quote("5".repeat(64))}
+  TSZ_COMPAT_BUILD_MANIFEST_BINARY_SHA256=${quote("3".repeat(64))}
+  PROJECT_EVIDENCE_TSZ_BINARY_PATH="$TSZ"
+  PROJECT_EVIDENCE_BINARY_STABLE=true
+  PROJECT_EVIDENCE_RUN_PROVENANCE_PINNED=true
+  export _TSZ_BINARY_HASH=${quote("3".repeat(64))}
+  export _TSZ_SOURCE_OVERLAY_HASH="$TSZ_COMPAT_SOURCE_TREE_FINGERPRINT"
+  export _TSZ_EVIDENCE_PROTOCOL_HASH="$TSZ_COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT"
+}
+project_evidence_oracle_identity_fingerprint() { printf '%s' ${quote("7".repeat(64))}; }
+project_evidence_refresh_publication() {
+  TSZ_COMPAT_SOURCE_STABLE=true
+  LAST_COMPILE_INPUT_STABLE=true
+  PROJECT_EVIDENCE_BINARY_STABLE=true
+}
 run_with_timeout() { local ignored_timeout="$1"; shift; "$@"; }
 project_tsconfig_stats() { printf '0 0 0\\n'; }
 tsz_project_fixture_sources() { :; }
@@ -239,7 +266,7 @@ for (const [caseName, config] of [
     assert.equal(run.result.status, 0, `${caseName}: ${run.result.stderr}`);
     assert.equal(run.hyperfineCalled, false, `${caseName}: hyperfine must be unreachable`);
     assert.ok(run.row, `${caseName}: compatibility row must remain visible`);
-    assert.equal(run.row.evidence_schema, null, `${caseName}: invalid proof cannot claim schema 2`);
+    assert.equal(run.row.evidence_schema, null, `${caseName}: invalid proof cannot claim schema 3`);
     assert.notEqual(run.row.state, "green", `${caseName}: invalid proof cannot be green`);
     assert.match(run.output, /project evidence unavailable/);
     if (config.missingReason) {
@@ -292,10 +319,11 @@ for (const rowName of ["msw-project", "effect-project", "drizzle-orm-project"]) 
     assert.equal(run.hyperfineCalled, false, `${rowName}: stubs make timing unreachable`);
     assert.equal(run.row.state, "gray");
     assert.equal(run.row.evidence_schema, null);
-    assert.equal(run.row.stub_inventory_schema, 1);
+    assert.equal(run.row.stub_inventory_schema, 2);
     assert.equal(run.row.stubbed_modules, expected.stubbedModules);
     assert.equal(run.row.stubbed_any_members, expected.stubbedAnyMembers);
     assert.equal(run.row.stub_inventory_fingerprint, expected.stubInventoryFingerprint);
+    assert.deepEqual(run.row.stub_inventory_owners, expected.stubInventoryOwners);
     assert.ok(run.row.stubbed_modules > 0 || run.row.stubbed_any_members > 0);
     assert.match(run.output, /fixture dependency stubs erase semantic coverage/);
   } finally {
@@ -388,7 +416,21 @@ console.log("project evidence rejects source-derived msw/effect/drizzle stub inv
     assert.equal(run.result.status, 0, run.result.stderr);
     assert.equal(run.hyperfineCalled, true, "exact proof is the only path to hyperfine");
     assert.equal(run.row.state, "green");
-    assert.equal(run.row.evidence_schema, 2);
+    assert.equal(run.row.evidence_schema, 3);
+    assert.equal(run.row.evidence_status, "exact");
+    assert.deepEqual(run.row.evidence_failures, []);
+    assert.equal(run.row.source_commit, "1".repeat(40));
+    assert.equal(run.row.source_dirty, false);
+    assert.equal(run.row.source_stable, true);
+    assert.equal(run.row.source_tree_fingerprint, "2".repeat(64));
+    assert.equal(run.row.evidence_protocol_fingerprint, "8".repeat(64));
+    assert.equal(run.row.tsz_binary_sha256, "3".repeat(64));
+    assert.equal(run.row.build_manifest_sha256, "4".repeat(64));
+    assert.equal(run.row.build_inputs_sha256, "5".repeat(64));
+    assert.equal(run.row.build_manifest_binary_sha256, run.row.tsz_binary_sha256);
+    assert.match(run.row.compile_input_fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(run.row.compile_input_stable, true);
+    assert.equal(run.row.oracle_fingerprint, "7".repeat(64));
     assert.equal(run.row.semantic_completion, "complete");
     assert.equal(run.row.root_files, 1);
     assert.equal(run.row.source_files, 1);
@@ -399,22 +441,34 @@ console.log("project evidence rejects source-derived msw/effect/drizzle stub inv
     assert.equal(run.row.diagnostic_fingerprint, emptyFingerprint);
     assert.equal(run.row.diagnostic_fingerprint, run.row.oracle_diagnostic_fingerprint);
     assert.equal(run.row.oracle_classification, "both-pass");
-    assert.equal(run.row.stub_inventory_schema, 1);
+    assert.equal(run.row.stub_inventory_schema, 2);
     assert.equal(run.row.stubbed_modules, 0);
     assert.equal(run.row.stubbed_any_members, 0);
     assert.match(run.row.stub_inventory_fingerprint, /^[0-9a-f]{64}$/);
+    assert.deepEqual(run.row.stub_inventory_owners, []);
     assert.match(run.output, /evidence-project,0,0,[0-9.]+,[0-9.]+/);
     const published = run.artifact?.results?.[0]?.compatibility;
     assert.ok(published, "final benchmark artifact retains compatibility evidence");
-    assert.equal(published.evidence_schema, 2);
+    assert.equal(published.evidence_schema, 3);
+    assert.equal(published.evidence_status, "exact");
+    assert.deepEqual(published.evidence_failures, []);
+    assert.equal(published.source_commit, run.row.source_commit);
+    assert.equal(published.source_dirty, false);
+    assert.equal(published.source_stable, true);
+    assert.equal(published.tsz_binary_sha256, run.row.tsz_binary_sha256);
+    assert.equal(published.build_manifest_binary_sha256, published.tsz_binary_sha256);
+    assert.equal(published.compile_input_fingerprint, run.row.compile_input_fingerprint);
+    assert.equal(published.compile_input_stable, true);
+    assert.equal(published.oracle_fingerprint, run.row.oracle_fingerprint);
     assert.equal(published.semantic_completion, "complete");
     assert.equal(published.files_reached, 1);
     assert.equal(published.root_file_fingerprint, published.oracle_root_file_fingerprint);
     assert.equal(published.diagnostic_fingerprint, published.oracle_diagnostic_fingerprint);
-    assert.equal(published.stub_inventory_schema, 1);
+    assert.equal(published.stub_inventory_schema, 2);
     assert.equal(published.stubbed_modules, 0);
     assert.equal(published.stubbed_any_members, 0);
     assert.equal(published.stub_inventory_fingerprint, run.row.stub_inventory_fingerprint);
+    assert.deepEqual(published.stub_inventory_owners, []);
     assert.equal(run.artifact.totals.green_tsz_wins, 1);
   } finally {
     finish(run);
@@ -435,7 +489,7 @@ console.log("project evidence rejects source-derived msw/effect/drizzle stub inv
     assert.equal(run.result.status, 0, run.result.stderr);
     assert.equal(run.hyperfineCalled, false, "nonzero parity is green but not timing-eligible");
     assert.equal(run.row.state, "green");
-    assert.equal(run.row.evidence_schema, 2);
+    assert.equal(run.row.evidence_schema, 3);
     assert.equal(run.row.diagnostic_records, 1);
     assert.equal(run.row.diagnostic_fingerprint, run.row.oracle_diagnostic_fingerprint);
     assert.equal(run.row.oracle_classification, "both-fail-same");

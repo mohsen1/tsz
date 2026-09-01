@@ -1,7 +1,7 @@
 //! Import-alias handling for `typeof` type queries.
 
 use crate::bind::ScopeId;
-use crate::semantics::types::{DeferredType, TypeId, TypeKind};
+use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
 use crate::source::{FileId, Span};
 
 use super::Checker;
@@ -28,26 +28,39 @@ impl Checker<'_> {
             return self.store.builtins.error;
         };
         let declaration = root.semantic_declaration();
+        let imported = root.navigation_declaration() != declaration;
+        if !imported
+            && let Some(parameter_type) = self.parameter_type_overrides.get(&declaration).copied()
+        {
+            return parameter_type;
+        }
         self.observe_semantic_declaration(file, declaration);
-        let root = self
-            .store
-            .intern(TypeKind::Deferred(DeferredType::Value(declaration)));
-        let mut property_order = self.property_order_for_declaration(declaration);
+        let deferred = if imported {
+            DeferredType::ImportedTypeQuery(declaration)
+        } else {
+            DeferredType::Value(declaration)
+        };
+        let root = self.store.intern(TypeKind::Deferred(deferred));
         segments
             .enumerate()
             .fold(root, |object, (index, property)| {
                 let property_span = segment_spans.get(index + 1).copied().unwrap_or(name_span);
-                let receiver_order = property_order.clone();
-                property_order = property_order
-                    .as_ref()
-                    .and_then(|order| order.property(property))
-                    .cloned();
-                self.deferred_property_type_with_order(
-                    object,
-                    property,
-                    property_span,
-                    receiver_order,
-                )
+                self.deferred_property_type(object, property, property_span)
             })
+    }
+
+    /// A direct object reached through the bounded import-alias bridge needs
+    /// TS2739, which this rewrite does not own yet. Keep that exact producer
+    /// incomplete; dependency-closed wrappers such as arrays remain claimed.
+    pub(super) fn imported_type_query_value(
+        &mut self,
+        declaration: crate::source::DeclId,
+    ) -> Completion<TypeId> {
+        let value = completed!(self.declaration_value_type(declaration));
+        if matches!(self.store.kind(value), TypeKind::Object(_)) {
+            Completion::Deferred
+        } else {
+            Completion::Complete(value)
+        }
     }
 }

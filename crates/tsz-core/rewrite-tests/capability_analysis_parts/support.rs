@@ -70,8 +70,13 @@ fn related_fingerprint(
 }
 
 pub(super) fn diagnostic_fingerprint(output: &tsz::CompileOutput) -> Vec<DiagnosticFingerprint> {
-    output
-        .diagnostics
+    diagnostics_fingerprint(&output.diagnostics)
+}
+
+pub(super) fn diagnostics_fingerprint(
+    diagnostics: &[tsz::diagnostics::Diagnostic],
+) -> Vec<DiagnosticFingerprint> {
+    diagnostics
         .iter()
         .map(|diagnostic| {
             (
@@ -131,50 +136,58 @@ pub(super) fn semantic_options() -> CompilerOptions {
 
 pub(super) fn assert_named_sibling_survives(source: &str) {
     let options = CompilerOptions::default();
-    let output = Compiler::new().compile(
-        vec![SourceInput::new(
-            "mixed.ts",
-            Arc::<str>::from(source.to_string()),
+    let mut service = LanguageService::new(options.clone());
+    service.open("mixed.ts", Arc::<str>::from(source.to_string()));
+    let syntactic = service.syntactic_diagnostics("mixed.ts");
+    assert_eq!(syntactic.syntactic_completion, SemanticCompletion::Complete);
+    let semantic = service.semantic_diagnostics("mixed.ts");
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(
+        semantic_fingerprint(&semantic),
+        vec![(
+            "mixed.ts".to_string(),
+            2304,
+            source.find("MissingOwned").expect("missing name") as u32,
+            "MissingOwned".len() as u32,
+            DiagnosticCategory::Error,
+            "Cannot find name 'MissingOwned'.".to_string(),
+            Vec::new(),
         )],
-        &options,
     );
+
+    let output = service.compile();
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
     assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
     assert!(
         output.stats.types > 0,
         "the claimed sibling must be checked"
     );
-    let missing_start = source.find("MissingOwned").expect("missing name") as u32;
-    let missing = output
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code == 2304)
-        .collect::<Vec<_>>();
-    assert_eq!(missing.len(), 1, "{:#?}", output.diagnostics);
-    let missing = missing[0];
-    assert_eq!(missing.start, missing_start);
-    assert_eq!(missing.file, "mixed.ts");
-    assert_eq!(missing.length, "MissingOwned".len() as u32);
-    assert_eq!(missing.category, DiagnosticCategory::Error);
-    assert_eq!(missing.message_text, "Cannot find name 'MissingOwned'.");
-    assert!(missing.related_information.is_empty());
+    let expected_compiler_product = if syntactic.diagnostics.is_empty() {
+        &semantic.diagnostics
+    } else {
+        &syntactic.diagnostics
+    };
+    assert_eq!(output.diagnostics, *expected_compiler_product);
 
-    let no_check = Compiler::new().compile(
-        vec![SourceInput::new(
-            "mixed.ts",
-            Arc::<str>::from(source.to_string()),
-        )],
-        &CompilerOptions {
-            no_check: true,
-            ..options
-        },
+    let mut no_check_service = LanguageService::new(CompilerOptions {
+        no_check: true,
+        ..options
+    });
+    no_check_service.open("mixed.ts", Arc::<str>::from(source.to_string()));
+    let no_check_syntactic = no_check_service.syntactic_diagnostics("mixed.ts");
+    assert_eq!(
+        no_check_syntactic.syntactic_completion,
+        SemanticCompletion::Complete
     );
+    let no_check_semantic = no_check_service.semantic_diagnostics("mixed.ts");
+    assert_eq!(
+        no_check_semantic.semantic_completion,
+        SemanticCompletion::Deferred
+    );
+    assert!(no_check_semantic.diagnostics.is_empty());
+    let no_check = no_check_service.compile();
     assert_eq!(no_check.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(no_check.exit_status, CompileExitStatus::SemanticIncomplete);
     assert_eq!(no_check.stats.types, 0);
-    assert!(
-        no_check
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != 2304)
-    );
+    assert_eq!(no_check.diagnostics, no_check_syntactic.diagnostics);
 }

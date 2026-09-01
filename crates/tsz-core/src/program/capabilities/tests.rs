@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::bind::bind_source;
-use crate::source::{FileId, SourceText};
+use crate::bind::bind_source_with_kind;
+use crate::source::{FileId, SourceKind, SourceText};
 use crate::syntax::{
     ClassMemberKind, PropertyNameKind, TypeNodeKind, for_each_statement_in, parse_source,
 };
@@ -21,10 +21,41 @@ mod recovery;
 #[path = "../../../rewrite-tests/capabilities_recovery_closure_unit.rs"]
 mod recovery_closure;
 
+#[path = "../../../rewrite-tests/capabilities_class_property_unit.rs"]
+mod class_property;
+
+/// Typed exit criterion derived from a structural nonclaim reason. Keeping it
+/// derived lets tests enumerate owner obligations without duplicating state in
+/// each immutable capability record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DeletionCondition {
+    SyntaxOwner(SyntaxGap),
+    DeepestSemanticOwner(SyntaxGap),
+    SemanticOwner(SemanticGap),
+    EssentialLibraryUniverse,
+    CompilerOptionOwner,
+}
+
+impl CapabilityNonclaim {
+    const fn deletion_condition(self) -> DeletionCondition {
+        match self.reason {
+            NonclaimReason::Syntax(gap) => DeletionCondition::SyntaxOwner(gap),
+            NonclaimReason::SyntaxAtSemanticOwner(gap) => {
+                DeletionCondition::DeepestSemanticOwner(gap)
+            }
+            NonclaimReason::Semantic(gap) => DeletionCondition::SemanticOwner(gap),
+            NonclaimReason::MissingEssentialTypes => DeletionCondition::EssentialLibraryUniverse,
+            NonclaimReason::FatalCompilerOption
+            | NonclaimReason::UnsupportedCompilerOption(_)
+            | NonclaimReason::DeferredCompilerOption(_) => DeletionCondition::CompilerOptionOwner,
+        }
+    }
+}
+
 fn program_file(id: u32, path: &str, text: &str) -> ProgramFile {
     let source = SourceText::new(FileId(id), PathBuf::from(path), Arc::<str>::from(text));
     let parsed = parse_source(&source);
-    let bindings = bind_source(source.id, &parsed.unit);
+    let bindings = bind_source_with_kind(source.id, SourceKind::TypeScript, &parsed.unit);
     ProgramFile {
         source,
         syntax: parsed.unit,
@@ -40,11 +71,79 @@ fn default_analysis(file: &ProgramFile) -> CapabilityAnalysis {
     )
 }
 
+fn position_scope(file: &ProgramFile, offset: u32) -> CapabilityScope {
+    let owner = match file.capability_scope_at(offset) {
+        Some(CapabilityScope::Node { owner, .. }) => Some(owner),
+        _ => None,
+    };
+    CapabilityScope::Position {
+        file: file.source.id,
+        owner,
+        offset,
+    }
+}
+
+fn navigation_identity_nonclaim<'a>(
+    analysis: &'a CapabilityAnalysis,
+    target: CapabilityTarget,
+    file: &ProgramFile,
+    offset: u32,
+) -> Option<&'a CapabilityNonclaim> {
+    let CapabilityClaim::Nonclaimed(reasons) = analysis.claim(target, position_scope(file, offset))
+    else {
+        return None;
+    };
+    reasons
+        .into_iter()
+        .find(|reason| reason.reason == NonclaimReason::Semantic(SemanticGap::NavigationIdentity))
+}
+
+fn semantic_descendant_is_claimed(
+    analysis: &CapabilityAnalysis,
+    file: FileId,
+    owner: NodeId,
+    identifiers: bool,
+) -> bool {
+    analysis
+        .claim(
+            CapabilityTarget::SemanticCheck,
+            CapabilityScope::semantic_descendant(file, owner, identifiers),
+        )
+        .is_claimed()
+}
+
+fn function_like_descendant_is_claimed(
+    analysis: &CapabilityAnalysis,
+    file: FileId,
+    owner: NodeId,
+    identifiers: bool,
+) -> bool {
+    analysis
+        .claim(
+            CapabilityTarget::SemanticCheck,
+            CapabilityScope::function_like_descendant(file, owner, identifiers),
+        )
+        .is_claimed()
+}
+
+fn required_function_like_is_claimed(
+    analysis: &CapabilityAnalysis,
+    file: FileId,
+    owner: NodeId,
+) -> bool {
+    analysis
+        .claim(
+            CapabilityTarget::RequiredType,
+            CapabilityScope::required_function_like(file, owner),
+        )
+        .is_claimed()
+}
+
 fn parser_recovery_statement_roles(
     file: &ProgramFile,
     recovery: &crate::syntax::ParserRecoveryFact,
     recovery_extent: Span,
-) -> BTreeMap<NodeId, RecoveryStatementRole> {
+) -> BTreeMap<NodeId, RecoveryRole> {
     recovery_nodes(
         file,
         recovery.owner,
@@ -131,7 +230,7 @@ fn authored_function_expression_modifiers_fail_both_emit_products_closed() {
             assert!(reasons.into_iter().any(|reason| {
                 reason.scope == CapabilityScope::File(file.source.id)
                     && reason.reason == NonclaimReason::Syntax(gap)
-                    && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+                    && reason.deletion_condition() == DeletionCondition::SyntaxOwner(gap)
             }));
         }
         if path == "async-expression.ts" {
@@ -194,7 +293,7 @@ fn rejected_generic_arrow_prefixes_fail_only_their_file_products_closed() {
         assert!(reasons.into_iter().any(|reason| {
             reason.scope == scope
                 && reason.reason == NonclaimReason::Syntax(gap)
-                && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+                && reason.deletion_condition() == DeletionCondition::SyntaxOwner(gap)
         }));
         assert!(
             analysis
@@ -308,7 +407,7 @@ fn recovered_function_like_binding_patterns_have_one_typed_product_boundary() {
             assert!(reasons.into_iter().any(|reason| {
                 reason.scope == scope
                     && reason.reason == NonclaimReason::Syntax(gap)
-                    && reason.deletion == DeletionCondition::SyntaxOwner(gap)
+                    && reason.deletion_condition() == DeletionCondition::SyntaxOwner(gap)
             }));
         }
         if let Some(parameter) = file
@@ -329,7 +428,7 @@ fn recovered_function_like_binding_patterns_have_one_typed_product_boundary() {
 }
 
 #[test]
-fn swallowed_template_identifiers_withhold_reference_enumeration_program_wide() {
+fn swallowed_template_identifiers_withhold_exhaustive_symbol_sets_program_wide() {
     for (path, source, contains_identifier) in [
         (
             "template-reference.ts",
@@ -359,14 +458,147 @@ fn swallowed_template_identifiers_withhold_reference_enumeration_program_wide() 
             &CompilerOptions::default(),
             CapabilityContext::default(),
         );
-        for target in &ALL_TARGETS[9..] {
+        for (target, expected) in [
+            (CapabilityTarget::References, contains_identifier),
+            (CapabilityTarget::Highlights, contains_identifier),
+            (CapabilityTarget::Rename, contains_identifier),
+        ] {
             let program_reason = analysis.nonclaims.iter().any(|nonclaim| {
-                nonclaim.target == *target
+                nonclaim.target == target
                     && nonclaim.scope == CapabilityScope::Program
                     && nonclaim.reason == NonclaimReason::Syntax(SyntaxGap::Template)
-                    && nonclaim.deletion == DeletionCondition::SyntaxOwner(SyntaxGap::Template)
+                    && nonclaim.deletion_condition()
+                        == DeletionCondition::SyntaxOwner(SyntaxGap::Template)
             });
-            assert_eq!(program_reason, contains_identifier, "{path}: {target:?}");
+            assert_eq!(program_reason, expected, "{path}: {target:?}");
+        }
+        for target in [CapabilityTarget::QuickInfo, CapabilityTarget::Definition] {
+            assert!(
+                !analysis.nonclaims.iter().any(|nonclaim| {
+                    nonclaim.target == target
+                        && nonclaim.scope == CapabilityScope::Program
+                        && nonclaim.reason == NonclaimReason::Syntax(SyntaxGap::Template)
+                }),
+                "{path}: the exhaustive binder fence must not own {target:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn swallowed_template_program_fence_closes_same_and_cross_file_navigation() {
+    let sources = [
+        (
+            "tagged.ts",
+            "declare const tag: any; const renamed = 1; tag`${renamed}`; renamed;",
+        ),
+        ("independent.ts", "const independent = 2; independent;"),
+    ];
+    let files = sources
+        .iter()
+        .enumerate()
+        .map(|(id, (path, source))| program_file(id as u32, path, source))
+        .collect::<Vec<_>>();
+    assert!(
+        files[0]
+            .syntax
+            .has_source_syntax_fact(SourceSyntaxFact::TemplateExpressionIdentifier)
+    );
+    let analysis = CapabilityAnalysis::derive(
+        &files,
+        &CompilerOptions::default(),
+        CapabilityContext::default(),
+    );
+
+    for (file, (_, source)) in files.iter().zip(sources) {
+        let offset = source.rfind(';').expect("trailing reference") as u32 - 1;
+        for target in [
+            CapabilityTarget::References,
+            CapabilityTarget::Highlights,
+            CapabilityTarget::Rename,
+        ] {
+            assert!(
+                !analysis.navigation_query_is_claimed(target, file, offset),
+                "{}: {target:?} requires the complete program symbol set",
+                file.source.path.display(),
+            );
+        }
+        for target in [CapabilityTarget::QuickInfo, CapabilityTarget::Definition] {
+            assert!(
+                analysis.navigation_query_is_claimed(target, file, offset),
+                "{}: {target:?} remains independently claimable",
+                file.source.path.display(),
+            );
+        }
+    }
+}
+
+#[test]
+fn strict_dependent_deferred_boolean_values_use_the_effective_strict_default() {
+    let file = program_file(0, "options.ts", "export const value = 1;");
+    for option in [
+        DeferredCompilerOption::NoImplicitThis,
+        DeferredCompilerOption::StrictBindCallApply,
+        DeferredCompilerOption::StrictFunctionTypes,
+        DeferredCompilerOption::UseUnknownInCatchVariables,
+    ] {
+        for strict in [false, true] {
+            for authored_value in [None, Some(false), Some(true)] {
+                let mut options = CompilerOptions {
+                    strict,
+                    ..CompilerOptions::default()
+                };
+                if let Some(value) = authored_value {
+                    options.deferred_options.insert(
+                        option,
+                        super::super::DeferredCompilerOptionValue::Boolean(value),
+                    );
+                }
+                let analysis = CapabilityAnalysis::derive(
+                    std::slice::from_ref(&file),
+                    &options,
+                    CapabilityContext::default(),
+                );
+                let expected_nonclaim =
+                    matches!(authored_value, Some(true)) || strict && authored_value == Some(false);
+
+                for &target in &SEMANTIC_TYPE_TARGETS {
+                    assert_eq!(
+                        analysis
+                            .claim(target, CapabilityScope::Program)
+                            .is_claimed(),
+                        !expected_nonclaim,
+                        "{option:?}, strict={strict}, authored={authored_value:?}, {target:?}",
+                    );
+                }
+                if expected_nonclaim {
+                    let CapabilityClaim::Nonclaimed(reasons) =
+                        analysis.claim(CapabilityTarget::SemanticCheck, CapabilityScope::Program)
+                    else {
+                        panic!("{option:?} must carry its typed program nonclaim");
+                    };
+                    assert!(reasons.into_iter().any(|reason| {
+                        reason.scope == CapabilityScope::Program
+                            && reason.reason == NonclaimReason::DeferredCompilerOption(option)
+                            && reason.deletion_condition() == DeletionCondition::CompilerOptionOwner
+                    }));
+                }
+                for target in [
+                    CapabilityTarget::JavaScript,
+                    CapabilityTarget::Definition,
+                    CapabilityTarget::References,
+                    CapabilityTarget::Highlights,
+                    CapabilityTarget::Rename,
+                    CapabilityTarget::SyntacticDiagnostics,
+                ] {
+                    assert!(
+                        analysis
+                            .claim(target, CapabilityScope::Program)
+                            .is_claimed(),
+                        "{option:?}, strict={strict}, authored={authored_value:?}, {target:?}",
+                    );
+                }
+            }
         }
     }
 }
@@ -420,7 +652,12 @@ fn exact_template_recovery_may_reenter_a_claimed_arrow_required_type_owner() {
             .is_claimed()
     );
     assert!(
-        analysis.required_type_node_allows_function_like_reentry(file.source.id, statement.id,)
+        analysis
+            .claim(
+                CapabilityTarget::RequiredType,
+                CapabilityScope::required_function_like(file.source.id, statement.id),
+            )
+            .is_claimed()
     );
     assert!(
         analysis
@@ -590,7 +827,7 @@ fn javascript_claims_stop_at_unowned_function_product_interactions() {
             };
             assert!(reasons.into_iter().any(|record| {
                 record.reason == NonclaimReason::Syntax(expected)
-                    && record.deletion == DeletionCondition::SyntaxOwner(expected)
+                    && record.deletion_condition() == DeletionCondition::SyntaxOwner(expected)
             }));
         };
 
@@ -747,7 +984,7 @@ fn javascript_property_navigation_records_one_exact_tuple_per_scope_and_target()
         assert!(records.into_iter().all(|record| {
             scopes.contains(&record.scope)
                 && ALL_TARGETS[7..].contains(&record.target)
-                && record.deletion
+                && record.deletion_condition()
                     == DeletionCondition::SemanticOwner(SemanticGap::JavaScriptPropertyNavigation)
         }));
         let file = output.program.files[0].source.id;
@@ -772,14 +1009,176 @@ fn javascript_property_navigation_records_one_exact_tuple_per_scope_and_target()
                 panic!("indexed stress claim must be nonclaimed")
             };
             assert_eq!(reasons.clone().collect::<Vec<_>>(), expected);
-            assert_eq!(
-                reasons
-                    .ranges
-                    .iter()
-                    .map(|range| range.len())
-                    .sum::<usize>(),
-                expected.len()
+        }
+
+        let root = output.program.files[0]
+            .bindings
+            .declarations
+            .iter()
+            .find(|declaration| {
+                declaration.kind == DeclarationKind::Variable && declaration.name == "renamedRoot"
+            })
+            .expect("root declaration");
+        let root_offset = root.name_span.start;
+        for &target in &ALL_TARGETS[7..] {
+            assert!(
+                output.capabilities.navigation_query_is_claimed(
+                    target,
+                    &output.program.files[0],
+                    root_offset,
+                ),
+                "checker display completion must not mutate the structural {target:?} claim",
             );
+        }
+        assert!(
+            navigation_identity_nonclaim(
+                &output.capabilities,
+                CapabilityTarget::QuickInfo,
+                &output.program.files[0],
+                root_offset,
+            )
+            .is_none()
+        );
+    }
+}
+
+#[test]
+fn navigation_query_ranges_are_owned_once_by_capability_analysis() {
+    let source = concat!(
+        "const boundName = 1; boundName; missingName; ",
+        "interface Shape { defaultMember: string; 'quotedMember': number; 77: boolean; } ",
+        "class Box { #privateMember = 1; defaultClass = 1; 'quotedClass' = 1; 88 = 1; } ",
+        "const holder = { propertyName: 1, 'quotedObject': 1, 99: 1 }; ",
+        "'stringName'; // commentName\n",
+    );
+    let file = program_file(0, "navigation.ts", source);
+    let analysis = default_analysis(&file);
+    let declaration = source.find("boundName").unwrap() as u32;
+    let reference = source.rfind("boundName").unwrap() as u32;
+    let unresolved = source.find("missingName").unwrap() as u32;
+    let unmodeled_names = [
+        "defaultMember",
+        "'quotedMember'",
+        "77",
+        "#privateMember",
+        "defaultClass",
+        "'quotedClass'",
+        "88",
+        "propertyName",
+        "'quotedObject'",
+        "99",
+    ]
+    .map(|name| {
+        let start = source.find(name).unwrap() as u32;
+        (start, start + name.len() as u32)
+    });
+
+    for &target in &ALL_TARGETS[7..] {
+        for offset in [
+            declaration,
+            declaration + "boundName".len() as u32,
+            reference + 3,
+            unresolved + "missingName".len() as u32,
+        ] {
+            assert!(
+                analysis.navigation_query_is_claimed(target, &file, offset),
+                "bound and unresolved binder identities are definitive for {target:?} at {offset}",
+            );
+            assert!(
+                navigation_identity_nonclaim(&analysis, target, &file, offset).is_none(),
+                "modeled identifier must have no range nonclaim",
+            );
+        }
+
+        for (start, end) in unmodeled_names {
+            for offset in [start, start + (end - start) / 2, end] {
+                let record = navigation_identity_nonclaim(&analysis, target, &file, offset)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "unmodeled touching-name producer {:?} at {start}..{end} for {target:?}",
+                            &source[start as usize..end as usize],
+                        )
+                    });
+                assert_eq!(record.target, target);
+                assert_eq!(
+                    record.scope,
+                    CapabilityScope::Span {
+                        file: file.source.id,
+                        start,
+                        end,
+                    }
+                );
+                assert_eq!(
+                    record.reason,
+                    NonclaimReason::Semantic(SemanticGap::NavigationIdentity)
+                );
+                assert_eq!(
+                    record.deletion_condition(),
+                    DeletionCondition::SemanticOwner(SemanticGap::NavigationIdentity)
+                );
+            }
+            assert!(
+                navigation_identity_nonclaim(&analysis, target, &file, end + 1).is_none(),
+                "the temporary nonclaim ends with the authored name",
+            );
+        }
+    }
+
+    for offset in [
+        source.find("stringName").unwrap() as u32 + 2,
+        source.find("commentName").unwrap() as u32 + 2,
+        source.find('=').unwrap() as u32,
+        source.find(';').unwrap() as u32,
+    ] {
+        assert!(analysis.navigation_query_is_claimed(CapabilityTarget::Definition, &file, offset,));
+    }
+}
+
+#[test]
+fn checker_quick_info_completion_is_not_mirrored_into_capability_analysis() {
+    let source =
+        "type Box<TypeValue> = TypeValue; function useValue(value: number) { return value; }";
+    let file = program_file(0, "quick-info-summary.ts", source);
+    let incomplete = file
+        .bindings
+        .declarations
+        .iter()
+        .filter(|declaration| {
+            matches!(
+                declaration.kind,
+                DeclarationKind::Parameter | DeclarationKind::TypeParameter
+            )
+        })
+        .map(|declaration| declaration.id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(incomplete.len(), 2);
+    let analysis = default_analysis(&file);
+
+    for declaration in file
+        .bindings
+        .declarations
+        .iter()
+        .filter(|declaration| incomplete.contains(&declaration.id))
+    {
+        assert!(CapabilityAnalysis::navigation_declaration_has_identity(
+            declaration
+        ));
+        for offset in [declaration.name_span.start, declaration.name_span.end] {
+            assert!(
+                navigation_identity_nonclaim(
+                    &analysis,
+                    CapabilityTarget::QuickInfo,
+                    &file,
+                    offset,
+                )
+                .is_none()
+            );
+            for &target in &ALL_TARGETS[7..] {
+                assert!(
+                    analysis.navigation_query_is_claimed(target, &file, offset),
+                    "checker completion must stay outside the immutable {target:?} analysis",
+                );
+            }
         }
     }
 }

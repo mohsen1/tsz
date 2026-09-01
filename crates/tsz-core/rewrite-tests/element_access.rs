@@ -680,9 +680,14 @@ fn shorthand_default_is_rejected_only_in_an_ordinary_object_literal() {
         ..CompilerOptions::default()
     });
     service.open("case.ts", Arc::<str>::from(source));
+    let syntactic = service.syntactic_diagnostics("case.ts");
+    assert_eq!(syntactic.syntactic_completion, SemanticCompletion::Complete);
+    assert!(syntactic.diagnostics.is_empty());
+    let semantic = service.semantic_diagnostics("case.ts");
+    assert_eq!(semantic.semantic_completion, SemanticCompletion::Complete);
     assert_eq!(
-        service
-            .syntactic_diagnostics("case.ts")
+        semantic
+            .diagnostics
             .iter()
             .map(|diagnostic| diagnostic.code)
             .collect::<Vec<_>>(),
@@ -1173,16 +1178,13 @@ fn empty_element_access_keeps_its_syntax_owned_ts1011() {
 
 #[test]
 fn recovery_contexts_do_not_reclassify_array_syntax_as_empty_element_access() {
-    for (source, expected) in [
-        ("const chosen = flag ? renamed : [];", vec![1109, 1109]),
-        ("const nested = flag ? renamed : [1, 2];", vec![1109, 1109]),
-        ("function nested([], {}): void {}", vec![]),
-        (
-            "type Selected<Value> = Value extends never[] ? Value : [];",
-            vec![],
-        ),
+    for source in [
+        "const chosen = flag ? renamed : [];",
+        "const nested = flag ? renamed : [1, 2];",
+        "function nested([], {}): void {}",
+        "type Selected<Value> = Value extends never[] ? Value : [];",
     ] {
-        assert_eq!(parsed_diagnostic_codes(source), expected, "{source}");
+        assert!(parsed_diagnostic_codes(source).is_empty(), "{source}");
     }
 }
 

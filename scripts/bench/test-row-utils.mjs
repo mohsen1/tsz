@@ -151,6 +151,20 @@ assert.equal(
   true,
   "source-derived zero-stub evidence keeps a real-dependency project eligible",
 );
+for (const [field, value, message] of [
+  ["evidence_protocol_fingerprint", undefined, "missing evidence-protocol identity"],
+  ["compile_input_stable", undefined, "missing compile-input stability"],
+  ["compile_input_stable", false, "moving compile inputs"],
+]) {
+  const compatibility = { ...GREEN_COMPAT };
+  if (value === undefined) delete compatibility[field];
+  else compatibility[field] = value;
+  assert.equal(
+    hasExactProjectEvidence(compatibility, "utility-types-project"),
+    false,
+    `${message} cannot certify project evidence`,
+  );
+}
 for (const semantic_completion of [undefined, null, "deferred", "cycle", "limit"]) {
   const compatibility = { ...GREEN_COMPAT, semantic_completion };
   assert.equal(
@@ -205,6 +219,25 @@ for (const name of ["msw-project", "effect-project", "drizzle-orm-project"]) {
     isSpeedRatioEligible({ name, tsz_ms: 8, tsgo_ms: 12, winner: "tsz", compatibility }),
     false,
     `${name}: a forged timing pair is rejected by the shared consumer gate`,
+  );
+}
+{
+  const actual = fixtureStubEvidenceFor(ROOT, "kysely-project");
+  assert.equal(actual.stubbedModules, 0, "Kysely's declaration-writing helper has no module stub");
+  assert.equal(actual.stubbedAnyMembers, 0, "Kysely's typed declaration contains no any member");
+  assert.deepEqual(actual.stubInventoryOwners, ["tsz_write_kysely_globals"]);
+  const compatibility = {
+    ...GREEN_COMPAT,
+    stub_inventory_schema: actual.stubInventorySchema,
+    stubbed_modules: actual.stubbedModules,
+    stubbed_any_members: actual.stubbedAnyMembers,
+    stub_inventory_fingerprint: actual.stubInventoryFingerprint,
+    stub_inventory_owners: actual.stubInventoryOwners,
+  };
+  assert.equal(
+    hasExactProjectEvidence(compatibility, "kysely-project"),
+    false,
+    "a typed zero-any declaration-writing helper remains a stub owner and cannot certify exact evidence",
   );
 }
 assert.equal(

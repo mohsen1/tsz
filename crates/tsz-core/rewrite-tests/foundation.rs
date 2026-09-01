@@ -1,7 +1,16 @@
 use std::sync::Arc;
 
-use tsz::service::LanguageService;
+use tsz::diagnostics::DiagnosticCategory;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
+
+#[path = "foundation_parts/function_overload_groups.rs"]
+mod function_overload_groups;
 
 fn compile(source: &str) -> tsz::CompileOutput {
     Compiler::new().compile(
@@ -14,6 +23,15 @@ fn compile(source: &str) -> tsz::CompileOutput {
     )
 }
 
+fn claimed<T>(query: ServiceQuery<T>) -> T {
+    query.expect_claimed("foundation service query")
+}
+fn references_deferred(service: &LanguageService, path: &str, offset: u32) -> bool {
+    matches!(
+        service.references(path, offset),
+        ServiceQuery::Nonclaimed(_)
+    )
+}
 fn compile_without_implicit_any(source: &str) -> tsz::CompileOutput {
     Compiler::new().compile(
         vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
@@ -219,8 +237,8 @@ fn language_service_keeps_semantic_completion_separate_from_diagnostics() {
         "case.ts",
         Arc::<str>::from("const text:string=''; const size:number=text.length;"),
     );
-
-    assert!(service.syntactic_diagnostics("case.ts").is_empty());
+    let syntactic = service.syntactic_diagnostics("case.ts");
+    assert!(syntactic.syntactic_completion.is_complete() && syntactic.diagnostics.is_empty());
     let semantic = service.semantic_diagnostics("case.ts");
     assert!(semantic.diagnostics.is_empty());
     assert_eq!(semantic.semantic_completion, SemanticCompletion::Deferred);
@@ -289,11 +307,11 @@ fn quick_info_preserves_const_literals_and_widens_let_literals() {
         Arc::<str>::from("const fixed = 0; let changing = 0;"),
     );
     assert_eq!(
-        service.quick_info("case.ts", 6).unwrap().display,
+        claimed(service.quick_info("case.ts", 6)).unwrap().display,
         "const fixed: 0"
     );
     assert_eq!(
-        service.quick_info("case.ts", 21).unwrap().display,
+        claimed(service.quick_info("case.ts", 21)).unwrap().display,
         "let changing: number"
     );
 }
@@ -309,8 +327,7 @@ fn quick_info_infers_widened_object_literals_at_top_level_and_in_nested_scopes()
 
         let declaration = source.find(name).unwrap() as u32;
         assert_eq!(
-            service
-                .quick_info("case.ts", declaration + 1)
+            claimed(service.quick_info("case.ts", declaration + 1))
                 .unwrap()
                 .display,
             format!("const {name}: {{ {property}: number; }}")
@@ -318,7 +335,9 @@ fn quick_info_infers_widened_object_literals_at_top_level_and_in_nested_scopes()
 
         let nested = source.find("nested").unwrap() as u32;
         assert_eq!(
-            service.quick_info("case.ts", nested + 1).unwrap().display,
+            claimed(service.quick_info("case.ts", nested + 1))
+                .unwrap()
+                .display,
             format!("const nested: {{ {name}: {{ label: string; }}; ready: boolean; }}")
         );
     }
@@ -448,14 +467,14 @@ fn quick_info_renders_parsed_type_shapes_without_unknown_placeholders() {
         let mut service = LanguageService::new(CompilerOptions::default());
         service.open("case.ts", Arc::<str>::from(source));
         let offset = source.find(name).unwrap() as u32;
-        let info = service.quick_info("case.ts", offset + 1).unwrap();
+        let info = claimed(service.quick_info("case.ts", offset + 1)).unwrap();
         assert_eq!(info.display, expected, "wrong display for {name}");
         assert!(!info.display.ends_with("unknown"));
     }
 }
 
 #[test]
-fn quick_info_returns_none_when_initializer_or_type_display_needs_missing_semantics() {
+fn quick_info_claims_complete_any_fallback_and_defers_unsupported_display_shapes() {
     let source = concat!(
         "const fromCall = createValue();\n",
         "const list = [1, 2];\n",
@@ -464,20 +483,24 @@ fn quick_info_returns_none_when_initializer_or_type_display_needs_missing_semant
     );
     let mut service = LanguageService::new(CompilerOptions::default());
     service.open("case.ts", Arc::<str>::from(source));
-
-    for name in ["fromCall", "list", "Broken"] {
+    for (name, expected) in [
+        ("fromCall", "const fromCall: any"),
+        ("explicit", "const explicit: unknown"),
+    ] {
+        let offset = source.find(name).unwrap() as u32;
+        let query = service.quick_info("case.ts", offset + 1);
+        assert_eq!(claimed(query).unwrap().display, expected);
+    }
+    for name in ["list", "Broken"] {
         let offset = source.find(name).unwrap() as u32;
         assert!(
-            service.quick_info("case.ts", offset + 1).is_none(),
+            matches!(
+                service.quick_info("case.ts", offset + 1),
+                ServiceQuery::Nonclaimed(_)
+            ),
             "unsupported {name} received confident quickinfo"
         );
     }
-
-    let explicit = source.find("explicit").unwrap() as u32;
-    assert_eq!(
-        service.quick_info("case.ts", explicit + 1).unwrap().display,
-        "const explicit: unknown"
-    );
 }
 
 #[test]
@@ -492,49 +515,40 @@ fn navigation_uses_bound_identity_across_files_and_shadowed_scopes() {
             .find(name)
             .map(|offset| offset + declaration as usize + name.len())
             .unwrap() as u32;
-
         let mut service = LanguageService::new(CompilerOptions::default());
-        service.open("a.ts", Arc::<str>::from(first));
+        service.open("a.ts", Arc::<str>::from(first.clone()));
         service.open("b.ts", Arc::<str>::from(second));
-
-        let global = service.references("a.ts", declaration + 1);
-        assert_eq!(global.len(), 1, "missing global symbol for {name}");
-        assert_eq!(global[0].references.len(), 3, "shadow leaked for {name}");
-        assert!(
-            global[0]
-                .references
-                .iter()
-                .any(|reference| reference.file_name == "b.ts")
-        );
-
-        let local = service.references("a.ts", parameter + 1);
-        assert_eq!(local.len(), 1, "missing parameter symbol for {name}");
-        assert_eq!(local[0].references.len(), 2);
+        let global = claimed(service.references("a.ts", declaration + 1));
+        let refs = &global[0].references;
+        assert_eq!((global.len(), refs.len()), (1, 3), "global {name}");
+        let at = |index: usize| (&*refs[index].file_name, refs[index].text_span.start);
+        assert_eq!(at(0), ("a.ts", declaration));
+        assert_eq!(at(1), ("a.ts", first.rfind(name).unwrap() as u32));
+        assert_eq!(at(2), ("b.ts", 0));
+        let local = claimed(service.references("a.ts", parameter + 1));
+        assert_eq!((local.len(), local[0].references.len()), (1, 2));
         assert!(
             local[0]
                 .references
                 .iter()
-                .all(|reference| reference.file_name == "a.ts")
+                .all(|item| item.file_name == "a.ts")
         );
-
-        let definition = service.definition_and_bound_span("b.ts", 1).unwrap();
+        let definition = claimed(service.definition_and_bound_span("b.ts", 1)).unwrap();
         assert_eq!(definition.text_span.start, 0);
         assert_eq!(definition.definitions[0].file_name, "a.ts");
         assert_eq!(definition.definitions[0].text_span.start, declaration);
-
         let highlights =
-            service.document_highlights("a.ts", declaration + 1, &["b.ts".to_string()]);
+            claimed(service.document_highlights("a.ts", declaration + 1, &["b.ts".to_string()]));
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].file_name, "b.ts");
         assert_eq!(highlights[0].highlight_spans.len(), 1);
-
-        let rename = service.rename("a.ts", declaration + 1);
+        let rename = claimed(service.rename("a.ts", declaration + 1));
         assert!(rename.info.can_rename);
         assert_eq!(rename.info.display_name.as_deref(), Some(name));
         assert_eq!(rename.info.trigger_span.unwrap().start, declaration);
         assert_eq!(rename.info.trigger_span.unwrap().length, name.len() as u32);
         assert_eq!(rename.locations.len(), 3);
-        assert!(!service.rename("a.ts", 0).info.can_rename);
+        assert!(!claimed(service.rename("a.ts", 0)).info.can_rename);
     }
 }
 
@@ -545,9 +559,7 @@ fn definition_metadata_comes_from_bound_scope_and_declaration_context() {
     let mut service = LanguageService::new(CompilerOptions::default());
     service.open("local.ts", Arc::<str>::from(source));
 
-    let local = service
-        .definition_and_bound_span("local.ts", reference + 1)
-        .unwrap();
+    let local = claimed(service.definition_and_bound_span("local.ts", reference + 1)).unwrap();
     let local = &local.definitions[0];
     assert_eq!(local.kind, "local var");
     assert_eq!(local.name, "local");
@@ -560,9 +572,9 @@ fn definition_metadata_comes_from_bound_scope_and_declaration_context() {
     let ambient_reference = ambient_source.rfind("Ambient").unwrap() as u32;
     let mut ambient_service = LanguageService::new(CompilerOptions::default());
     ambient_service.open("ambient.d.ts", Arc::<str>::from(ambient_source));
-    let ambient = ambient_service
-        .definition_and_bound_span("ambient.d.ts", ambient_reference + 1)
-        .unwrap();
+    let ambient =
+        claimed(ambient_service.definition_and_bound_span("ambient.d.ts", ambient_reference + 1))
+            .unwrap();
     assert!(ambient.definitions[0].is_ambient);
     assert!(!ambient.definitions[0].is_local);
 }
@@ -574,21 +586,15 @@ fn navigation_keeps_type_and_value_meanings_separate() {
     let mut service = LanguageService::new(CompilerOptions::default());
     service.open("case.ts", Arc::<str>::from(source));
 
-    let definition = service
-        .definition_and_bound_span("case.ts", type_reference + 1)
-        .unwrap();
+    let definition =
+        claimed(service.definition_and_bound_span("case.ts", type_reference + 1)).unwrap();
     assert_eq!(definition.definitions.len(), 1);
     assert_eq!(definition.definitions[0].kind, "type");
     assert_eq!(definition.definitions[0].text_span.start, 5);
 
-    let references = service.references("case.ts", type_reference + 1);
-    assert_eq!(references[0].references.len(), 2);
-    assert!(
-        references[0]
-            .references
-            .iter()
-            .all(|reference| reference.text_span.start != 30)
-    );
+    assert!(references_deferred(&service, "case.ts", type_reference + 1));
+    let rename = claimed(service.rename("case.ts", type_reference + 1));
+    assert_eq!(rename.locations.len(), 2);
 }
 
 #[test]
@@ -782,289 +788,6 @@ fn declaration_only_overload_hosts_complete_until_value_use_demands_resolution()
     assert!(ambient.diagnostics.is_empty(), "{:?}", ambient.diagnostics);
     assert_eq!(ambient.semantic_completion, SemanticCompletion::Complete);
     assert_eq!(ambient.exit_status, CompileExitStatus::Success);
-}
-
-#[test]
-fn function_overload_owner_matrix_is_monotonic_and_fail_closed() {
-    let single_source = "function bodyless(); const text:string=bodyless();";
-    let single = compile(single_source);
-    assert_eq!(codes(&single), vec![2391, 7010]);
-    for diagnostic in &single.diagnostics {
-        assert_eq!(
-            (diagnostic.start, diagnostic.length),
-            (
-                single_source.find("bodyless").unwrap() as u32,
-                "bodyless".len() as u32,
-            )
-        );
-    }
-    assert_eq!(
-        single.diagnostics[1].message_text,
-        "'bodyless', which lacks return-type annotation, implicitly has an 'any' return type."
-    );
-    assert_eq!(single.semantic_completion, SemanticCompletion::Complete);
-    assert_eq!(
-        single.exit_status,
-        CompileExitStatus::DiagnosticsPresentOutputsSkipped
-    );
-
-    let unannotated_pair = compile("function pair(); function pair();");
-    assert_eq!(codes(&unannotated_pair), vec![7010, 2391, 7010]);
-    assert_eq!(
-        unannotated_pair.semantic_completion,
-        SemanticCompletion::Complete
-    );
-
-    let annotated_pair = compile("function pair():void; function pair():void;");
-    assert_eq!(codes(&annotated_pair), vec![2391]);
-    assert_eq!(
-        annotated_pair.diagnostics[0].start,
-        "function pair():void; function ".len() as u32
-    );
-    assert_eq!(
-        annotated_pair.semantic_completion,
-        SemanticCompletion::Complete
-    );
-
-    let renamed_source = "function pending(value:number):number; function different(){return 1}";
-    let renamed = compile(renamed_source);
-    assert_eq!(codes(&renamed), vec![2389]);
-    assert_eq!(
-        (
-            renamed.diagnostics[0].start,
-            renamed.diagnostics[0].length,
-            renamed.diagnostics[0].message_text.as_str(),
-        ),
-        (
-            renamed_source.find("different").unwrap() as u32,
-            "different".len() as u32,
-            "Function implementation name must be 'pending'.",
-        )
-    );
-    assert_eq!(renamed.semantic_completion, SemanticCompletion::Complete);
-
-    let ambient_mismatch =
-        compile("function ambientMismatch():void; declare function ambientMismatch():void;");
-    assert_eq!(codes(&ambient_mismatch), vec![2384]);
-    assert_eq!(
-        ambient_mismatch.diagnostics[0].message_text,
-        "Overload signatures must all be ambient or non-ambient."
-    );
-    assert_eq!(
-        ambient_mismatch.semantic_completion,
-        SemanticCompletion::Complete
-    );
-
-    let export_mismatch = compile("export function exposed():void; function exposed():void {}");
-    assert_eq!(codes(&export_mismatch), vec![2383]);
-    assert_eq!(
-        export_mismatch.diagnostics[0].message_text,
-        "Overload signatures must all be exported or non-exported."
-    );
-    assert_eq!(
-        export_mismatch.semantic_completion,
-        SemanticCompletion::Complete
-    );
-
-    let compatible = compile(
-        "function compatible(value:number):number; function compatible(value:any):any{return value}",
-    );
-    assert!(
-        compatible.diagnostics.is_empty(),
-        "{:?}",
-        compatible.diagnostics
-    );
-    assert_eq!(compatible.semantic_completion, SemanticCompletion::Complete);
-
-    let incompatible = compile(
-        "function incompatible(value:number):number; function incompatible(value:string):string{return value}",
-    );
-    assert!(
-        incompatible.diagnostics.is_empty(),
-        "{:?}",
-        incompatible.diagnostics
-    );
-    assert_eq!(
-        incompatible.semantic_completion,
-        SemanticCompletion::Deferred
-    );
-    assert_eq!(
-        incompatible.exit_status,
-        CompileExitStatus::SemanticIncomplete
-    );
-
-    let declared = Compiler::new().compile(
-        vec![SourceInput::new(
-            "ambient.d.ts",
-            Arc::<str>::from("declare function ambientCallable();"),
-        )],
-        &CompilerOptions {
-            no_emit: true,
-            strict: true,
-            ..CompilerOptions::default()
-        },
-    );
-    assert_eq!(codes(&declared), vec![7010]);
-    assert_eq!(declared.semantic_completion, SemanticCompletion::Complete);
-
-    let unowned_dts = Compiler::new().compile(
-        vec![SourceInput::new(
-            "ambient.d.ts",
-            Arc::<str>::from("function unowned():void;"),
-        )],
-        &CompilerOptions {
-            no_emit: true,
-            strict: true,
-            ..CompilerOptions::default()
-        },
-    );
-    assert!(unowned_dts.diagnostics.is_empty());
-    assert_eq!(
-        unowned_dts.semantic_completion,
-        SemanticCompletion::Deferred
-    );
-}
-
-#[test]
-fn global_overload_demand_uses_the_program_owned_merged_group() {
-    let inputs = [
-        SourceInput::new(
-            "a.ts",
-            Arc::<str>::from("declare function choose(value:string):string;"),
-        ),
-        SourceInput::new(
-            "b.ts",
-            Arc::<str>::from("declare function choose(value:number):number;"),
-        ),
-    ];
-    let declarations = Compiler::new().compile(
-        inputs.to_vec(),
-        &CompilerOptions {
-            no_emit: true,
-            strict: true,
-            ..CompilerOptions::default()
-        },
-    );
-    assert!(declarations.diagnostics.is_empty());
-    assert_eq!(
-        declarations.semantic_completion,
-        SemanticCompletion::Complete
-    );
-
-    for reverse in [false, true] {
-        let mut roots = inputs.to_vec();
-        if reverse {
-            roots.reverse();
-        }
-        roots.push(SourceInput::new(
-            "use.ts",
-            Arc::<str>::from("const result=choose(true);"),
-        ));
-        let demanded = Compiler::new().compile(
-            roots,
-            &CompilerOptions {
-                no_emit: true,
-                strict: true,
-                ..CompilerOptions::default()
-            },
-        );
-        assert!(
-            demanded.diagnostics.is_empty(),
-            "{:?}",
-            demanded.diagnostics
-        );
-        assert_eq!(demanded.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(demanded.exit_status, CompileExitStatus::SemanticIncomplete);
-    }
-}
-
-#[test]
-fn external_module_roots_never_enter_the_script_global_group() {
-    let overloaded_module = SourceInput::new(
-        "module.ts",
-        Arc::<str>::from(
-            "export function choose(value:string):string; \
-             export function choose(value:any):any{return value}",
-        ),
-    );
-    let script = SourceInput::new(
-        "script.ts",
-        Arc::<str>::from(
-            "declare function choose(value:number):number; \
-             const numeric:number=choose(1);",
-        ),
-    );
-    for roots in [
-        vec![overloaded_module.clone(), script.clone()],
-        vec![script.clone(), overloaded_module],
-    ] {
-        let output = Compiler::new().compile(
-            roots,
-            &CompilerOptions {
-                no_emit: true,
-                strict: true,
-                ..CompilerOptions::default()
-            },
-        );
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-        assert_eq!(output.exit_status, CompileExitStatus::Success);
-    }
-
-    let module_local = Compiler::new().compile(
-        vec![
-            SourceInput::new(
-                "local.ts",
-                Arc::<str>::from(
-                    "export function choose(value:string):string{return value} \
-                     export const local:string=choose('ready');",
-                ),
-            ),
-            script,
-        ],
-        &CompilerOptions {
-            no_emit: true,
-            strict: true,
-            ..CompilerOptions::default()
-        },
-    );
-    assert!(module_local.diagnostics.is_empty());
-    assert_eq!(
-        module_local.semantic_completion,
-        SemanticCompletion::Complete
-    );
-    assert_eq!(module_local.exit_status, CompileExitStatus::Success);
-
-    let path_owned_module = SourceInput::new(
-        "path-owned.mts",
-        Arc::<str>::from(
-            "function choose(value:string):string; \
-             function choose(value:any):any{return value}",
-        ),
-    );
-    let path_script = SourceInput::new(
-        "path-script.ts",
-        Arc::<str>::from(
-            "declare function choose(value:number):number; \
-             const numeric:number=choose(1);",
-        ),
-    );
-    for roots in [
-        vec![path_owned_module.clone(), path_script.clone()],
-        vec![path_script, path_owned_module],
-    ] {
-        let output = Compiler::new().compile(
-            roots,
-            &CompilerOptions {
-                no_emit: true,
-                strict: true,
-                ..CompilerOptions::default()
-            },
-        );
-        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
-        assert_eq!(output.exit_status, CompileExitStatus::Success);
-    }
 }
 
 #[test]
@@ -1270,141 +993,6 @@ fn declaration_emit_blocks_unmodeled_overload_implementation_filtering() {
 }
 
 #[test]
-fn function_modifier_owners_and_products_fail_closed() {
-    for source in [
-        "async function delayed(value:string):number; async function delayed(value:any):any{return value}",
-        "abstract function impossible():void;",
-        "declare declare function repeated():void;",
-    ] {
-        let output = compile(source);
-        assert!(
-            output.diagnostics.is_empty(),
-            "{source}: {:?}",
-            output.diagnostics
-        );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-    }
-
-    for source in [
-        "function receiver(this:any):void;",
-        "function implemented(this:any):void {}",
-        "function parameterProperty(public value:number):void;",
-        "function implementedProperty(public value:number):void {}",
-        "function recovered({value}:any):void;",
-    ] {
-        let output = compile(source);
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-        assert_ne!(output.exit_status, CompileExitStatus::Success);
-    }
-
-    let default_overload = concat!(
-        "export default function selected(value:string):string; ",
-        "export default function selected(value:any):any{return value}",
-    );
-    for product_source in [
-        default_overload,
-        "export function outer(){async async function inner():Promise<void>{}}",
-    ] {
-        for module in ["commonjs", "esnext"] {
-            for no_check in [false, true] {
-                let output = Compiler::new().compile(
-                    vec![SourceInput::new(
-                        "default.ts",
-                        Arc::<str>::from(product_source),
-                    )],
-                    &CompilerOptions {
-                        declaration: true,
-                        no_check,
-                        module: module.to_string(),
-                        target: "esnext".to_string(),
-                        ..CompilerOptions::default()
-                    },
-                );
-                assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-                assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
-                assert!(
-                    output.emitted_files.is_empty(),
-                    "{module}/{no_check}: {:?}",
-                    output.emitted_files
-                );
-            }
-        }
-    }
-
-    let abstract_product = Compiler::new().compile(
-        vec![SourceInput::new(
-            "abstract.ts",
-            Arc::<str>::from("abstract function impossible():void;"),
-        )],
-        &CompilerOptions {
-            declaration: true,
-            no_check: true,
-            ..CompilerOptions::default()
-        },
-    );
-    assert_eq!(
-        abstract_product.semantic_completion,
-        SemanticCompletion::Deferred
-    );
-    assert!(abstract_product.emitted_files.is_empty());
-
-    let recovered_product = Compiler::new().compile(
-        vec![SourceInput::new(
-            "recovered.ts",
-            Arc::<str>::from("function recovered({value}:any):void;"),
-        )],
-        &CompilerOptions {
-            declaration: true,
-            no_check: true,
-            ..CompilerOptions::default()
-        },
-    );
-    assert_eq!(
-        recovered_product.semantic_completion,
-        SemanticCompletion::Deferred
-    );
-    assert!(recovered_product.emitted_files.is_empty());
-
-    let async_product = Compiler::new().compile(
-        vec![SourceInput::new(
-            "async.ts",
-            Arc::<str>::from(
-                "async function delayed(value:string):Promise<string>; \
-                 async function delayed(value:any):Promise<any>{}",
-            ),
-        )],
-        &CompilerOptions {
-            declaration: true,
-            no_check: true,
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        },
-    );
-    assert_eq!(
-        async_product.semantic_completion,
-        SemanticCompletion::Deferred
-    );
-    assert_eq!(
-        async_product
-            .emitted_files
-            .iter()
-            .filter(|file| file.declaration)
-            .count(),
-        0
-    );
-    assert_eq!(
-        async_product
-            .emitted_files
-            .iter()
-            .filter(|file| !file.declaration)
-            .count(),
-        1
-    );
-}
-
-#[test]
 fn bodyless_class_method_declaration_emit_recovers_with_any() {
     let output = Compiler::new().compile(
         vec![SourceInput::new(
@@ -1530,7 +1118,7 @@ fn class_overload_exemptions_and_boundaries_match_ts7() {
             .program
             .source(tsz::source::FileId(0))
             .unwrap()
-            .text
+            .text()
             .rfind("constructor")
             .unwrap() as u32
     );
@@ -1752,9 +1340,10 @@ fn navigation_visits_control_flow_conditions_cases_and_branches() {
     let mut service = LanguageService::new(CompilerOptions::default());
     service.open("flow.ts", Arc::<str>::from(source));
 
-    let references = service.references("flow.ts", declaration + 1);
-    assert_eq!(references.len(), 1);
-    assert_eq!(references[0].references.len(), 8);
+    let references = claimed(service.references("flow.ts", declaration + 1));
+    assert_eq!((references.len(), references[0].references.len()), (1, 8));
+    let rename = claimed(service.rename("flow.ts", declaration + 1));
+    assert_eq!(rename.locations.len(), 8);
 }
 
 #[test]

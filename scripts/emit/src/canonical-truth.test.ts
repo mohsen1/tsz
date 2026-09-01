@@ -152,6 +152,11 @@ try {
   ]);
   assert.equal(canonicalMatch(exactOracle, exactTsz), true);
   assert.deepEqual(exactOracle.jsProducts.map(product => product.path), ['pkg/dist/a.js', 'pkg/dist/b.js']);
+  assert.equal(
+    invocations().every(invocation => !invocation.args.includes('--diagnostics-json')),
+    true,
+    'fake compiler contracts opt out of real structured-diagnostic providers',
+  );
   pair.oracle.terminate(); pair.tsz.terminate();
 
   process.env.FAKE_TSZ_SCENARIO = 'missing-sibling';
@@ -189,7 +194,7 @@ try {
     pair.tsz.transpile('', 9, 1, checkedOptions),
   ]);
   assert.equal(canonicalMatch(checkedOracle, checkedTsz), false, 'matching diagnostics and absence remain nonpassing');
-  assert.match(compareCompilerOutcomes(checkedOracle.outcome, checkedTsz.outcome).error!, /NONZERO_OUTCOME/);
+  assert.match(compareCompilerOutcomes(checkedOracle.outcome, checkedTsz.outcome).error!, /UNVERIFIED_DIAGNOSTIC_IDENTITY/);
   assert.deepEqual(checkedOracle.jsProducts, []);
   assert.deepEqual(checkedTsz.jsProducts, []);
   const checkedInvocations = invocations();
@@ -231,6 +236,30 @@ try {
   await Promise.all([
     pair.oracle.transpile('', undefined, undefined, {
       sourceFiles: [{ name: 'input.js', content: 'module.exports = 1;\n' }],
+      checkJs: true,
+    }),
+    pair.tsz.transpile('', undefined, undefined, {
+      sourceFiles: [{ name: 'input.js', content: 'module.exports = 1;\n' }],
+      checkJs: true,
+    }),
+  ]);
+  for (const invocation of invocations()) {
+    assert.equal(valueAfter(invocation.args, '--checkJs'), 'true');
+    assert.equal(
+      invocation.args.includes('--allowJs'),
+      false,
+      'checkJs reaches compiler option derivation without manufacturing an authored allowJs flag',
+    );
+  }
+  pair.oracle.terminate(); pair.tsz.terminate();
+
+  fs.writeFileSync(invocationLog, '', 'utf8');
+  process.env.FAKE_ORACLE_SCENARIO = 'exact';
+  process.env.FAKE_TSZ_SCENARIO = 'exact';
+  pair = freshPair();
+  await Promise.all([
+    pair.oracle.transpile('', undefined, undefined, {
+      sourceFiles: [{ name: 'input.js', content: 'module.exports = 1;\n' }],
       allowJs: false,
       declaration: false,
     }),
@@ -256,7 +285,13 @@ try {
     embeddedConfig: {
       strict: true,
       allowUnreachableCode: true,
+      checkJs: true,
       moduleResolution: 'bundler',
+      noImplicitAny: false,
+      noUnusedLocals: true,
+      noUnusedParameters: false,
+      skipLibCheck: true,
+      strictPropertyInitialization: false,
     },
     directives: { strict: true },
     variant: extractAuthoredVariantFromFilename('case(target=es2015,strict=false).js'),
@@ -266,19 +301,37 @@ try {
       ...baseOptions,
       strict: optionBoolean(resolvedInvocation, 'strict'),
       allowUnreachableCode: optionBoolean(resolvedInvocation, 'allowUnreachableCode'),
+      checkJs: optionBoolean(resolvedInvocation, 'checkJs'),
       moduleResolution: optionString(resolvedInvocation, 'moduleResolution'),
+      noImplicitAny: optionBoolean(resolvedInvocation, 'noImplicitAny'),
+      noUnusedLocals: optionBoolean(resolvedInvocation, 'noUnusedLocals'),
+      noUnusedParameters: optionBoolean(resolvedInvocation, 'noUnusedParameters'),
+      skipLibCheck: optionBoolean(resolvedInvocation, 'skipLibCheck'),
+      strictPropertyInitialization: optionBoolean(resolvedInvocation, 'strictPropertyInitialization'),
     }),
     pair.tsz.transpile('', parseTarget(optionString(resolvedInvocation, 'target')!), undefined, {
       ...baseOptions,
       strict: optionBoolean(resolvedInvocation, 'strict'),
       allowUnreachableCode: optionBoolean(resolvedInvocation, 'allowUnreachableCode'),
+      checkJs: optionBoolean(resolvedInvocation, 'checkJs'),
       moduleResolution: optionString(resolvedInvocation, 'moduleResolution'),
+      noImplicitAny: optionBoolean(resolvedInvocation, 'noImplicitAny'),
+      noUnusedLocals: optionBoolean(resolvedInvocation, 'noUnusedLocals'),
+      noUnusedParameters: optionBoolean(resolvedInvocation, 'noUnusedParameters'),
+      skipLibCheck: optionBoolean(resolvedInvocation, 'skipLibCheck'),
+      strictPropertyInitialization: optionBoolean(resolvedInvocation, 'strictPropertyInitialization'),
     }),
   ]);
   for (const invocation of invocations()) {
     assert.equal(valueAfter(invocation.args, '--strict'), 'false');
     assert.equal(valueAfter(invocation.args, '--allowUnreachableCode'), 'true');
+    assert.equal(valueAfter(invocation.args, '--checkJs'), 'true');
     assert.equal(valueAfter(invocation.args, '--moduleResolution'), 'bundler');
+    assert.equal(valueAfter(invocation.args, '--noImplicitAny'), 'false');
+    assert.equal(valueAfter(invocation.args, '--noUnusedLocals'), 'true');
+    assert.equal(valueAfter(invocation.args, '--noUnusedParameters'), 'false');
+    assert.equal(valueAfter(invocation.args, '--skipLibCheck'), 'true');
+    assert.equal(valueAfter(invocation.args, '--strictPropertyInitialization'), 'false');
     assert.equal(invocation.args.includes('--strictNullChecks'), false, 'strict is never approximated');
     assert.equal(valueAfter(invocation.args, '--target'), 'es2015');
     assert.equal(invocation.args.includes('--module'), false, 'unauthored module remains absent');

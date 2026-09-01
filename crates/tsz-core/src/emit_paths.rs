@@ -4,10 +4,6 @@
 //! root when redirecting output. Keeping this decision outside the printer
 //! prevents unrelated source files with the same basename from overwriting
 //! each other.
-
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
-
 use crate::config::{CompilerOptionKey, ProjectProvenance};
 use crate::diagnostics::{Diagnostic, RelatedInformation};
 use crate::program::{
@@ -17,34 +13,31 @@ use crate::program::{
 use crate::source::{
     FileId, SourceText, display_path, normalize_clamped_path_lexically as normalize_lexically,
 };
-
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Default)]
 pub(crate) struct EmitFilePlan {
     pub(crate) javascript: Option<PathBuf>,
     pub(crate) declaration: Option<PathBuf>,
 }
-
 /// A program-wide, validated set of output products.
 ///
-/// Collision checks happen while this value is built. Printers consume only
-/// the paths recorded here, so colliding products are skipped while unrelated
-/// products remain eligible for TypeScript-compatible partial emit.
+/// Program diagnostics and emit-demand collision diagnostics remain distinct;
+/// blocked products are skipped while unrelated products can emit.
 #[derive(Debug, Clone)]
 pub(crate) struct EmitPlan {
     files: Vec<EmitFilePlan>,
-    diagnostics: Vec<Diagnostic>,
-    blocked_products: bool,
+    program_diagnostics: Vec<Diagnostic>,
+    emit_diagnostics: Vec<Diagnostic>,
 }
-
 impl EmitPlan {
     pub(crate) fn empty(file_count: usize) -> Self {
         Self {
             files: vec![EmitFilePlan::default(); file_count],
-            diagnostics: Vec::new(),
-            blocked_products: false,
+            program_diagnostics: Vec::new(),
+            emit_diagnostics: Vec::new(),
         }
     }
-
     pub(crate) fn for_program(
         files: &[ProgramFile],
         options: &CompilerOptions,
@@ -60,13 +53,12 @@ impl EmitPlan {
             .max()
             .unwrap_or(0);
         let mut plan = Self::empty(file_slots);
-        plan.diagnostics
+        plan.program_diagnostics
             .extend(paths.explicit_root_diagnostics(files, options, provenance));
         if options.no_emit {
             return plan;
         }
         let mut products = Vec::new();
-
         for file in files {
             if is_declaration_source(&file.source.path) {
                 continue;
@@ -118,26 +110,21 @@ impl EmitPlan {
                 products.extend(map.map(|target| product(ProductKind::Map, target)));
             }
         }
-
         if let Some(diagnostic) = paths.inferred_root_diagnostic(options, provenance) {
-            plan.diagnostics.push(diagnostic);
+            plan.program_diagnostics.push(diagnostic);
         }
         plan.preflight(files, &products);
         plan
     }
-
-    pub(crate) fn diagnostics(&self) -> &[Diagnostic] {
-        &self.diagnostics
+    pub(crate) fn program_diagnostics(&self) -> &[Diagnostic] {
+        &self.program_diagnostics
     }
-
-    pub(crate) const fn has_blocked_products(&self) -> bool {
-        self.blocked_products
+    pub(crate) fn emit_diagnostics(&self) -> &[Diagnostic] {
+        &self.emit_diagnostics
     }
-
     pub(crate) fn for_file(&self, id: FileId) -> &EmitFilePlan {
         &self.files[id.0 as usize]
     }
-
     fn preflight(&mut self, files: &[ProgramFile], products: &[PlannedProduct]) {
         let input_paths: BTreeSet<String> = files
             .iter()
@@ -150,7 +137,6 @@ impl EmitPlan {
                 .or_default()
                 .push(product);
         }
-
         for (key, products) in by_target {
             let target = &products[0].target.host_path;
             let diagnostic = if input_paths.contains(&key) {
@@ -175,15 +161,13 @@ impl EmitPlan {
             } else {
                 continue;
             };
-            self.diagnostics.push(diagnostic);
+            self.emit_diagnostics.push(diagnostic);
             for product in products {
                 self.block_product(product);
             }
         }
     }
-
     fn block_product(&mut self, product: &PlannedProduct) {
-        self.blocked_products = true;
         let file = &mut self.files[product.source.0 as usize];
         match product.kind {
             ProductKind::Javascript => file.javascript = None,
@@ -192,27 +176,23 @@ impl EmitPlan {
         }
     }
 }
-
 #[derive(Debug, Clone)]
 struct PlannedProduct {
     source: FileId,
     kind: ProductKind,
     target: OutputTarget,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProductKind {
     Javascript,
     Declaration,
     Map,
 }
-
 #[derive(Debug, Clone)]
 struct OutputTarget {
     path: PathBuf,
     host_path: PathBuf,
 }
-
 impl OutputTarget {
     fn map(&self) -> Self {
         let [path, host_path] = [&self.path, &self.host_path].map(|path| {
@@ -223,14 +203,12 @@ impl OutputTarget {
         Self { path, host_path }
     }
 }
-
 #[derive(Debug, Clone)]
 pub(crate) struct EmitPaths {
     source_root: Option<PathBuf>,
     common_source_root: Option<PathBuf>,
     configured_root: Option<PathBuf>,
 }
-
 impl EmitPaths {
     /// Build the path mapping once for the whole program.
     ///
@@ -254,7 +232,6 @@ impl EmitPaths {
             configured_root,
         }
     }
-
     fn output_target(
         &self,
         source: &SourceText,
@@ -269,7 +246,6 @@ impl EmitPaths {
         let Some(directory) = directory else {
             return beside_source();
         };
-
         let source_path = normalize_lexically(&source.host_path);
         let Some(relative) = self
             .source_root
@@ -289,7 +265,6 @@ impl EmitPaths {
             path,
         }
     }
-
     fn inferred_root_diagnostic(
         &self,
         options: &CompilerOptions,
@@ -327,7 +302,6 @@ impl EmitPaths {
             },
         )
     }
-
     fn explicit_root_diagnostics(
         &self,
         files: &[ProgramFile],
@@ -371,7 +345,6 @@ impl EmitPaths {
             .collect()
     }
 }
-
 fn common_source_directory(files: &[ProgramFile]) -> Option<PathBuf> {
     let mut directories = files
         .iter()
@@ -387,7 +360,6 @@ fn common_source_directory(files: &[ProgramFile]) -> Option<PathBuf> {
     }
     Some(common)
 }
-
 fn output_file_name(source: &Path, declaration: bool) -> String {
     let stem = source
         .file_stem()
@@ -409,7 +381,6 @@ fn output_file_name(source: &Path, declaration: bool) -> String {
     };
     format!("{stem}.{extension}")
 }
-
 fn relative_path(base: &Path, target: &Path) -> String {
     if let Ok(relative) = target.strip_prefix(base) {
         let relative = display_path(relative);
@@ -421,11 +392,9 @@ fn relative_path(base: &Path, target: &Path) -> String {
     }
     display_path(target)
 }
-
 fn path_key(path: &Path) -> String {
     display_path(&normalize_lexically(path))
 }
-
 fn host_path_for_logical_output(source: &SourceText, output: &Path) -> PathBuf {
     if output.is_absolute() {
         return output.to_path_buf();
@@ -444,7 +413,6 @@ fn host_path_for_logical_output(source: &SourceText, output: &Path) -> PathBuf {
     }
     working_directory.join(output)
 }
-
 #[cfg(test)]
 #[path = "../rewrite-tests/emit_paths_unit.rs"]
 mod tests;

@@ -35,6 +35,7 @@ const BOOLEAN_FORWARDED_OPTIONS = new Set([
   'allowjs',
   'allowunreachablecode',
   'alwaysstrict',
+  'checkjs',
   'declaration',
   'declarationmap',
   'downleveliteration',
@@ -50,14 +51,19 @@ const BOOLEAN_FORWARDED_OPTIONS = new Set([
   'noemit',
   'noemithelpers',
   'noemitonerror',
+  'noimplicitany',
   'nolib',
+  'nounusedlocals',
+  'nounusedparameters',
   'preserveconstenums',
   'preservevalueimports',
   'removecomments',
   'rewriterelativeimportextensions',
   'sourcemap',
+  'skiplibcheck',
   'strict',
   'strictnullchecks',
+  'strictpropertyinitialization',
   'stripinternal',
   'usedefineforclassfields',
   'verbatimmodulesyntax',
@@ -107,6 +113,7 @@ const QUARANTINED_OPTIONS = new Set([
 const HARNESS_OPTIONS = new Set([
   'base',
   'noimplicitreferences',
+  'notypesandsymbols',
 ]);
 
 function normalizedEntries(source: Readonly<Record<string, unknown>>): Array<[string, unknown]> {
@@ -182,8 +189,15 @@ export function invalidAuthoredOptions(options: ReadonlyMap<string, AuthoredOpti
   return [...options.values()].filter(option => {
     const disposition = authoredOptionDisposition(option.key);
     if (disposition === 'unhandled' || disposition === 'quarantined') return false;
-    if (BOOLEAN_FORWARDED_OPTIONS.has(option.key) || option.key === 'noimplicitreferences') {
-      if (option.key === 'noimplicitreferences' && option.source === 'embedded-config') return true;
+    if (
+      BOOLEAN_FORWARDED_OPTIONS.has(option.key) ||
+      option.key === 'noimplicitreferences' ||
+      option.key === 'notypesandsymbols'
+    ) {
+      if (
+        (option.key === 'noimplicitreferences' || option.key === 'notypesandsymbols') &&
+        option.source === 'embedded-config'
+      ) return true;
       return !isExactBoolean(option);
     }
     if (STRING_FORWARDED_OPTIONS.has(option.key) || option.key === 'base') {

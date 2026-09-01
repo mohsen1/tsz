@@ -49,6 +49,199 @@ fn product<'a>(output: &'a CompileOutput, path: &str) -> &'a str {
 }
 
 #[test]
+fn direct_function_initializer_uses_checked_type_query_and_fences_other_value_kinds() {
+    let output = compile(
+        &[(
+            "function-reference.ts",
+            concat!(
+                "function foo() {};\n",
+                "var foo2 = foo;\n",
+                "var foo3 = (foo);\n",
+                "const exact = 1;\n",
+                "var annotated: () => void = foo;\n",
+                "var asserted = foo as typeof foo;\n",
+            ),
+        )],
+        "es2022",
+    );
+    assert_complete_with_paths(
+        &output,
+        &["function-reference.d.ts", "function-reference.js"],
+    );
+    let declaration = product(&output, "function-reference.d.ts");
+    assert!(declaration.contains("declare var foo2: typeof foo;"));
+    assert!(declaration.contains("declare var foo3: typeof foo;"));
+    assert!(declaration.contains("declare const exact = 1;"));
+    assert!(declaration.contains("declare var annotated: () => void;"));
+    assert!(declaration.contains("declare var asserted: typeof foo;"));
+    assert!(!declaration.contains("unknown"));
+
+    for (name, source) in [
+        ("variable", "var value=1; export var alias=(value);"),
+        ("class", "class Value {} export var alias=Value;"),
+        ("namespace", "namespace Value {} export var alias=Value;"),
+        (
+            "merged-function",
+            "function value(x:number):number; function value(x:number){return x} export var alias=value;",
+        ),
+    ] {
+        let output = compile(&[("excluded.ts", source)], "es2022");
+        assert!(
+            output.diagnostics.is_empty(),
+            "{name}: {:#?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{name}"
+        );
+        assert!(
+            output
+                .emitted_files
+                .iter()
+                .all(|file| file.path != Path::new("excluded.d.ts")),
+            "{name}"
+        );
+    }
+
+    for (name, sources) in [
+        (
+            "import",
+            vec![
+                ("dep.ts", "export function value(){}"),
+                (
+                    "excluded.ts",
+                    "import {value} from './dep'; export var alias=(value);",
+                ),
+            ],
+        ),
+        (
+            "cross-file merge",
+            vec![
+                ("first.ts", "function value(){}"),
+                ("second.ts", "function value(){}"),
+                ("excluded.ts", "export var alias=(value);"),
+            ],
+        ),
+    ] {
+        let output = compile(&sources, "es2022");
+        assert!(
+            output.diagnostics.is_empty(),
+            "{name}: {:#?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "{name}"
+        );
+        assert!(
+            output
+                .emitted_files
+                .iter()
+                .all(|file| file.path != Path::new("excluded.d.ts")),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn inferred_conditionals_defer_only_the_unsupported_declaration_product() {
+    let sources = [
+        (
+            "conditional-inferred.ts",
+            concat!(
+                "export const choice = true ? 1 : 2;\n",
+                "export let nested = (true ? (false ? 3 : 4) : 5);\n",
+            ),
+        ),
+        (
+            "conditional-annotated.ts",
+            concat!(
+                "export const kept: number = true ? 1 : 2;\n",
+                "export let alsoKept: number = (false ? 3 : 4);\n",
+            ),
+        ),
+    ];
+    for no_check in [false, true] {
+        let output = Compiler::new().compile(
+            sources
+                .into_iter()
+                .map(|(path, source)| SourceInput::new(path, Arc::<str>::from(source)))
+                .collect(),
+            &CompilerOptions {
+                declaration: true,
+                module: "esnext".to_string(),
+                target: "es2022".to_string(),
+                no_check,
+                ..CompilerOptions::default()
+            },
+        );
+        assert!(
+            output.diagnostics.is_empty(),
+            "noCheck={no_check}: {:#?}",
+            output.diagnostics,
+        );
+        assert_eq!(
+            output.semantic_completion,
+            SemanticCompletion::Deferred,
+            "noCheck={no_check}",
+        );
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::SemanticIncomplete,
+            "noCheck={no_check}",
+        );
+        assert_eq!(
+            output
+                .emitted_files
+                .iter()
+                .map(|file| file.path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "conditional-annotated.d.ts",
+                "conditional-annotated.js",
+                "conditional-inferred.js",
+            ],
+            "noCheck={no_check}",
+        );
+        assert_eq!(
+            product(&output, "conditional-annotated.d.ts"),
+            concat!(
+                "export declare const kept: number;\n",
+                "export declare let alsoKept: number;\n",
+            ),
+            "noCheck={no_check}",
+        );
+        assert_eq!(
+            product(&output, "conditional-annotated.js"),
+            concat!(
+                "export const kept = true ? 1 : 2;\n",
+                "export let alsoKept = (false ? 3 : 4);\n",
+            ),
+            "noCheck={no_check}",
+        );
+        assert_eq!(
+            product(&output, "conditional-inferred.js"),
+            concat!(
+                "export const choice = true ? 1 : 2;\n",
+                "export let nested = (true ? (false ? 3 : 4) : 5);\n",
+            ),
+            "noCheck={no_check}",
+        );
+        assert!(
+            output
+                .emitted_files
+                .iter()
+                .all(|file| file.path != Path::new("conditional-inferred.d.ts")
+                    && !file.text.contains("unknown")),
+            "noCheck={no_check}",
+        );
+    }
+}
+
+#[test]
 fn es2017_preserves_async_functions_and_visibility_varied_class_methods() {
     let source = concat!(
         "export async function resolveValue(input: number): Promise<number> {\n",

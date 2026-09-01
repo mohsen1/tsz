@@ -8,12 +8,11 @@ use crate::syntax::{
 };
 
 use super::{
-    CapabilityNonclaim, CapabilityScope, CapabilityTarget, CompilerOptions, ProgramFile,
-    SemanticGap, SyntaxGap, add_javascript, add_semantic,
+    CapabilityTarget, CompilerOptions, ProgramFile, ScopedNonclaims, SemanticGap, SyntaxGap,
 };
 
 pub(super) fn add_nonclaims(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: &ProgramFile,
     options: &CompilerOptions,
 ) {
@@ -31,11 +30,9 @@ pub(super) fn add_nonclaims(
                 StatementKind::Function(function)
                     if async_transform && function.is_async && function.has_body =>
                 {
-                    add_javascript(
-                        nonclaims,
-                        CapabilityScope::node(id, statement.id),
-                        SyntaxGap::AsyncFunctionTransform,
-                    );
+                    nonclaims
+                        .node(id, statement.id)
+                        .javascript(SyntaxGap::AsyncFunctionTransform);
                 }
                 StatementKind::Class(class) if !class.declared => {
                     for member in &class.members {
@@ -44,21 +41,17 @@ pub(super) fn add_nonclaims(
                             && member.modifiers.async_member
                             && matches!(member.kind, ClassMemberKind::Method { has_body: true, .. })
                         {
-                            add_javascript(
-                                nonclaims,
-                                CapabilityScope::node(id, member.id),
-                                SyntaxGap::AsyncFunctionTransform,
-                            );
+                            nonclaims
+                                .node(id, member.id)
+                                .javascript(SyntaxGap::AsyncFunctionTransform);
                         }
                         if class_field_transform
                             && runtime_member
                             && matches!(member.name_kind, PropertyNameKind::PrivateIdentifier)
                         {
-                            add_javascript(
-                                nonclaims,
-                                CapabilityScope::node(id, member.id),
-                                SyntaxGap::PrivateIdentifierTransform,
-                            );
+                            nonclaims
+                                .node(id, member.id)
+                                .javascript(SyntaxGap::PrivateIdentifierTransform);
                         }
                         let mismatched_field = matches!(
                             &member.kind,
@@ -73,11 +66,9 @@ pub(super) fn add_nonclaims(
                                 && matches!(member.kind, ClassMemberKind::Property { .. })
                                 || mismatched_field)
                         {
-                            add_javascript(
-                                nonclaims,
-                                CapabilityScope::node(id, member.id),
-                                SyntaxGap::ClassFieldTransform,
-                            );
+                            nonclaims
+                                .node(id, member.id)
+                                .javascript(SyntaxGap::ClassFieldTransform);
                         }
                         if class_field_semantics_mismatch
                             && runtime_member
@@ -87,11 +78,9 @@ pub(super) fn add_nonclaims(
                                     if parameters.iter().any(Parameter::is_property)
                             )
                         {
-                            add_javascript(
-                                nonclaims,
-                                CapabilityScope::node(id, member.id),
-                                SyntaxGap::ClassFieldTransform,
-                            );
+                            nonclaims
+                                .node(id, member.id)
+                                .javascript(SyntaxGap::ClassFieldTransform);
                         }
                     }
                 }
@@ -104,7 +93,7 @@ pub(super) fn add_nonclaims(
 }
 
 fn add_accessor_summary_nonclaims(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: &ProgramFile,
     options: &CompilerOptions,
 ) {
@@ -153,19 +142,17 @@ fn add_accessor_summary_nonclaims(
 }
 
 fn add_node_gap(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: crate::source::FileId,
     owner: crate::source::NodeId,
     gap: SemanticGap,
 ) {
-    add_semantic(
-        nonclaims,
+    nonclaims.node(file, owner).semantic(
         &[
             CapabilityTarget::SemanticCheck,
             CapabilityTarget::RequiredType,
             CapabilityTarget::SemanticDiagnostics,
         ],
-        CapabilityScope::node(file, owner),
         gap,
     );
 }
@@ -272,14 +259,12 @@ fn class_member_accessibility(member: &ClassMember) -> u8 {
 }
 
 fn add_declaration_accessor_summary(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: crate::source::FileId,
     owner: crate::source::NodeId,
 ) {
-    add_semantic(
-        nonclaims,
+    nonclaims.node(file, owner).semantic(
         &[CapabilityTarget::Declaration],
-        CapabilityScope::node(file, owner),
         SemanticGap::DeclarationAccessorSummary,
     );
 }

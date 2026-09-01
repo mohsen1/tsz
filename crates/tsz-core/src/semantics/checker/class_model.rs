@@ -211,15 +211,12 @@ impl Checker<'_> {
                 ),
                 (AccessorKind::Get, None) | (AccessorKind::Set, _) => ContextualType::Absent,
             };
-        let expected_return_order = return_type.as_ref().and_then(|annotation| {
-            self.property_order_for_type_node_root(file, member_scope, annotation)
-        });
         self.check_statement_list(
             file,
             member_scope,
             body,
             expected_return,
-            expected_return_order.as_ref(),
+            super::statement_model::ROOT_JUMP_TARGETS,
         );
     }
 

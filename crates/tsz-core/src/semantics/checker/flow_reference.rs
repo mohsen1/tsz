@@ -3,8 +3,7 @@ use crate::bind::{
     TypeofWitnessSet,
 };
 use crate::semantics::relation::{
-    EvaluationDepth, RelationFailureKind, RelationMode,
-    relate_with_property_order_at_evaluation_depth,
+    EvaluationDepth, RelationFailureKind, RelationMode, relate_types_at_evaluation_depth,
 };
 use crate::semantics::types::{
     Completion, DeferredType, LiteralProvenance, TypeId, TypeKind, UnionPolicy,
@@ -551,12 +550,11 @@ impl Checker<'_> {
         mode: RelationMode,
         depth: usize,
     ) -> Completion<bool> {
-        let relation = relate_with_property_order_at_evaluation_depth(
+        let relation = relate_types_at_evaluation_depth(
             self,
             source,
             target,
             mode,
-            Default::default(),
             EvaluationDepth::from_active_depth(depth),
         );
         let Err(failure) = relation else {

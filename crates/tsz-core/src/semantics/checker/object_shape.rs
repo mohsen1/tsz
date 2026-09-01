@@ -1,22 +1,99 @@
-use std::collections::{HashMap, HashSet};
-
-use crate::bind::{DeclarationKind, Meaning, ScopeId, TypeMemberSymbol};
-use crate::source::{DeclId, FileId};
-use crate::syntax::{
-    InterfaceDeclaration, KeywordType, Parameter, ParameterNameKind, TypeMember, TypeMemberKind,
-    TypeMemberModifiers, TypeNode, TypeNodeKind, TypeParameterDeclaration,
-};
-
 use super::{
     Checker, DeclarationModel,
     recursion::{AliasRecursionProductivity, ReferenceRecursion},
+    relation_diagnostic::ContextualType,
 };
+use crate::bind::{DeclarationKind, Meaning, ScopeId, TypeMemberSymbol};
 use crate::semantics::types::{
     Completion, DeferredType, IndexKeyKind, IndexSignature, ObjectShape, ParameterType, Property,
-    Signature, TypeId, TypeKind, TypeStore,
+    Signature, TypeId, TypeKind, TypeStore, UnionPolicy,
 };
-
+use crate::source::{DeclId, FileId};
+use crate::syntax::{
+    Expression, ExpressionKind, InterfaceDeclaration, KeywordType, Parameter, ParameterNameKind,
+    TypeMember, TypeMemberKind, TypeMemberModifiers, TypeNode, TypeNodeKind,
+    TypeParameterDeclaration,
+};
+use std::collections::{HashMap, HashSet};
 impl Checker<'_> {
+    pub(super) fn infer_array_expression(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        elements: &[Expression],
+        expected: ContextualType,
+    ) -> TypeId {
+        let mut inferred = elements
+            .iter()
+            .map(|element| {
+                let ty = self.infer_expression_contextual(file, scope, element, expected);
+                if expected.is_known() {
+                    ty
+                } else {
+                    self.widen(ty)
+                }
+            })
+            .collect::<Vec<_>>();
+        let object_union = self.options.effective_strict_null_checks()
+            && inferred.len() > 1
+            && elements.iter().all(|element| {
+                matches!(element.peel_parentheses().kind, ExpressionKind::Object(_))
+            });
+        if object_union {
+            inferred = self.normalize_object_literal_union(inferred);
+        }
+        let element = self.store.union(
+            inferred,
+            if object_union {
+                UnionPolicy::PreserveAuthoredStructuralOrder
+            } else {
+                UnionPolicy::Canonical
+            },
+        );
+        self.store.intern(TypeKind::Array(element))
+    }
+    fn normalize_object_literal_union(&mut self, members: Vec<TypeId>) -> Vec<TypeId> {
+        let mut names = Vec::new();
+        for member in &members {
+            let TypeKind::Object(shape) = self.store.kind(*member) else {
+                return members;
+            };
+            if !shape.call_signatures.is_empty()
+                || !shape.construct_signatures.is_empty()
+                || !shape.index_signatures.is_empty()
+            {
+                return members;
+            }
+            for property in &shape.properties {
+                if !names.contains(&property.name) {
+                    names.push(property.name.clone());
+                }
+            }
+        }
+        members
+            .into_iter()
+            .map(|member| {
+                let TypeKind::Object(mut shape) = self.store.kind(member).clone() else {
+                    unreachable!("object-literal union members were validated above")
+                };
+                for name in &names {
+                    if !shape
+                        .properties
+                        .iter()
+                        .any(|property| &property.name == name)
+                    {
+                        shape.properties.push(Property {
+                            name: name.clone(),
+                            ty: self.store.builtins.undefined,
+                            optional: true,
+                            readonly: false,
+                        });
+                    }
+                }
+                self.store.object_shape(shape)
+            })
+            .collect()
+    }
     pub(super) fn resolve_interface_shape(
         &mut self,
         declaration: DeclId,
@@ -32,24 +109,30 @@ impl Checker<'_> {
                 type_parameters,
             );
         }
-
-        // This is the bounded property-only heritage boundary. TSZ does not
-        // yet own general base-type diagnostics, so every declaration in the
-        // one-hop graph must be sole and every member must be a required,
-        // unmodified property. Exact positional generic pass-through keeps
-        // substitution declaration-owned; transitive and transformed bases
-        // remain symbolic.
+        // Bounded property-only heritage: sole one-hop declarations, required
+        // unmodified members, and exact positional generic pass-through.
         let base_declarations =
             completed!(self.plain_property_interface_heritage_bases(declaration));
         debug_assert_eq!(interface.extends.len(), base_declarations.len());
-
         let mut shape = ObjectShape::default();
         let mut property_indices = HashMap::new();
-        for (heritage, base_declaration) in interface
+        let own_shape = completed!(self.resolve_object_members(
+            declaration.file,
+            scope,
+            &interface.members,
+            type_parameters,
+        ));
+        if !merge_plain_property_shape(&mut shape, &mut property_indices, own_shape) {
+            return Completion::Deferred;
+        }
+        let mut bases = interface
             .extends
             .iter()
             .zip(base_declarations.iter().copied())
-        {
+            .collect::<Vec<_>>();
+        // Shape order is own members, then bases by declaration identity.
+        bases.sort_by_key(|(_, declaration)| *declaration);
+        for (heritage, base_declaration) in bases {
             let Some(DeclarationModel::Interface {
                 declaration: base,
                 scope: base_scope,
@@ -75,13 +158,8 @@ impl Checker<'_> {
             for argument in &arguments {
                 completed!(self.shape_child_type_supported(*argument, &mut HashSet::new()));
             }
-
-            // Bases have already been proven sole and heritage-free. Resolve
-            // their authored members directly with the base declaration's
-            // parameter names instead of re-entering a base reference query.
-            // That permits a productive `Base<T> -> Derived<T> -> Base<T>`
-            // shape edge to close provisionally without converting the
-            // active base query into an illegal-heritage Cycle.
+            // Resolve proven sole bases directly so productive mutual shape
+            // edges close without re-entering the active reference query.
             let base_parameters =
                 self.substitution(base_declaration, &base.type_parameters, &arguments);
             let base_shape = completed!(self.resolve_object_members(
@@ -94,19 +172,8 @@ impl Checker<'_> {
                 return Completion::Deferred;
             }
         }
-
-        let own_shape = completed!(self.resolve_object_members(
-            declaration.file,
-            scope,
-            &interface.members,
-            type_parameters,
-        ));
-        if !merge_plain_property_shape(&mut shape, &mut property_indices, own_shape) {
-            return Completion::Deferred;
-        }
         Completion::Complete(shape)
     }
-
     pub(super) fn is_single_interface_declaration(&self, declaration: DeclId) -> bool {
         let Some(file) = self.program.file(declaration.file) else {
             return false;
@@ -121,7 +188,6 @@ impl Checker<'_> {
                 Some(DeclarationModel::Interface { .. })
             )
     }
-
     pub(super) fn is_single_type_symbol_declaration(&self, declaration: DeclId) -> bool {
         let Some(file) = self.program.file(declaration.file) else {
             return false;
@@ -165,7 +231,6 @@ impl Checker<'_> {
         counterparts.next().is_none()
             && self.is_sole_symbol_declaration(file, counterpart, is_global)
     }
-
     fn is_sole_symbol_declaration(
         &self,
         file: &crate::program::ProgramFile,
@@ -199,7 +264,6 @@ impl Checker<'_> {
                     .eq([declaration.id])
             })
     }
-
     pub(super) fn plain_property_interface_heritage_reference_supported(
         &self,
         declaration: DeclId,
@@ -218,34 +282,25 @@ impl Checker<'_> {
         };
         arguments.len() == derived.type_parameters.len()
     }
-
-    /// Select a bounded one-hop interface base list for property assembly.
-    ///
-    /// This query does not force types. It proves that authored order and
-    /// substitution are sufficient to assemble the eventual object shape:
-    /// every declaration is sole, all parameters are plain, every heritage
-    /// argument is the corresponding derived parameter, and every member is
-    /// a required property. Conflicts are decided only after substitution.
+    /// Prove a nonforcing one-hop interface base list with exact substitution.
+    /// Conflicts remain owned by property assembly after substitution.
     pub(super) fn plain_property_interface_heritage_bases(
         &self,
         declaration: DeclId,
     ) -> Completion<Vec<DeclId>> {
-        // Retain the existing typed result for the narrow direct and mutual
-        // illegal-heritage cycles. Broader/transitive graphs remain Deferred.
+        // Direct/mutual illegal heritage stays typed; broader graphs defer.
         if matches!(
             self.narrow_interface_heritage_base(declaration),
             Completion::Cycle
         ) {
             return Completion::Cycle;
         }
-
         let Some((interface, scope)) = self.narrow_heritage_interface(declaration) else {
             return Completion::Deferred;
         };
         if interface.extends.is_empty() || !interface.members.iter().all(plain_required_property) {
             return Completion::Deferred;
         }
-
         let mut bases = Vec::with_capacity(interface.extends.len());
         for heritage in &interface.extends {
             let Some(base) =
@@ -274,14 +329,8 @@ impl Checker<'_> {
         }
         Completion::Complete(bases)
     }
-
-    /// Validate the complete narrow heritage path before classifying a cycle.
-    ///
-    /// This is bounded and declaration-keyed: merged symbols cannot be
-    /// selected by root order, and a long or diamond-shaped base graph cannot
-    /// recurse or be rescanned quadratically. Only one direct
-    /// empty-derived/plain-base edge is a supported acyclic result. Direct and
-    /// mutual validated revisits retain the separate illegal-heritage Cycle.
+    /// Validate a bounded declaration-keyed heritage path before cycle
+    /// classification; only one empty-derived/plain-base edge is acyclic.
     fn narrow_interface_heritage_base(&self, declaration: DeclId) -> Completion<DeclId> {
         let Some((interface, scope)) = self.narrow_heritage_interface(declaration) else {
             return Completion::Deferred;
@@ -307,10 +356,7 @@ impl Checker<'_> {
         if !base_interface.members.is_empty() {
             return Completion::Deferred;
         }
-
-        // Transitive inheritance is outside the narrow merge. Inspect only
-        // one more validated edge so direct/mutual TS2310-family cycles do not
-        // become successful shapes, then fail closed without walking a chain.
+        // Inspect one extra edge for TS2310-family cycles; transitive graphs defer.
         let Some(next) = self.direct_interface_base(base, base_interface, base_scope) else {
             return Completion::Deferred;
         };
@@ -320,7 +366,6 @@ impl Checker<'_> {
             Completion::Deferred
         }
     }
-
     fn narrow_heritage_interface(
         &self,
         declaration: DeclId,
@@ -337,7 +382,6 @@ impl Checker<'_> {
         };
         plain_type_parameters(&interface.type_parameters).then_some((interface, scope))
     }
-
     fn direct_interface_base(
         &self,
         declaration: DeclId,
@@ -349,7 +393,6 @@ impl Checker<'_> {
         };
         self.interface_base_from_heritage(declaration.file, interface, scope, heritage)
     }
-
     fn interface_base_from_heritage(
         &self,
         file: FileId,
@@ -376,7 +419,6 @@ impl Checker<'_> {
         };
         (base_interface.type_parameters.len() == interface.type_parameters.len()).then_some(base)
     }
-
     fn sole_interface_reference(
         &self,
         file: FileId,
@@ -408,13 +450,11 @@ impl Checker<'_> {
             };
             scope = parent;
         }
-
         match self.program.global_types.get(name).map(Vec::as_slice) {
             Some([only]) if self.is_single_interface_declaration(*only) => Some(*only),
             _ => None,
         }
     }
-
     pub(super) fn resolve_object_members(
         &mut self,
         file: FileId,
@@ -440,7 +480,6 @@ impl Checker<'_> {
         {
             return Completion::Deferred;
         }
-
         let mut shape = ObjectShape::default();
         for member in members.iter().filter(|member| !member.recovered) {
             let member_scope = self.node_scope(file, member.id, scope);
@@ -565,9 +604,7 @@ impl Checker<'_> {
                         _ => return Completion::Deferred,
                     };
                     if key == IndexKeyKind::Number {
-                        // Numeric property-key canonicalization is not yet a
-                        // semantic query, so neither numeric literals nor
-                        // canonical numeric strings can be claimed exactly.
+                        // Numeric key canonicalization is not yet owned.
                         return Completion::Deferred;
                     }
                     if shape.index(key).is_some() {
@@ -591,14 +628,11 @@ impl Checker<'_> {
         if shape.index_signatures.len() > 1
             || (!shape.index_signatures.is_empty() && !shape.properties.is_empty())
         {
-            // TS2411/TS2413 require relation-backed diagnostics and authored
-            // member provenance. Until that owner exists, mixed and dual
-            // index shapes cannot enter definitive object caches.
+            // Mixed/dual indexes defer until TS2411/TS2413 provenance is owned.
             return Completion::Deferred;
         }
         Completion::Complete(shape)
     }
-
     fn resolve_shape_signature(
         &mut self,
         file: FileId,
@@ -652,11 +686,8 @@ impl Checker<'_> {
             return_type,
         })
     }
-
-    /// Object-shape signatures use name-free callable identity. Existing
-    /// function/constructor type nodes still use the authored-name-bearing
-    /// `Signature`, so they cannot enter a definitive shape through aliases or
-    /// wrappers until that semantic/display provenance split is complete.
+    /// Shape signatures are name-free; authored callables remain deferred
+    /// until semantic and display provenance are separate.
     fn shape_child_type_supported(
         &mut self,
         ty: TypeId,
@@ -675,15 +706,13 @@ impl Checker<'_> {
                 else {
                     unreachable!()
                 };
-                // A provisional recursive edge cannot hide an unsupported
-                // callable or another incomplete form inside its arguments.
+                // Validate arguments before admitting a provisional edge.
                 for argument in arguments {
                     completed!(self.shape_child_type_supported(*argument, active));
                 }
                 match self.shape_reference_recursion(ty, *declaration, arguments) {
                     ReferenceRecursion::Exact => {
-                        // Productive recursive object aliases revisit the
-                        // exact reference while its shape is assembled.
+                        // Productive object aliases may revisit the exact reference.
                         match self.models.get(declaration) {
                             Some(DeclarationModel::TypeAlias { .. }) => {
                                 match self.alias_recursion_productivity(*declaration) {
@@ -709,10 +738,8 @@ impl Checker<'_> {
                         }
                     }
                     ReferenceRecursion::Generative => {
-                        // Pinned TS7 treats a repeatedly instantiated generic
-                        // origin as provisional recursion. This edge remains
-                        // symbolic and non-cacheable; enclosing siblings still
-                        // have to complete before the shape succeeds.
+                        // TS7 keeps a growing generic edge provisional and
+                        // noncacheable while every sibling still completes.
                         if self.generative_reference_supported(*declaration, arguments) {
                             Completion::Complete(())
                         } else {
@@ -767,7 +794,6 @@ impl Checker<'_> {
         active.remove(&ty);
         result
     }
-
     fn force_reference_shape(
         &mut self,
         ty: TypeId,
@@ -797,7 +823,6 @@ impl Checker<'_> {
         completion
     }
 }
-
 fn merge_plain_property_shape(
     target: &mut ObjectShape,
     property_indices: &mut HashMap<String, usize>,
@@ -809,7 +834,6 @@ fn merge_plain_property_shape(
     {
         return false;
     }
-
     for property in source.properties {
         if property.optional || property.readonly {
             return false;
@@ -825,7 +849,6 @@ fn merge_plain_property_shape(
     }
     true
 }
-
 pub(super) fn plain_type_parameters(parameters: &[TypeParameterDeclaration]) -> bool {
     let mut names = HashSet::new();
     parameters.iter().all(|parameter| {
@@ -837,7 +860,18 @@ pub(super) fn plain_type_parameters(parameters: &[TypeParameterDeclaration]) -> 
             && !parameter.out_variance
     })
 }
-
+pub(super) fn authored_structural_union_member(node: &TypeNode) -> bool {
+    match &node.kind {
+        TypeNodeKind::Object(_) => true,
+        TypeNodeKind::Array(element)
+        | TypeNodeKind::Readonly(element)
+        | TypeNodeKind::Parenthesized(element) => authored_structural_union_member(element),
+        TypeNodeKind::Tuple(elements) => {
+            !elements.is_empty() && elements.iter().all(authored_structural_union_member)
+        }
+        _ => false,
+    }
+}
 fn positional_type_parameter_pass_through(
     parameters: &[TypeParameterDeclaration],
     arguments: &[TypeNode],
@@ -854,7 +888,6 @@ fn positional_type_parameter_pass_through(
                 )
             })
 }
-
 pub(super) fn plain_required_property(member: &TypeMember) -> bool {
     !member.recovered
         && member.modifiers.nodes.is_empty()
@@ -868,7 +901,6 @@ pub(super) fn plain_required_property(member: &TypeMember) -> bool {
             } if name.semantic_name().is_some()
         )
 }
-
 fn unsupported_modifiers(modifiers: &TypeMemberModifiers) -> bool {
     let repeated = modifiers.nodes.iter().enumerate().any(|(index, modifier)| {
         modifiers.nodes[..index]

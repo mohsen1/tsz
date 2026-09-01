@@ -1,17 +1,14 @@
-use std::collections::HashSet;
-
+use super::{Checker, DeclarationModel};
 use crate::semantics::relation::{
-    EvaluationDepth, RelationFailure, RelationFailureKind, RelationMode, RelationPropertyOrder,
-    relate_with_property_order_at_evaluation_depth,
+    EvaluationDepth, RelationFailure, RelationFailureKind, RelationMode,
+    relate_types_at_evaluation_depth,
 };
 use crate::semantics::types::{
     Completion, IndexKeyKind, IndexSignature, LiteralProvenance, ObjectShape, TypeId, TypeKind,
 };
 use crate::source::DeclId;
 use crate::syntax::{Literal, TypeNode, TypeNodeKind, TypeParameterDeclaration};
-
-use super::{Checker, DeclarationModel};
-
+use std::collections::HashSet;
 /// Whether a reference is exact, fully explicit, or normalized with defaults.
 /// Normalized arguments have query-local identity and never cache under the raw reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,19 +17,16 @@ pub(super) enum ReferenceInstantiation {
     Explicit,
     Defaulted { arguments: Vec<TypeId> },
 }
-
 #[derive(Debug, Clone)]
 pub(super) struct ReferenceConstraintFailure {
     pub(super) argument_index: usize,
     pub(super) reason: RelationFailure,
 }
-
 impl ReferenceInstantiation {
     pub(super) const fn is_query_local(&self) -> bool {
         matches!(self, Self::Defaulted { .. })
     }
 }
-
 impl Checker<'_> {
     pub(super) fn record_key_constraint_check(
         &mut self,
@@ -51,7 +45,6 @@ impl Checker<'_> {
             completed!(self.reference_argument_constraint_relation(*key, constraint, depth + 1,));
         constraint_check(0, relation)
     }
-
     pub(super) fn evaluate_reference_model(
         &mut self,
         declaration: DeclId,
@@ -89,7 +82,6 @@ impl Checker<'_> {
             | DeclarationModel::JavaScriptProperty(..) => Completion::Deferred,
         }
     }
-
     pub(super) fn evaluate_reference_instantiation(
         &mut self,
         declaration: DeclId,
@@ -117,7 +109,6 @@ impl Checker<'_> {
             Completion::Limit => Completion::Limit,
         }
     }
-
     /// Normalize only a trailing suffix of closed defaults; references,
     /// substitutions, constraints, and deferred literals remain symbolic.
     pub(super) fn reference_instantiation(
@@ -134,7 +125,6 @@ impl Checker<'_> {
         let Some((parameters, _)) = model.type_parameters() else {
             return Completion::Complete(ReferenceInstantiation::Exact);
         };
-
         // Fully supplied arguments do not materialize defaults. Plain
         // constraints advance only through the bounded relation query below;
         // parameter modifiers retain their existing deferred owner.
@@ -146,7 +136,6 @@ impl Checker<'_> {
                 return Completion::Complete(ReferenceInstantiation::Explicit);
             }
         }
-
         let defaults = match self.closed_trailing_defaults(parameters) {
             Some(defaults) => defaults,
             None => return Completion::Deferred,
@@ -158,13 +147,11 @@ impl Checker<'_> {
         {
             return Completion::Deferred;
         }
-
         let mut arguments = supplied.to_vec();
         arguments.extend(defaults.into_iter().skip(supplied.len()).flatten());
         debug_assert_eq!(arguments.len(), parameters.len());
         Completion::Complete(ReferenceInstantiation::Defaulted { arguments })
     }
-
     fn closed_trailing_defaults(
         &mut self,
         parameters: &[TypeParameterDeclaration],
@@ -173,7 +160,6 @@ impl Checker<'_> {
         let mut defaults_started = false;
         let mut saw_default = false;
         let mut defaults = Vec::with_capacity(parameters.len());
-
         for parameter in parameters {
             if !names.insert(parameter.name.as_str())
                 || parameter.constraint.is_some()
@@ -193,10 +179,8 @@ impl Checker<'_> {
                 None => defaults.push(None),
             }
         }
-
         saw_default.then_some(defaults)
     }
-
     fn closed_default_type(&mut self, node: &TypeNode) -> Option<TypeId> {
         match &node.kind {
             TypeNodeKind::Keyword(keyword) => self.store.builtins.keyword(*keyword),
@@ -208,7 +192,6 @@ impl Checker<'_> {
             _ => None,
         }
     }
-
     /// Evaluate a local application after parameter/default ownership is known.
     fn evaluate_local_reference_instantiation(
         &mut self,
@@ -226,7 +209,6 @@ impl Checker<'_> {
         }
         self.evaluate_reference_model(declaration, model, arguments)
     }
-
     fn explicit_reference_constraints_supported(
         &mut self,
         declaration: DeclId,
@@ -260,7 +242,6 @@ impl Checker<'_> {
         }
         Completion::Complete(())
     }
-
     fn reference_argument_constraint_relation(
         &mut self,
         argument: TypeId,
@@ -280,12 +261,11 @@ impl Checker<'_> {
         let relation = if relation_source == constraint {
             Ok(())
         } else {
-            relate_with_property_order_at_evaluation_depth(
+            relate_types_at_evaluation_depth(
                 self,
                 relation_source,
                 constraint,
                 RelationMode::Assignment,
-                RelationPropertyOrder::default(),
                 EvaluationDepth::from_active_depth(depth),
             )
         };
@@ -293,12 +273,11 @@ impl Checker<'_> {
             return Completion::Complete(relation);
         }
         if let Some(target) = completed!(self.broad_unknown_record_target(constraint, depth + 1))
-            && relate_with_property_order_at_evaluation_depth(
+            && relate_types_at_evaluation_depth(
                 self,
                 relation_source,
                 target,
                 RelationMode::Assignment,
-                RelationPropertyOrder::default(),
                 EvaluationDepth::from_active_depth(depth),
             )
             .is_ok()
@@ -324,7 +303,6 @@ impl Checker<'_> {
         }
         Completion::Complete(Err(reason))
     }
-
     pub(super) fn owns_record_key_constraint(&self, declaration: DeclId) -> bool {
         self.program
             .standard_library
@@ -333,7 +311,6 @@ impl Checker<'_> {
                 .program
                 .standard_library_type_has_authored_declarations(declaration)
     }
-
     fn broad_unknown_record_target(
         &mut self,
         constraint: TypeId,
@@ -379,7 +356,6 @@ impl Checker<'_> {
             ..ObjectShape::default()
         })))
     }
-
     pub(super) fn type_parameter_constraint(
         &mut self,
         operand: TypeId,
@@ -412,7 +388,6 @@ impl Checker<'_> {
             &substitutions,
         )))
     }
-
     pub(super) fn symbolic_keyof_operand_supported(&self, operand: TypeId) -> Completion<()> {
         let TypeKind::TypeParameter {
             declaration, index, ..
@@ -428,7 +403,6 @@ impl Checker<'_> {
             .map_or(Completion::Deferred, |_| Completion::Complete(()))
     }
 }
-
 fn constraint_check(
     argument_index: usize,
     relation: Result<(), RelationFailure>,
@@ -448,7 +422,6 @@ fn constraint_check(
         })),
     }
 }
-
 fn explicit_type_parameters_supported(parameters: &[TypeParameterDeclaration]) -> bool {
     let mut names = HashSet::new();
     parameters.iter().all(|parameter| {

@@ -16,17 +16,17 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const LIB = path.join(ROOT, "scripts", "ci", "lib", "project-compile-fingerprint.sh");
 const BATCH_HASHER = path.join(ROOT, "scripts", "ci", "lib", "project-source-tree-hash.mjs");
 const ORACLE_LIB = path.join(ROOT, "scripts", "ci", "lib", "project-tsc-oracle.sh");
+const { SourceGraphWalker } = await import(pathToFileURL(BATCH_HASHER).href);
 
 assert.ok(fs.existsSync(LIB), `fingerprint library missing: ${LIB}`);
 assert.ok(fs.existsSync(BATCH_HASHER), `batch hasher missing: ${BATCH_HASHER}`);
@@ -34,6 +34,11 @@ assert.doesNotMatch(
   fs.readFileSync(LIB, "utf8"),
   /while IFS= read -r f;[\s\S]*sha256_of_file/,
   "source-tree hashing must not spawn one checksum process per file",
+);
+assert.doesNotMatch(
+  fs.readFileSync(LIB, "utf8"),
+  /\bfind\s+-L\b/,
+  "project hashing must not expand symlink aliases through a global find listing",
 );
 assert.doesNotMatch(
   fs.readFileSync(BATCH_HASHER, "utf8"),
@@ -52,6 +57,8 @@ source "$ORACLE_LIB_PATH"
 # built binary. Holding it constant isolates the source-identity behaviour.
 export _TSZ_BINARY_HASH="deadbeef"
 export _TSZ_TSC_ORACLE_HASH="oracle-v1"
+export _TSZ_SOURCE_OVERLAY_HASH="overlay-v1"
+export _TSZ_EVIDENCE_PROTOCOL_HASH="evidence-v1"
 
 git_quiet() { git -c init.defaultBranch=main -c user.email=t@t -c user.name=t -c commit.gpgsign=false "$@" >/dev/null 2>&1; }
 
@@ -89,6 +96,12 @@ emit A_AFTER_SRC_EDIT "$(compute_compile_fingerprint gen-app "$GEN/tsconfig.json
 export _TSZ_TSC_ORACLE_HASH="unavailable"
 emit A_AFTER_ORACLE_CHANGE "$(compute_compile_fingerprint gen-app "$GEN/tsconfig.json" "$GEN/src")"
 export _TSZ_TSC_ORACLE_HASH="oracle-v1"
+export _TSZ_SOURCE_OVERLAY_HASH="overlay-v2"
+emit A_AFTER_OVERLAY_CHANGE "$(compute_compile_fingerprint gen-app "$GEN/tsconfig.json" "$GEN/src")"
+export _TSZ_SOURCE_OVERLAY_HASH="overlay-v1"
+export _TSZ_EVIDENCE_PROTOCOL_HASH="evidence-v2"
+emit A_AFTER_PROTOCOL_CHANGE "$(compute_compile_fingerprint gen-app "$GEN/tsconfig.json" "$GEN/src")"
+export _TSZ_EVIDENCE_PROTOCOL_HASH="evidence-v1"
 
 # Capture the outer HEAD so the test can assert it never leaks into the key.
 emit OUTER_HEAD "$(git -C "$OUTER" rev-parse HEAD)"
@@ -157,16 +170,15 @@ printf 'export declare const route: "/b";\n' > "$FIX/.next/types/routes.d.ts"
 emit D_NEXT_EDIT "$(compute_compile_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src")"
 emit D_ORACLE_NEXT_EDIT "$(tsz_tsc_oracle_fingerprint dependency-app "$FIX/apps/web/tsconfig.json" "$FIX/apps/web/src" oracle-v1)"
 
-# A failed dependency-tree traversal must fail closed: partial tree hashes are
-# never cache keys.
+# A broken dependency link must fail closed: partial tree hashes are never
+# cache keys.
 CYCLE="$FIXTURE_ROOT/cycle-row"
 mkdir -p "$CYCLE/src"
 printf '{"files":["src/main.ts"]}\n' > "$CYCLE/tsconfig.json"
 printf 'export const main = 1;\n' > "$CYCLE/src/main.ts"
-find() { return 1; }
+ln -s ../missing-package "$CYCLE/node_modules"
 cycle_result="$(compute_compile_fingerprint cycle-row "$CYCLE/tsconfig.json" "$CYCLE/src" 2>/dev/null || true)"
 cycle_oracle="$(tsz_tsc_oracle_fingerprint cycle-row "$CYCLE/tsconfig.json" "$CYCLE/src" oracle-v1 2>/dev/null || true)"
-unset -f find
 emit E_RESULT_LENGTH "$(printf '%s' "$cycle_result" | wc -c | tr -d ' ')"
 emit E_ORACLE_LENGTH "$(printf '%s' "$cycle_oracle" | wc -c | tr -d ' ')"
 `;
@@ -192,6 +204,8 @@ for (const key of [
   "A_AFTER_OUTER_COMMIT",
   "A_AFTER_SRC_EDIT",
   "A_AFTER_ORACLE_CHANGE",
+  "A_AFTER_OVERLAY_CHANGE",
+  "A_AFTER_PROTOCOL_CHANGE",
   "OUTER_HEAD",
   "B_FIRST",
   "B_AFTER_OUTER_COMMIT",
@@ -231,6 +245,16 @@ assert.notEqual(
   kv.A_AFTER_SRC_EDIT,
   kv.A_AFTER_ORACLE_CHANGE,
   "result cache fingerprint must change when pinned oracle evidence becomes unavailable",
+);
+assert.notEqual(
+  kv.A_AFTER_SRC_EDIT,
+  kv.A_AFTER_OVERLAY_CHANGE,
+  "result cache fingerprint must reject an entry from an older source overlay",
+);
+assert.notEqual(
+  kv.A_AFTER_SRC_EDIT,
+  kv.A_AFTER_PROTOCOL_CHANGE,
+  "result cache fingerprint must reject an entry from an older evidence protocol",
 );
 assert.ok(
   kv.A_FIRST.includes("|tree:"),
@@ -316,12 +340,12 @@ assert.notEqual(
   kv.D_ORACLE_NEXT_EDIT,
   "tsc-oracle fingerprint must include .next generated types",
 );
-assert.equal(kv.E_RESULT_LENGTH, "0", "symlink traversal failure disables result caching");
-assert.equal(kv.E_ORACLE_LENGTH, "0", "symlink traversal failure disables oracle caching");
+assert.equal(kv.E_RESULT_LENGTH, "0", "broken symlinks disable result caching");
+assert.equal(kv.E_ORACLE_LENGTH, "0", "broken symlinks disable oracle caching");
 
 // A one-file and a many-file tree must each use exactly one batch process and
-// no platform checksum command. The many-file digest is independently rebuilt
-// with the legacy `<file sha>  <relative path>\n` stream to lock its identity.
+// no platform checksum command. The v2 tree identity is NUL-path-safe and also
+// binds lstat mode and raw symlink target bytes.
 const batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-batch-hash-"));
 try {
   const wrapperBin = path.join(batchRoot, "bin");
@@ -369,21 +393,24 @@ try {
   fs.symlinkSync(path.join(many.tree, "node_modules", "pkg"), path.join(many.tree, "linked-types"));
   many.files.push(path.join(many.tree, "linked-types", "index.d.ts"));
 
-  const legacyDigest = ({ tree, files }) => {
-    const aggregate = crypto.createHash("sha256");
-    for (const file of [...files].sort()) {
-      const digest = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-      aggregate.update(`${digest}  ${path.relative(tree, file)}\n`);
-    }
-    return aggregate.digest("hex");
-  };
-  const runBatch = (fixture) => {
+  const graphEnv = (extra = {}) => ({
+    ...process.env,
+    TSZ_PROJECT_SOURCE_HASH_MAX_NODES: "100000",
+    TSZ_PROJECT_SOURCE_HASH_MAX_EDGES: "200000",
+    TSZ_PROJECT_SOURCE_HASH_MAX_DEPTH: "1024",
+    TSZ_PROJECT_SOURCE_HASH_MAX_DIRECTORY_ENTRIES: "200000",
+    TSZ_PROJECT_SOURCE_HASH_MAX_BYTES: String(1024 * 1024 * 1024),
+    TSZ_PROJECT_SOURCE_HASH_MAX_PATH_BYTES: String(64 * 1024 * 1024),
+    TSZ_PROJECT_SOURCE_HASH_MAX_MILLISECONDS: "30000",
+    ...extra,
+  });
+  const runBatch = (fixture, extraEnv = {}) => {
     fs.writeFileSync(processLog, "");
     const batch = spawnSync("bash", ["-c", 'source "$LIB_PATH"; hash_source_tree "$TREE_PATH"'], {
       encoding: "utf8",
       timeout: 15_000,
       env: {
-        ...process.env,
+        ...graphEnv(extraEnv),
         PATH: `${wrapperBin}:${process.env.PATH}`,
         HASH_PROCESS_LOG: processLog,
         LIB_PATH: LIB,
@@ -397,36 +424,302 @@ try {
       ["node"],
       "source-tree hashing uses one batch process regardless of file count",
     );
+    assert.match(batch.stdout, /^[0-9a-f]{64}$/);
     return batch.stdout;
   };
 
-  assert.equal(runBatch(empty), legacyDigest(empty));
-  assert.equal(runBatch(tiny), legacyDigest(tiny));
-  assert.equal(runBatch(many), legacyDigest(many));
+  assert.equal(runBatch(empty), runBatch(empty), "empty tree hashing is deterministic");
+  assert.equal(runBatch(tiny), runBatch(tiny), "one-file hashing is deterministic");
+  assert.equal(runBatch(many), runBatch(many), "many-file hashing is deterministic");
 
-  const vanishing = createTree("vanishing", 2);
-  fs.writeFileSync(processLog, "");
-  const readFailure = spawnSync(
-    "bash",
-    ["-c", 'source "$LIB_PATH"; hash_source_tree "$TREE_PATH"'],
+  const binarySafe = createTree("binary-safe", 1);
+  const newlinePath = path.join(binarySafe.tree, "src", "line\nbreak.ts");
+  fs.writeFileSync(newlinePath, "export const newlinePath = true;\n");
+  const newlineDigest = runBatch(binarySafe);
+  fs.appendFileSync(newlinePath, "export const changed = true;\n");
+  assert.notEqual(runBatch(binarySafe), newlineDigest, "newline-containing paths reach the hasher intact");
+
+  const modeFile = binarySafe.files[0];
+  const modeBefore = runBatch(binarySafe);
+  fs.chmodSync(modeFile, 0o755);
+  assert.notEqual(runBatch(binarySafe), modeBefore, "executable mode is part of tree identity");
+
+  const targetOne = path.join(binarySafe.tree, "target-one.ts");
+  const targetTwo = path.join(binarySafe.tree, "target-two.ts");
+  fs.writeFileSync(targetOne, "export const target = 1;\n");
+  fs.writeFileSync(targetTwo, "export const target = 1;\n");
+  const link = path.join(binarySafe.tree, "src", "linked.ts");
+  fs.symlinkSync("../target-one.ts", link);
+  const linkOne = runBatch(binarySafe);
+  fs.unlinkSync(link);
+  fs.symlinkSync("../target-two.ts", link);
+  assert.notEqual(
+    runBatch(binarySafe),
+    linkOne,
+    "raw symlink target identity changes even when target contents agree",
+  );
+
+  const orderedA = createTree("ordered-a", 0);
+  const orderedB = createTree("ordered-b", 0);
+  for (const file of ["zeta.ts", "alpha.ts", "middle.json"]) {
+    fs.mkdirSync(path.join(orderedA.tree, "src"), { recursive: true });
+    fs.writeFileSync(path.join(orderedA.tree, "src", file), `${file}\n`);
+  }
+  for (const file of ["middle.json", "alpha.ts", "zeta.ts"]) {
+    fs.mkdirSync(path.join(orderedB.tree, "src"), { recursive: true });
+    fs.writeFileSync(path.join(orderedB.tree, "src", file), `${file}\n`);
+  }
+  assert.equal(
+    runBatch(orderedA),
+    runBatch(orderedB),
+    "raw-byte ordering makes creation order irrelevant",
+  );
+
+  const cycle = createTree("actual-cycle", 1);
+  fs.mkdirSync(path.join(cycle.tree, "cycle"));
+  fs.symlinkSync("..", path.join(cycle.tree, "cycle", "back-to-root"));
+  assert.equal(
+    runBatch(cycle),
+    runBatch(cycle),
+    "an actual directory cycle becomes a deterministic physical-node back-reference",
+  );
+
+  const store = path.join(batchRoot, "pnpm-store", "pkg");
+  fs.mkdirSync(store, { recursive: true });
+  fs.writeFileSync(path.join(store, "package.json"), '{"name":"pkg"}\n');
+  fs.writeFileSync(path.join(store, "index.d.ts"), "export declare const value: 1;\n");
+  const pnpm = createTree("pnpm-fanout", 0);
+  const pnpmModules = path.join(pnpm.tree, "node_modules");
+  fs.mkdirSync(pnpmModules);
+  const pnpmTarget = path.relative(pnpmModules, store);
+  for (let index = 0; index < 128; index += 1) {
+    fs.symlinkSync(pnpmTarget, path.join(pnpmModules, `alias-${String(index).padStart(3, "0")}`));
+  }
+  const pnpmDigest = runBatch(pnpm, {
+    TSZ_PROJECT_SOURCE_HASH_MAX_NODES: "8",
+    TSZ_PROJECT_SOURCE_HASH_MAX_EDGES: "256",
+  });
+  assert.equal(
+    runBatch(pnpm, {
+      TSZ_PROJECT_SOURCE_HASH_MAX_NODES: "8",
+      TSZ_PROJECT_SOURCE_HASH_MAX_EDGES: "256",
+    }),
+    pnpmDigest,
+    "pnpm-style aliases hash one external physical package and deterministic back-references",
+  );
+
+  const retarget = createTree("alias-retarget", 0);
+  const targetA = path.join(batchRoot, "retarget-a");
+  const targetB = path.join(batchRoot, "retarget-b");
+  fs.mkdirSync(targetA);
+  fs.mkdirSync(targetB);
+  fs.writeFileSync(path.join(targetA, "index.d.ts"), "export declare const same: 1;\n");
+  fs.writeFileSync(path.join(targetB, "index.d.ts"), "export declare const same: 1;\n");
+  const packageLink = path.join(retarget.tree, "package");
+  fs.symlinkSync(path.relative(retarget.tree, targetA), packageLink);
+  const targetADigest = runBatch(retarget);
+  fs.unlinkSync(packageLink);
+  fs.symlinkSync(path.relative(retarget.tree, targetB), packageLink);
+  assert.notEqual(
+    runBatch(retarget),
+    targetADigest,
+    "retargeting an alias changes graph identity even when target contents agree",
+  );
+
+  const conservative = createTree("arbitrary-extension", 1);
+  const asset = path.join(conservative.tree, "notes.md");
+  const component = path.join(conservative.tree, "component.vue");
+  const extensionless = path.join(conservative.tree, "generated-root");
+  fs.writeFileSync(asset, "ordinary non-source content\n");
+  fs.writeFileSync(component, "<script>export const value = 1;</script>\n");
+  fs.writeFileSync(extensionless, "export const extensionless = 1;\n");
+  let arbitraryDigest = runBatch(conservative);
+  for (const [file, text, description] of [
+    [asset, "asset edit\n", "ordinary files conservatively participate"],
+    [component, "<!-- component edit -->\n", "allowNonTsExtensions .vue roots participate"],
+    [extensionless, "// extensionless edit\n", "extensionless roots participate"],
+  ]) {
+    fs.appendFileSync(file, text);
+    const editedDigest = runBatch(conservative);
+    assert.notEqual(editedDigest, arbitraryDigest, description);
+    arbitraryDigest = editedDigest;
+  }
+  const opaqueA = path.join(batchRoot, "opaque-a.bin");
+  const opaqueB = path.join(batchRoot, "opaque-b.bin");
+  fs.writeFileSync(opaqueA, "same opaque target\n");
+  fs.writeFileSync(opaqueB, "same opaque target\n");
+  const opaqueLink = path.join(conservative.tree, "dependency-alias");
+  fs.symlinkSync(path.relative(conservative.tree, opaqueA), opaqueLink);
+  const opaqueADigest = runBatch(conservative);
+  fs.unlinkSync(opaqueLink);
+  fs.symlinkSync(path.relative(conservative.tree, opaqueB), opaqueLink);
+  assert.notEqual(
+    runBatch(conservative),
+    opaqueADigest,
+    "all symlink topology is bound even when a file alias has no source suffix",
+  );
+
+  const retainedTree = path.join(batchRoot, "retained-target-budget");
+  const retainedTarget = path.join(batchRoot, "retained-target-with-a-long-name.bin");
+  fs.mkdirSync(retainedTree);
+  fs.writeFileSync(retainedTarget, "target\n");
+  const retainedLink = path.join(retainedTree, "alias");
+  const retainedRawTarget = path.relative(retainedTree, retainedTarget);
+  fs.symlinkSync(retainedRawTarget, retainedLink);
+  const measuredWalker = new SourceGraphWalker("source");
+  measuredWalker.hash(retainedTree);
+  const exactRetainedBytes = Buffer.byteLength(retainedTree)
+    + (2 * Buffer.byteLength(retainedLink))
+    + Buffer.byteLength(retainedRawTarget);
+  assert.equal(
+    measuredWalker.verificationPathBytes,
+    exactRetainedBytes,
+    "retained-byte accounting includes the raw symlink target",
+  );
+  assert.match(
+    new SourceGraphWalker("source", { maxPathBytes: exactRetainedBytes }).hash(retainedTree),
+    /^[0-9a-f]{64}$/,
+    "the exact retained-byte boundary is allowed",
+  );
+  assert.throws(
+    () => new SourceGraphWalker("source", {
+      maxPathBytes: exactRetainedBytes - 1,
+    }).hash(retainedTree),
+    /retained-byte budget exceeded/,
+    "one byte past the retained-byte budget fails closed",
+  );
+
+  const budgetFailure = spawnSync(
+    process.execPath,
+    [BATCH_HASHER, tiny.tree, "--source-tree"],
     {
       encoding: "utf8",
-      timeout: 15_000,
-      env: {
-        ...process.env,
-        PATH: `${wrapperBin}:${process.env.PATH}`,
-        HASH_PROCESS_LOG: processLog,
-        HASH_REMOVE_BEFORE_READ: vanishing.files[0],
-        LIB_PATH: LIB,
-        REAL_NODE: process.execPath,
-        TREE_PATH: vanishing.tree,
-      },
+      env: graphEnv({ TSZ_PROJECT_SOURCE_HASH_MAX_NODES: "2" }),
     },
   );
-  assert.notEqual(readFailure.status, 0, "a file disappearing after traversal fails closed");
-  assert.equal(readFailure.stdout, "", "read failure must never publish a partial digest");
+  assert.notEqual(budgetFailure.status, 0, "a configured physical-node budget is enforced");
+  assert.equal(budgetFailure.stdout, "", "budget failure must never publish a partial digest");
+
+  const elapsedFailure = spawnSync(
+    process.execPath,
+    [BATCH_HASHER, many.tree, "--source-tree"],
+    {
+      encoding: "utf8",
+      env: graphEnv({ TSZ_PROJECT_SOURCE_HASH_MAX_MILLISECONDS: "1" }),
+    },
+  );
+  assert.notEqual(elapsedFailure.status, 0, "the monotonic elapsed-time budget is enforced");
+  assert.equal(elapsedFailure.stdout, "", "elapsed-time failure must never publish a partial digest");
+
+  let boundaryStarted = false;
+  const exactBoundary = new SourceGraphWalker("source", {
+    maxMilliseconds: 1,
+    now: () => {
+      if (!boundaryStarted) {
+        boundaryStarted = true;
+        return 0n;
+      }
+      return 1_000_000n;
+    },
+  }).hash(empty.tree);
+  assert.match(exactBoundary, /^[0-9a-f]{64}$/, "the exact elapsed-time boundary is allowed");
+
+  let exceededStarted = false;
+  assert.throws(
+    () => new SourceGraphWalker("source", {
+      maxMilliseconds: 1,
+      now: () => {
+        if (!exceededStarted) {
+          exceededStarted = true;
+          return 0n;
+        }
+        return 1_000_001n;
+      },
+    }).hash(empty.tree),
+    /elapsed-time budget exceeded/,
+    "one nanosecond past the elapsed-time budget fails closed",
+  );
+
+  const mutating = createTree("mutating", 1);
+  const originalLstat = fs.lstatSync;
+  let rootObservations = 0;
+  try {
+    fs.lstatSync = (candidate, options) => {
+      if (Buffer.isBuffer(candidate)
+        && candidate.equals(Buffer.from(mutating.tree))
+        && (rootObservations += 1) === 3) {
+        fs.appendFileSync(mutating.files[0], "changed before final verification\n");
+      }
+      return originalLstat(candidate, options);
+    };
+    assert.throws(
+      () => new SourceGraphWalker("source").hash(mutating.tree),
+      /changed while its source-tree fingerprint was computed/,
+      "a node changed after traversal is rejected by final-state verification",
+    );
+  } finally {
+    fs.lstatSync = originalLstat;
+  }
 } finally {
   fs.rmSync(batchRoot, { recursive: true, force: true });
+}
+
+// Oracle cache/artifact identity covers the pinned mapping, JS launcher,
+// native compiler, and every builtin declaration file with unambiguous frames.
+const oracleRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-oracle-identity-"));
+try {
+  const libDir = path.join(oracleRoot, "platform", "lib");
+  const native = path.join(libDir, "tsc");
+  const launcher = path.join(oracleRoot, "wrapper", "lib", "tsc.js");
+  const mapping = path.join(oracleRoot, "typescript-versions.json");
+  const wrapperPackage = path.join(oracleRoot, "wrapper", "package.json");
+  fs.mkdirSync(libDir, { recursive: true });
+  fs.mkdirSync(path.dirname(launcher), { recursive: true });
+  fs.writeFileSync(path.join(libDir, "lib.d.ts"), "/// <reference no-default-lib=\"true\"/>\n");
+  fs.writeFileSync(path.join(libDir, "lib.es5.d.ts"), "interface Array<T> { length: number }\n");
+  fs.writeFileSync(native, "native-v1\n", { mode: 0o755 });
+  fs.writeFileSync(launcher, "launcher-v1\n");
+  fs.writeFileSync(mapping, '{"current":"pin-a","mappings":{"pin-a":{"npm":"7.0.2"}}}\n');
+  fs.writeFileSync(wrapperPackage, '{"name":"typescript","version":"7.0.2"}\n');
+  fs.writeFileSync(path.join(oracleRoot, "platform", "package.json"), '{"version":"7.0.2"}\n');
+
+  const oracleIdentity = () => {
+    const value = spawnSync(
+      "bash",
+      ["-c", 'source "$LIB_PATH"; tsz_oracle_identity_fingerprint protocol-v1 "$LIB_DIR" "$NATIVE" "$MAPPING" "$WRAPPER" "$LAUNCHER"'],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          LIB_PATH: LIB,
+          LIB_DIR: libDir,
+          NATIVE: native,
+          MAPPING: mapping,
+          WRAPPER: wrapperPackage,
+          LAUNCHER: launcher,
+        },
+      },
+    );
+    assert.equal(value.status, 0, value.stderr);
+    const fingerprint = value.stdout.trim();
+    assert.match(fingerprint, /^[0-9a-f]{64}$/);
+    return fingerprint;
+  };
+
+  const baseline = oracleIdentity();
+  fs.appendFileSync(mapping, " ");
+  const mappingChanged = oracleIdentity();
+  assert.notEqual(mappingChanged, baseline, "pinned package/version mapping is oracle identity");
+  fs.appendFileSync(launcher, "launcher-v2\n");
+  const launcherChanged = oracleIdentity();
+  assert.notEqual(launcherChanged, mappingChanged, "launcher content is oracle identity");
+  fs.appendFileSync(native, "native-v2\n");
+  const nativeChanged = oracleIdentity();
+  assert.notEqual(nativeChanged, launcherChanged, "native compiler content is oracle identity");
+  fs.appendFileSync(path.join(libDir, "lib.es5.d.ts"), "interface ReadonlyArray<T> {}\n");
+  assert.notEqual(oracleIdentity(), nativeChanged, "every consumed builtin lib content is oracle identity");
+} finally {
+  fs.rmSync(oracleRoot, { recursive: true, force: true });
 }
 
 console.log("project-compile-guard fingerprint: ok");

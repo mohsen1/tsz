@@ -30,10 +30,8 @@ mod type_member_grammar;
 mod unary_expression;
 
 pub use entry::{CheckResult, check_program, summarize_program};
-pub(crate) use entry::{
-    DeclarationDisplayParts, DeclarationDisplaySummaries, DeclarationDisplaySummary,
-};
 use model_collection::DeclarationModel;
+use object_shape::authored_structural_union_member;
 use relation_diagnostic::ContextualType;
 
 use crate::bind::{DeclarationKind, Meaning, ScopeId};
@@ -65,22 +63,14 @@ struct PropertyQueryOrigin {
     query: TypeId,
     name: String,
     span: Span,
-    property_order: Option<projection_model::PropertyOrderTree>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexedAccessOrigin {
     query: TypeId,
     span: Span,
-    receiver_order: Option<projection_model::PropertyOrderTree>,
+    receiver_display: Option<projection_model::ObjectDisplayOrigin>,
     receiver_alias: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum DiagnosticIdentity {
-    DiagnosticText(String),
-    Relation(super::relation::RelationFailure),
-    MissingProperty(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,20 +90,15 @@ struct Checker<'a> {
     value_queries: FxHashMap<DeclId, declaration_value::ValueQueryState>,
     force_queries: FxHashMap<TypeId, QueryState>,
     force_reference_stack: recursion::ReferenceExpansionStack,
-    // Syntax contexts and diagnostic origins are session data. Neither is
-    // part of semantic interning or query identity.
+    // Session provenance, never semantic interning or query identity.
     required_type_contexts: FxHashMap<Span, HashMap<String, TypeId>>,
     complete_required_type_nodes: HashSet<Span>,
     property_query_origins: Vec<PropertyQueryOrigin>,
     indexed_access_origins: Vec<IndexedAccessOrigin>,
     construct_origins: Vec<ConstructOrigin>,
-    // Per-use inferred types are diagnostic provenance, not a semantic cache:
-    // the immediately following relation query uses them to elaborate every
-    // contextual array element at its own source span.
+    // Per-use diagnostic provenance for the immediately following relation.
     expression_type_origins: FxHashMap<(FileId, NodeId), TypeId>,
-    expression_order_origins: FxHashMap<(FileId, NodeId), projection_model::PropertyOrderTree>,
     diagnostics: Vec<Diagnostic>,
-    reported: HashSet<(FileId, u32, u32, DiagnosticIdentity)>,
     completion: capabilities::CompletionTracker,
 }
 
@@ -142,9 +127,7 @@ impl<'a> Checker<'a> {
             indexed_access_origins: Vec::new(),
             construct_origins: Vec::new(),
             expression_type_origins: FxHashMap::default(),
-            expression_order_origins: FxHashMap::default(),
             diagnostics: Vec::new(),
-            reported: HashSet::new(),
             completion: capabilities::CompletionTracker::new(program.files.len()),
         };
         checker.collect_models();
@@ -175,15 +158,7 @@ impl<'a> Checker<'a> {
             return;
         };
         let expected_return = self.require_function_signature(id);
-        let scope = self.program.files[file.0 as usize]
-            .bindings
-            .scope_for_node
-            .get(&owner)
-            .copied()
-            .unwrap_or(ScopeId(0));
-        let expected_return_order = declaration.return_type.as_ref().and_then(|return_type| {
-            self.property_order_for_type_node_root(file, scope, return_type)
-        });
+        let scope = self.node_scope(file, owner, ScopeId(0));
         for parameter in &declaration.parameters {
             if declaration.overload_context_is_recovery_free()
                 && parameter.implementation_name_is_recovery_free()
@@ -193,7 +168,7 @@ impl<'a> Checker<'a> {
             {
                 self.push_diagnostic(
                     file,
-                    parameter.name_span,
+                    Self::implicit_any_parameter_span(parameter),
                     format!(
                         "Parameter '{}' implicitly has an 'any' type.",
                         parameter.name
@@ -207,7 +182,7 @@ impl<'a> Checker<'a> {
             scope,
             &declaration.body,
             expected_return,
-            expected_return_order.as_ref(),
+            statement_model::ROOT_JUMP_TARGETS,
         );
     }
 
@@ -292,8 +267,7 @@ impl<'a> Checker<'a> {
                     return self.store.deferred_generic_function();
                 }
                 let scope = self.node_scope(file, *id, scope);
-                self.register_anonymous_parameter_types(file, scope, parameters, type_parameters);
-                let parameters = match self.anonymous_signature_parameters(
+                let resolved_parameters = match self.anonymous_signature_parameters(
                     file,
                     scope,
                     parameters,
@@ -305,7 +279,8 @@ impl<'a> Checker<'a> {
                     }
                 };
                 let return_type = self.resolve_type_node(file, scope, return_type, type_parameters);
-                self.store.function(None, false, parameters, return_type)
+                self.store
+                    .function(None, false, resolved_parameters, return_type)
             }
             TypeNodeKind::Reference {
                 name,
@@ -360,20 +335,19 @@ impl<'a> Checker<'a> {
                 constraint,
             } => {
                 if let Some(ty) = type_parameters.get(name) {
-                    *ty
-                } else {
-                    if let Some(constraint) = constraint {
-                        let _ = self.resolve_type_node(file, scope, constraint, type_parameters);
-                    }
-                    self.store.type_parameter(
-                        DeclId {
-                            file,
-                            local: name_span.start | (1 << 31),
-                        },
-                        0,
-                        name,
-                    )
+                    return *ty;
                 }
+                if let Some(constraint) = constraint {
+                    let _ = self.resolve_type_node(file, scope, constraint, type_parameters);
+                }
+                self.store.type_parameter(
+                    DeclId {
+                        file,
+                        local: name_span.start | (1 << 31),
+                    },
+                    0,
+                    name,
+                )
             }
             TypeNodeKind::Predicate {
                 parameter,
@@ -458,7 +432,7 @@ impl<'a> Checker<'a> {
             }
             TypeNodeKind::IndexedAccess { object, index } => {
                 let index_span = index.span;
-                let receiver_order = self.property_order_for_type_node_root(file, scope, object);
+                let receiver_display = projection_model::direct_object_display_origin(object);
                 let receiver_alias = projection_model::authored_type_reference_name(object);
                 let object = self.resolve_type_node(file, scope, object, type_parameters);
                 let index = self.resolve_type_node(file, scope, index, type_parameters);
@@ -466,7 +440,7 @@ impl<'a> Checker<'a> {
                     object,
                     index,
                     index_span,
-                    receiver_order,
+                    receiver_display,
                     receiver_alias,
                 )
             }
@@ -512,14 +486,9 @@ impl<'a> Checker<'a> {
         expression: &Expression,
         expected: ContextualType,
     ) -> TypeId {
-        let order = self.property_order_for_expression(file, scope, expression);
         let inferred = self.infer_expression_inner(file, scope, expression, expected);
         self.expression_type_origins
             .insert((file, expression.id), inferred);
-        if let Some(order) = order {
-            self.expression_order_origins
-                .insert((file, expression.id), order);
-        }
         inferred
     }
 
@@ -552,8 +521,7 @@ impl<'a> Checker<'a> {
                                     &property.name,
                                     Some(expression),
                                 ),
-                            ContextualType::Absent => ContextualType::Absent,
-                            ContextualType::Deferred => ContextualType::Deferred,
+                            other => other,
                         };
                         let inferred = self.infer_expression_contextual(
                             file,
@@ -579,27 +547,9 @@ impl<'a> Checker<'a> {
             ExpressionKind::Array(elements) => {
                 let expected_element = match expected {
                     ContextualType::Known(expected) => self.contextual_array_element_type(expected),
-                    ContextualType::Absent => ContextualType::Absent,
-                    ContextualType::Deferred => ContextualType::Deferred,
+                    other => other,
                 };
-                let elements = elements
-                    .iter()
-                    .map(|element| {
-                        let inferred = self.infer_expression_contextual(
-                            file,
-                            scope,
-                            element,
-                            expected_element,
-                        );
-                        if expected_element.is_known() {
-                            inferred
-                        } else {
-                            self.widen(inferred)
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let element = self.store.union(elements, UnionPolicy::Canonical);
-                self.store.intern(TypeKind::Array(element))
+                self.infer_array_expression(file, scope, elements, expected_element)
             }
             ExpressionKind::Call {
                 callee,
@@ -661,11 +611,14 @@ impl<'a> Checker<'a> {
                 self.infer_function_like_expression(file, scope, expression, function, expected)
             }
             ExpressionKind::Binary { .. } => {
-                self.infer_authored_binary_expression(file, scope, expression)
+                self.infer_authored_binary_expression(file, scope, expression, expected)
             }
+            ExpressionKind::Conditional { .. } => {
+                self.infer_conditional_expression(file, scope, expression, expected)
+            }
+            ExpressionKind::Missing => self.store.builtins.error,
             ExpressionKind::Unary { operator, operand } => {
-                let operand_expression = operand;
-                let operand = self.infer_expression(file, scope, operand_expression, None);
+                let operand = self.infer_expression(file, scope, operand, None);
                 match operator {
                     UnaryOperator::Not => self.store.builtins.boolean,
                     UnaryOperator::Delete => {
@@ -723,10 +676,8 @@ impl<'a> Checker<'a> {
             ExpressionKind::Parenthesized(inner) => {
                 self.infer_expression_contextual(file, scope, inner, expected)
             }
-            ExpressionKind::Missing => self.store.builtins.error,
         }
     }
-
     fn force_deferred(
         &mut self,
         ty: TypeId,
@@ -738,9 +689,7 @@ impl<'a> Checker<'a> {
             Some(QueryState::Computing) => return Completion::Cycle,
             None => {}
         }
-        // This is the sole evaluator-expansion budget. Declaration lookup and
-        // the RelationContext adapter must propagate this completion instead
-        // of imposing competing limits on already-complete values.
+        // Sole evaluator-expansion budget; adapters propagate its completion.
         if depth > 100 {
             self.report_complexity(&deferred);
             return Completion::Limit;
@@ -756,7 +705,7 @@ impl<'a> Checker<'a> {
         let result_is_query_local = matches!(
             &reference_instantiation,
             Some(Completion::Complete(instantiation)) if instantiation.is_query_local()
-        ) || deferred.is_query_local();
+        ) || self.deferred_result_is_query_local(&deferred);
         let reference_checkpoint = self.force_reference_stack.checkpoint();
         if let DeferredType::Reference {
             declaration,
@@ -777,6 +726,9 @@ impl<'a> Checker<'a> {
                 depth + 1,
             ),
             DeferredType::Value(declaration) => self.declaration_value_type(declaration),
+            DeferredType::ImportedTypeQuery(declaration) => {
+                self.imported_type_query_value(declaration)
+            }
             query @ DeferredType::FlowReference { .. } => self.force_flow(query, depth + 1),
             DeferredType::Call {
                 callee,
@@ -877,7 +829,6 @@ impl<'a> Checker<'a> {
         }
         result
     }
-
     fn evaluate_reference(
         &mut self,
         declaration: DeclId,
@@ -945,8 +896,7 @@ impl<'a> Checker<'a> {
         if reference_parameters.is_some_and(|parameters| {
             arguments.len() != parameters.len() || !object_shape::plain_type_parameters(parameters)
         }) {
-            // Unmodeled arity, defaults, or constraints cannot enter a
-            // definitive exact/generative reference cache.
+            // Unmodeled parameters cannot enter a definitive reference cache.
             return Completion::Deferred;
         }
         self.evaluate_reference_model(declaration, model, arguments)
@@ -975,12 +925,9 @@ impl<'a> Checker<'a> {
         let DeferredType::Reference { declaration, .. } = deferred else {
             return;
         };
-        let Some(model) = self.models.get(declaration).copied() else {
-            return;
-        };
-        if let DeclarationModel::TypeAlias {
+        if let Some(DeclarationModel::TypeAlias {
             declaration: alias, ..
-        } = model
+        }) = self.models.get(declaration).copied()
         {
             self.push_diagnostic(
                 declaration.file,
@@ -992,9 +939,7 @@ impl<'a> Checker<'a> {
     }
 
     fn push_diagnostic(&mut self, file: FileId, span: Span, message: String, code: u32) {
-        // A contextual grammar failure means this authored token is not a
-        // semantic name reference. TypeScript reports the owning contextual
-        // diagnostic, not an additional missing-name error for the same span.
+        // Contextual grammar owns this token; do not add missing-name cascades.
         if code == 2304
             && self.program.files[file.0 as usize]
                 .syntax
@@ -1004,82 +949,12 @@ impl<'a> Checker<'a> {
         {
             return;
         }
-        self.push_diagnostic_with_identity(
-            file,
-            span,
-            message.clone(),
-            code,
-            DiagnosticIdentity::DiagnosticText(message),
-        );
-    }
-
-    fn push_diagnostic_with_identity(
-        &mut self,
-        file: FileId,
-        span: Span,
-        message: String,
-        code: u32,
-        identity: DiagnosticIdentity,
-    ) {
-        if !self.record_semantic_diagnostic(file, span.start, code, identity) {
+        if !self.semantic_diagnostic_is_enabled(file) {
             return;
         }
+        // Program boundary deduplicates the complete public identity.
         let source = &self.program.files[file.0 as usize].source;
         self.diagnostics
             .push(Diagnostic::at(source, span, message, code));
-    }
-}
-
-fn authored_structural_union_member(node: &TypeNode) -> bool {
-    match &node.kind {
-        TypeNodeKind::Object(_) => true,
-        TypeNodeKind::Array(element)
-        | TypeNodeKind::Readonly(element)
-        | TypeNodeKind::Parenthesized(element) => authored_structural_union_member(element),
-        TypeNodeKind::Tuple(elements) => {
-            !elements.is_empty() && elements.iter().all(authored_structural_union_member)
-        }
-        _ => false,
-    }
-}
-
-impl RelationContext for Checker<'_> {
-    fn force_type(&mut self, ty: TypeId, depth: usize) -> Completion<TypeId> {
-        match self.store.kind(ty).clone() {
-            TypeKind::Deferred(deferred) => self.force_deferred(ty, deferred, depth),
-            _ => Completion::Complete(ty),
-        }
-    }
-
-    fn type_kind(&self, ty: TypeId) -> TypeKind {
-        self.store.kind(ty).clone()
-    }
-
-    fn generative_reference_supported(&self, declaration: DeclId, arguments: &[TypeId]) -> bool {
-        Checker::generative_reference_supported(self, declaration, arguments)
-    }
-
-    fn generative_relation_frame_supported(
-        &self,
-        declaration: DeclId,
-        arguments: &[TypeId],
-    ) -> bool {
-        Checker::generative_relation_frame_supported(self, declaration, arguments)
-    }
-
-    fn library_reference_arguments_are_covariant(&self, declaration: DeclId) -> bool {
-        self.program.standard_library.is_map_type(declaration)
-            && !self
-                .program
-                .standard_library_type_has_authored_declarations(declaration)
-    }
-
-    fn strict_null_checks(&self) -> bool {
-        self.options.effective_strict_null_checks()
-    }
-
-    fn canonical_union(&mut self, members: &[TypeId]) -> TypeId {
-        self.store
-            .union(members.iter().copied(), UnionPolicy::Canonical)
     }
 }

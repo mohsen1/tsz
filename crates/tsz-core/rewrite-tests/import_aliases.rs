@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
-use tsz::service::LanguageService;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
 
 fn options() -> CompilerOptions {
     CompilerOptions {
@@ -82,16 +87,23 @@ fn named_type_imports_resolve_exported_aliases_without_losing_local_identity() {
     }
 
     let mut service = LanguageService::new(options());
-    service.open("keys.ts", declaration.text);
+    service.open("keys.ts", declaration.text.clone());
     service.open("use.ts", usage.text.clone());
     let import = usage.text.find("RenamedKey").unwrap() as u32;
     let reference = usage.text.rfind("RenamedKey").unwrap() as u32;
     let definition = service
         .definition_and_bound_span("use.ts", reference + 1)
+        .expect_claimed("imported type-alias navigation")
         .expect("imported type-alias definition");
     assert_eq!(definition.definitions.len(), 1);
-    assert_eq!(definition.definitions[0].file_name, "use.ts");
-    assert_eq!(definition.definitions[0].text_span.start, import);
+    assert_eq!(definition.definitions[0].file_name, "keys.ts");
+    assert_eq!(
+        definition.definitions[0].text_span.start,
+        declaration.text.find("PropertyKeyAlias").unwrap() as u32
+    );
+    assert_eq!(definition.definitions[0].name, "PropertyKeyAlias");
+    assert_eq!(definition.text_span.start, reference);
+    assert_ne!(definition.text_span.start, import);
 }
 
 #[test]
@@ -184,7 +196,7 @@ fn local_value_shadowing_wins_over_a_type_only_import_alias() {
 }
 
 #[test]
-fn navigation_keeps_the_type_query_on_the_local_import_alias() {
+fn navigation_resolves_the_definition_but_keeps_alias_reference_identity() {
     let mut service = LanguageService::new(options());
     service.open("origin.ts", Arc::<str>::from("export class Original {}"));
     let usage = concat!(
@@ -197,14 +209,30 @@ fn navigation_keeps_the_type_query_on_the_local_import_alias() {
     let query_position = usage.rfind("Constructor").unwrap() as u32;
     let definition = service
         .definition_and_bound_span("use.ts", query_position + 1)
+        .expect_claimed("type-query import navigation")
         .expect("type-query import definition");
     assert_eq!(definition.definitions.len(), 1);
-    assert_eq!(definition.definitions[0].file_name, "use.ts");
-    assert_eq!(definition.definitions[0].text_span.start, import_position);
+    assert_eq!(definition.definitions[0].file_name, "origin.ts");
+    assert_eq!(
+        definition.definitions[0].text_span.start,
+        "export class ".len() as u32
+    );
+    assert_eq!(definition.definitions[0].name, "Original");
+    assert_eq!(definition.text_span.start, query_position);
+    assert_ne!(definition.text_span.start, import_position);
 
-    let references = service.references("use.ts", import_position + 1);
-    assert_eq!(references.len(), 1);
-    assert_eq!(references[0].references.len(), 2);
+    assert!(matches!(
+        service.references("use.ts", import_position + 1),
+        tsz::service::ServiceQuery::Nonclaimed(_)
+    ));
+    assert_eq!(
+        service
+            .rename("use.ts", import_position + 1)
+            .expect_claimed("type-query import identity")
+            .locations
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -363,5 +391,63 @@ fn explicit_typescript_extension_resolves_in_either_root_order() {
         vec![usage, declaration],
     ] {
         assert_complete(&Compiler::new().compile(roots, &options()));
+    }
+}
+
+#[test]
+fn definition_aliases_validate_the_resolved_destination_capability() {
+    let declaration = source(
+        "model.ts",
+        concat!(
+            "export function stableTarget() { return 1; }\n",
+            "export function* recoveryTarget() { yield 1; }\n",
+        ),
+    );
+    let usage = source(
+        "use.ts",
+        concat!(
+            "import { stableTarget as stableAlias, recoveryTarget as deferredAlias } from './model';\n",
+            "stableAlias();\n",
+            "deferredAlias();\n",
+            "const localControl = 1;\n",
+            "localControl;\n",
+        ),
+    );
+
+    for reversed in [false, true] {
+        let mut service = LanguageService::new(options());
+        if reversed {
+            service.open("use.ts", usage.text.clone());
+            service.open("model.ts", declaration.text.clone());
+        } else {
+            service.open("model.ts", declaration.text.clone());
+            service.open("use.ts", usage.text.clone());
+        }
+
+        let stable_reference = usage.text.rfind("stableAlias").unwrap() as u32;
+        let deferred_reference = usage.text.rfind("deferredAlias").unwrap() as u32;
+        let local_reference = usage.text.rfind("localControl").unwrap() as u32;
+        for _ in 0..2 {
+            let stable = service
+                .definition_and_bound_span("use.ts", stable_reference + 1)
+                .expect_claimed("the ordinary resolved alias target is claimed")
+                .expect("ordinary alias definition");
+            assert_eq!(stable.definitions.len(), 1);
+            assert_eq!(stable.definitions[0].file_name, "model.ts");
+            assert_eq!(stable.definitions[0].name, "stableTarget");
+
+            assert!(matches!(
+                service.definition_and_bound_span("use.ts", deferred_reference + 1),
+                tsz::service::ServiceQuery::Nonclaimed(_)
+            ));
+
+            let local = service
+                .definition_and_bound_span("use.ts", local_reference + 1)
+                .expect_claimed("an independent same-file definition stays claimed")
+                .expect("local control definition");
+            assert_eq!(local.definitions.len(), 1);
+            assert_eq!(local.definitions[0].file_name, "use.ts");
+            assert_eq!(local.definitions[0].name, "localControl");
+        }
     }
 }

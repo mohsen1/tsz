@@ -30,7 +30,6 @@ import {
 } from './authored-options.js';
 import {
   compareCanonicalProductSets,
-  compareCompilerOutcomes,
   type ProductSetComparison,
 } from './canonical-products.js';
 import { resolvePinnedOracle } from './oracle.js';
@@ -40,11 +39,22 @@ import {
   retainCanonicalInventory,
 } from './canonical-support.js';
 import {
+  artifactCandidateTotal,
+  artifactHasNonPass,
+  artifactSurfaceObservation,
   artifactStatus,
+  compareArtifactOutcomes as compareCompilerOutcomes,
   compilerArtifactState,
+  emptyArtifactProductCounts,
+  emptyArtifactStatusCounts,
   ensureMeasuredArtifact,
+  recordArtifactProduct,
+  recordArtifactStatus,
+  selectArtifactSurfaces,
+  type ArtifactProductCounts,
   type ArtifactState,
   type ArtifactStatus,
+  type ArtifactStatusCounts,
 } from './artifact-state.js';
 import {
   parseSourceTest,
@@ -127,6 +137,12 @@ interface TestCase {
   stripInternal?: boolean;
   allowJs?: boolean;
   allowUnreachableCode?: boolean;
+  checkJs?: boolean;
+  noImplicitAny?: boolean;
+  noUnusedLocals?: boolean;
+  noUnusedParameters?: boolean;
+  skipLibCheck?: boolean;
+  strictPropertyInitialization?: boolean;
   baseUrl?: string;
   outFile?: string;
   outDir?: string;
@@ -140,11 +156,19 @@ interface TestCase {
 interface TestResult {
   name: string;
   testPath: string | null;
+  jsSelected: boolean;
+  dtsSelected: boolean;
+  outcomeMatch: boolean | null;
   jsMatch: boolean | null;
   dtsMatch: boolean | null;
+  jsProductMatch: boolean | null;
+  dtsProductMatch: boolean | null;
   artifactState: ArtifactState;
+  outcomeError?: string;
   jsError?: string;
   dtsError?: string;
+  jsProductError?: string;
+  dtsProductError?: string;
   elapsed?: number;
   skipped?: boolean;
   timeout?: boolean;
@@ -188,10 +212,20 @@ function detailRowsFingerprint(results: Array<Record<string, unknown>>): string 
     artifactState: result.artifactState ?? null,
     baselineFile: result.baselineFile ?? null,
     dtsError: result.dtsError ?? null,
+    dtsMatch: result.dtsMatch ?? null,
+    dtsProductError: result.dtsProductError ?? null,
+    dtsProductMatch: result.dtsProductMatch ?? null,
+    dtsSelected: result.dtsSelected ?? null,
     dtsStatus: result.dtsStatus ?? null,
     jsError: result.jsError ?? null,
+    jsMatch: result.jsMatch ?? null,
+    jsProductError: result.jsProductError ?? null,
+    jsProductMatch: result.jsProductMatch ?? null,
+    jsSelected: result.jsSelected ?? null,
     jsStatus: result.jsStatus ?? null,
     name: result.name ?? null,
+    outcomeError: result.outcomeError ?? null,
+    outcomeMatch: result.outcomeMatch ?? null,
     testPath: result.testPath ?? null,
   })).sort((left, right) => {
     const leftKey = `${left.name ?? ''}\0${left.baselineFile ?? ''}\0${left.testPath ?? ''}`;
@@ -426,6 +460,12 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const stripInternal = optionBoolean(authoredOptions, 'stripInternal');
     const allowJs = optionBoolean(authoredOptions, 'allowJs');
     const allowUnreachableCode = optionBoolean(authoredOptions, 'allowUnreachableCode');
+    const checkJs = optionBoolean(authoredOptions, 'checkJs');
+    const noImplicitAny = optionBoolean(authoredOptions, 'noImplicitAny');
+    const noUnusedLocals = optionBoolean(authoredOptions, 'noUnusedLocals');
+    const noUnusedParameters = optionBoolean(authoredOptions, 'noUnusedParameters');
+    const skipLibCheck = optionBoolean(authoredOptions, 'skipLibCheck');
+    const strictPropertyInitialization = optionBoolean(authoredOptions, 'strictPropertyInitialization');
     const noImplicitReferences = optionBoolean(authoredOptions, 'noImplicitReferences');
     const baseUrl = optionString(authoredOptions, 'baseUrl');
     const outFile = optionString(authoredOptions, 'outFile');
@@ -519,6 +559,12 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       stripInternal,
       allowJs,
       allowUnreachableCode,
+      checkJs,
+      noImplicitAny,
+      noUnusedLocals,
+      noUnusedParameters,
+      skipLibCheck,
+      strictPropertyInitialization,
       baseUrl,
       outFile,
       outDir,
@@ -567,12 +613,19 @@ async function runTest(
 ): Promise<TestResult> {
   const start = Date.now();
   const testName = testCase.baselineFile.replace('.js', '');
+  const emitDeclarations = testCase.declaration === true || testCase.emitDeclarationOnly === true;
+  const selected = selectArtifactSurfaces(config, emitDeclarations);
 
   const result: TestResult = {
     name: testName,
     testPath: testCase.testPath,
+    jsSelected: selected.js,
+    dtsSelected: selected.dts,
+    outcomeMatch: null,
     jsMatch: null,
     dtsMatch: null,
+    jsProductMatch: null,
+    dtsProductMatch: null,
     artifactState: 'incomplete',
   };
 
@@ -580,19 +633,20 @@ async function runTest(
     if (testCase.unsupportedReason) {
       result.artifactState = 'unsupported';
       const message = `UNSUPPORTED_CANONICAL_EMIT: ${testCase.unsupportedReason}`;
-      if (!config.dtsOnly || testCase.emitDeclarationOnly) {
-        result.jsMatch = false;
+      const jsObservation = artifactSurfaceObservation('unsupported', selected.js, null, null);
+      const dtsObservation = artifactSurfaceObservation('unsupported', selected.dts, null, null);
+      result.jsMatch = jsObservation.match;
+      result.dtsMatch = dtsObservation.match;
+      if (selected.js) {
         result.jsError = message;
       }
-      if (!config.jsOnly) {
-        result.dtsMatch = false;
+      if (selected.dts) {
         result.dtsError = message;
       }
       result.elapsed = Date.now() - start;
       return result;
     }
 
-    const emitDeclarations = testCase.declaration === true || testCase.emitDeclarationOnly === true;
     const transpileOptions = {
       sourceFileName: testCase.sourceFileName ?? undefined,
       declaration: testCase.declaration,
@@ -610,6 +664,12 @@ async function runTest(
       strict: testCase.strict,
       allowJs: testCase.allowJs,
       allowUnreachableCode: testCase.allowUnreachableCode,
+      checkJs: testCase.checkJs,
+      noImplicitAny: testCase.noImplicitAny,
+      noUnusedLocals: testCase.noUnusedLocals,
+      noUnusedParameters: testCase.noUnusedParameters,
+      skipLibCheck: testCase.skipLibCheck,
+      strictPropertyInitialization: testCase.strictPropertyInitialization,
       importHelpers: testCase.importHelpers,
       esModuleInterop: testCase.esModuleInterop,
       useDefineForClassFields: testCase.useDefineForClassFields,
@@ -652,28 +712,38 @@ async function runTest(
 
     const outcomeComparison = compareCompilerOutcomes(oracleResult.outcome, tszResult.outcome);
     result.artifactState = compilerArtifactState(oracleResult.outcome, tszResult.outcome);
+    result.outcomeMatch = outcomeComparison.match;
+    result.outcomeError = outcomeComparison.error;
     const jsComparison = compareCanonicalProductSets(oracleResult.jsProducts, tszResult.jsProducts);
     const dtsComparison = compareCanonicalProductSets(oracleResult.dtsProducts, tszResult.dtsProducts);
-    const completeInvocationMatch = outcomeComparison.match && jsComparison.match && dtsComparison.match;
+    const jsObservation = artifactSurfaceObservation(
+      result.artifactState,
+      selected.js,
+      outcomeComparison.match,
+      jsComparison.match,
+    );
+    const dtsObservation = artifactSurfaceObservation(
+      result.artifactState,
+      selected.dts,
+      outcomeComparison.match,
+      dtsComparison.match,
+    );
 
-    result.jsMatch = completeInvocationMatch;
-    if (!outcomeComparison.match) {
-      result.jsError = outcomeComparison.error;
-    } else if (!jsComparison.match) {
-      result.jsError = formatProductComparison(jsComparison, config.verbose);
-    } else if (!dtsComparison.match) {
-      result.jsError = `Declaration sibling mismatch: ${formatProductComparison(dtsComparison, config.verbose)}`;
+    result.jsMatch = jsObservation.match;
+    result.dtsMatch = dtsObservation.match;
+    result.jsProductMatch = jsObservation.productMatch;
+    result.dtsProductMatch = dtsObservation.productMatch;
+    if (selected.js && !jsComparison.match) {
+      result.jsProductError = formatProductComparison(jsComparison, config.verbose);
     }
-
-    if (!config.jsOnly && (emitDeclarations || config.dtsOnly)) {
-      result.dtsMatch = completeInvocationMatch;
-      if (!outcomeComparison.match) {
-        result.dtsError = outcomeComparison.error;
-      } else if (!dtsComparison.match) {
-        result.dtsError = formatProductComparison(dtsComparison, config.verbose);
-      } else if (!jsComparison.match) {
-        result.dtsError = `JavaScript sibling mismatch: ${formatProductComparison(jsComparison, config.verbose)}`;
-      }
+    if (selected.dts && !dtsComparison.match) {
+      result.dtsProductError = formatProductComparison(dtsComparison, config.verbose);
+    }
+    if (selected.js && !jsObservation.match) {
+      result.jsError = outcomeComparison.error ?? result.jsProductError;
+    }
+    if (selected.dts && !dtsObservation.match) {
+      result.dtsError = outcomeComparison.error ?? result.dtsProductError;
     }
 
     result.elapsed = Date.now() - start;
@@ -682,12 +752,14 @@ async function runTest(
     const summarized = summarizeErrorMessage(errorMsg);
     result.timeout = errorMsg.startsWith('TIMEOUT:');
     result.artifactState = result.timeout ? 'timeout' : 'crash';
-    if (!config.dtsOnly || testCase.emitDeclarationOnly) {
-      result.jsMatch = false;
+    const jsObservation = artifactSurfaceObservation(result.artifactState, selected.js, null, null);
+    const dtsObservation = artifactSurfaceObservation(result.artifactState, selected.dts, null, null);
+    result.jsMatch = jsObservation.match;
+    result.dtsMatch = dtsObservation.match;
+    if (selected.js) {
       result.jsError = result.timeout ? 'TIMEOUT' : summarized;
     }
-    if (!config.jsOnly) {
-      result.dtsMatch = false;
+    if (selected.dts) {
       result.dtsError = result.timeout ? 'TIMEOUT' : summarized;
     }
     result.elapsed = Date.now() - start;
@@ -700,21 +772,31 @@ async function runTest(
 // Display Helpers
 // ============================================================================
 
-function resultStatusIcon(result: TestResult, dtsOnly: boolean): string {
-  if (result.timeout) return pc.yellow('T');
+function resultStatusIcon(result: TestResult, config: Config): string {
   if (result.skipped) return pc.dim('S');
-  if (dtsOnly) {
-    if (result.dtsMatch === true) return pc.green('✓');
-    if (result.dtsMatch === false) return pc.red('✗');
-    return pc.dim('-');
+  const statuses = config.dtsOnly
+    ? [artifactStatus(result.artifactState, result.dtsMatch)]
+    : [
+        artifactStatus(result.artifactState, result.jsMatch),
+        ...(!config.jsOnly && result.dtsMatch !== null
+          ? [artifactStatus(result.artifactState, result.dtsMatch)]
+          : []),
+      ];
+  const status = (['fail', 'crash', 'timeout', 'incomplete', 'unsupported', 'pass', 'skip'] as const)
+    .find(candidate => statuses.includes(candidate)) ?? 'skip';
+  switch (status) {
+    case 'pass': return pc.green('✓');
+    case 'fail': return pc.red('✗');
+    case 'timeout': return pc.yellow('T');
+    case 'crash': return pc.red('C');
+    case 'incomplete': return pc.yellow('I');
+    case 'unsupported': return pc.yellow('U');
+    case 'skip': return pc.dim('-');
   }
-  if (result.jsMatch === false || result.dtsMatch === false) return pc.red('✗');
-  if (result.jsMatch === true || result.dtsMatch === true) return pc.green('✓');
-  return pc.dim('-');
 }
 
 function printVerboseResult(result: TestResult, config: Config) {
-  console.log(`  [${resultStatusIcon(result, config.dtsOnly)}] ${result.name} (${result.elapsed}ms)`);
+  console.log(`  [${resultStatusIcon(result, config)}] ${result.name} (${result.elapsed}ms)`);
   if (config.dtsOnly && result.dtsError && result.dtsMatch === false) {
     console.log(result.dtsError);
   } else if (result.jsError && result.jsMatch === false) {
@@ -728,6 +810,26 @@ function progressBar(current: number, total: number, width: number = 30): string
   const empty = width - filled;
   const bar = pc.green('█'.repeat(filled)) + pc.dim('░'.repeat(empty));
   return `${bar} ${(pct * 100).toFixed(1)}% | ${current.toLocaleString()}/${total.toLocaleString()}`;
+}
+
+function printSurfaceSummary(
+  label: string,
+  counts: ArtifactStatusCounts,
+  products: ArtifactProductCounts,
+): void {
+  const total = artifactCandidateTotal(counts);
+  const pct = total > 0 ? (counts.pass / total * 100).toFixed(1) : '0.0';
+  console.log(pc.bold(`${label}:`));
+  console.log(`  ${pc.green(`Passed: ${counts.pass}`)}`);
+  console.log(`  ${pc.red(`Failed: ${total - counts.pass}`)}`);
+  console.log(`  ${pc.red(`Product mismatches: ${products.mismatch}`)}`);
+  console.log(`  ${pc.dim(`Product comparisons unavailable: ${products.unmeasured}`)}`);
+  console.log(`  ${pc.yellow(`Incomplete: ${counts.incomplete}`)}`);
+  console.log(`  ${pc.yellow(`Unsupported: ${counts.unsupported}`)}`);
+  console.log(`  ${pc.red(`Crashed: ${counts.crash}`)}`);
+  console.log(`  ${pc.yellow(`Timed out: ${counts.timeout}`)}`);
+  console.log(`  ${pc.dim(`Skipped: ${counts.skip}`)}`);
+  console.log(`  ${pc.yellow(`Pass Rate: ${pct}% (${counts.pass}/${total})`)}`);
 }
 
 // ============================================================================
@@ -848,6 +950,7 @@ async function main() {
   const oracleTranspiler = new CliTranspiler(config.timeoutMs, {
     binaryPath: oracle.binaryPath,
     label: 'typescript-7-oracle',
+    diagnosticWitnessProvider: 'typescript-7-api',
   });
   const tszTranspiler = new CliTranspiler(config.timeoutMs);
 
@@ -859,38 +962,30 @@ async function main() {
   process.on('SIGINT', () => { cleanup(); process.exit(130); });
   process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
-  // Counters
-  let jsPass = 0, jsFail = 0, jsSkip = 0, jsTimeout = 0;
-  let dtsPass = 0, dtsFail = 0, dtsSkip = 0;
+  // Per-status counters preserve the candidate domain without calling typed
+  // terminal observations product mismatches.
+  const jsCounts = emptyArtifactStatusCounts();
+  const dtsCounts = emptyArtifactStatusCounts();
+  const jsProducts = emptyArtifactProductCounts();
+  const dtsProducts = emptyArtifactProductCounts();
   const failures: TestResult[] = [];
   const allTestResults: TestResult[] = [];
   const startTime = Date.now();
   let completed = 0;
 
   function recordResult(result: TestResult) {
-    ensureMeasuredArtifact(result, config);
+    ensureMeasuredArtifact(result, { js: result.jsSelected, dts: result.dtsSelected });
     completed++;
     allTestResults.push(result);
-    if (result.skipped) {
-      jsSkip++;
-    } else if (result.jsMatch === true) {
-      jsPass++;
-    } else if (result.jsMatch === false) {
-      if (result.timeout) jsTimeout++;
-      jsFail++;
+    const jsStatus = artifactStatus(result.artifactState, result.jsMatch);
+    const dtsStatus = artifactStatus(result.artifactState, result.dtsMatch);
+    recordArtifactStatus(jsCounts, jsStatus);
+    recordArtifactStatus(dtsCounts, dtsStatus);
+    recordArtifactProduct(jsProducts, result.jsSelected, result.jsProductMatch);
+    recordArtifactProduct(dtsProducts, result.dtsSelected, result.dtsProductMatch);
+    if (![jsStatus, dtsStatus].every(status => status === 'pass' || status === 'skip')) {
       failures.push(result);
-    } else {
-      jsSkip++;
     }
-
-    if (result.dtsMatch === true) dtsPass++;
-    else if (result.dtsMatch === false) {
-      dtsFail++;
-      if (result.jsMatch !== false) {
-        failures.push(result);
-      }
-    }
-    else dtsSkip++;
   }
 
   // Progress bar (non-verbose)
@@ -943,23 +1038,11 @@ async function main() {
   console.log(sep);
 
   if (!config.dtsOnly) {
-    const jsTotal = jsPass + jsFail;
-    const jsPct = jsTotal > 0 ? (jsPass / jsTotal * 100).toFixed(1) : '0.0';
-    console.log(pc.bold('JavaScript Emit:'));
-    console.log(`  ${pc.green(`Passed: ${jsPass}`)}`);
-    console.log(`  ${pc.red(`Failed: ${jsFail}`)}${jsTimeout > 0 ? ` (${jsTimeout} timeouts)` : ''}`);
-    console.log(`  ${pc.dim(`Skipped: ${jsSkip}`)}`);
-    console.log(`  ${pc.yellow(`Pass Rate: ${jsPct}% (${jsPass}/${jsTotal})`)}`);
+    printSurfaceSummary('JavaScript Emit', jsCounts, jsProducts);
   }
 
-  if (!config.jsOnly && (dtsPass + dtsFail) > 0) {
-    const dtsTotal = dtsPass + dtsFail;
-    const dtsPct = dtsTotal > 0 ? (dtsPass / dtsTotal * 100).toFixed(1) : '0.0';
-    console.log(pc.bold('Declaration Emit:'));
-    console.log(`  ${pc.green(`Passed: ${dtsPass}`)}`);
-    console.log(`  ${pc.red(`Failed: ${dtsFail}`)}`);
-    console.log(`  ${pc.dim(`Skipped: ${dtsSkip}`)}`);
-    console.log(`  ${pc.yellow(`Pass Rate: ${dtsPct}% (${dtsPass}/${dtsTotal})`)}`);
+  if (!config.jsOnly && artifactCandidateTotal(dtsCounts) > 0) {
+    printSurfaceSummary('Declaration Emit', dtsCounts, dtsProducts);
   }
 
   const totalTests = testCases.length;
@@ -967,10 +1050,10 @@ async function main() {
   console.log(pc.dim(`\nTime: ${elapsed}s (${rate} tests/sec)`));
   console.log(sep);
 
-  // Show first failures (excluding timeouts)
+  // Show first non-passes (excluding timeouts)
   const realFailures = failures.filter(f => !f.timeout);
   if (realFailures.length > 0 && !config.verbose) {
-    console.log(`\n${pc.bold('First failures:')}`);
+    console.log(`\n${pc.bold('First non-passes:')}`);
     for (const f of realFailures) {
       const diffInfo = f.jsError ? ` ${pc.dim(`(${f.jsError})`)}` : '';
       console.log(`  ${pc.red('✗')} ${f.name}${diffInfo}`);
@@ -996,10 +1079,20 @@ async function main() {
       baselineFile: string;
       testPath: string | null;
       artifactState: ArtifactState;
+      jsSelected: boolean;
+      dtsSelected: boolean;
+      outcomeMatch: boolean | null;
+      jsMatch: boolean | null;
+      dtsMatch: boolean | null;
+      jsProductMatch: boolean | null;
+      dtsProductMatch: boolean | null;
       jsStatus: ArtifactStatus;
       dtsStatus: ArtifactStatus;
+      outcomeError?: string;
       jsError?: string;
       dtsError?: string;
+      jsProductError?: string;
+      dtsProductError?: string;
       elapsed?: number;
     }> = [];
 
@@ -1012,17 +1105,27 @@ async function main() {
         baselineFile: r.name + '.js',
         testPath: r.testPath,
         artifactState: r.artifactState,
+        jsSelected: r.jsSelected,
+        dtsSelected: r.dtsSelected,
+        outcomeMatch: r.outcomeMatch,
+        jsMatch: r.jsMatch,
+        dtsMatch: r.dtsMatch,
+        jsProductMatch: r.jsProductMatch,
+        dtsProductMatch: r.dtsProductMatch,
         jsStatus,
         dtsStatus,
       };
+      if (r.outcomeError) record.outcomeError = r.outcomeError;
       if (r.jsError) record.jsError = r.jsError;
       if (r.dtsError) record.dtsError = r.dtsError;
+      if (r.jsProductError) record.jsProductError = r.jsProductError;
+      if (r.dtsProductError) record.dtsProductError = r.dtsProductError;
       if (r.elapsed !== undefined) record.elapsed = r.elapsed;
       allResults.push(record);
     }
 
-    const jsTotal = jsPass + jsFail;
-    const dtsTotal = dtsPass + dtsFail;
+    const jsTotal = artifactCandidateTotal(jsCounts);
+    const dtsTotal = artifactCandidateTotal(dtsCounts);
     // Stamp the measured tree so observational artifacts retain provenance.
     // Degrades to undefined off a git checkout rather than failing the emit run.
     let gitSha: string | undefined;
@@ -1035,6 +1138,7 @@ async function main() {
       gitSha = undefined;
     }
     const detail = {
+      detailSchemaVersion: 2,
       timestamp: new Date().toISOString(),
       ...(gitSha ? { git_sha: gitSha } : {}),
       oracle: oracle.provenance,
@@ -1042,16 +1146,31 @@ async function main() {
       detailResultCount: allResults.length,
       summary: {
         jsTotal,
-        jsPass,
-        jsFail,
-        jsSkip,
-        jsTimeout,
-        jsPassRate: jsTotal > 0 ? Math.round(jsPass / jsTotal * 1000) / 10 : 0,
+        jsPass: jsCounts.pass,
+        jsFail: jsTotal - jsCounts.pass,
+        jsSkip: jsCounts.skip,
+        jsCompleteMismatch: jsCounts.fail,
+        jsUnsupported: jsCounts.unsupported,
+        jsTimeout: jsCounts.timeout,
+        jsCrash: jsCounts.crash,
+        jsIncomplete: jsCounts.incomplete,
+        jsProductMatch: jsProducts.match,
+        jsProductMismatch: jsProducts.mismatch,
+        jsProductUnmeasured: jsProducts.unmeasured,
+        jsPassRate: jsTotal > 0 ? Math.round(jsCounts.pass / jsTotal * 1000) / 10 : 0,
         dtsTotal,
-        dtsPass,
-        dtsFail,
-        dtsSkip,
-        dtsPassRate: dtsTotal > 0 ? Math.round(dtsPass / dtsTotal * 1000) / 10 : 0,
+        dtsPass: dtsCounts.pass,
+        dtsFail: dtsTotal - dtsCounts.pass,
+        dtsSkip: dtsCounts.skip,
+        dtsCompleteMismatch: dtsCounts.fail,
+        dtsUnsupported: dtsCounts.unsupported,
+        dtsTimeout: dtsCounts.timeout,
+        dtsCrash: dtsCounts.crash,
+        dtsIncomplete: dtsCounts.incomplete,
+        dtsProductMatch: dtsProducts.match,
+        dtsProductMismatch: dtsProducts.mismatch,
+        dtsProductUnmeasured: dtsProducts.unmeasured,
+        dtsPassRate: dtsTotal > 0 ? Math.round(dtsCounts.pass / dtsTotal * 1000) / 10 : 0,
       },
       results: allResults,
     };
@@ -1062,7 +1181,7 @@ async function main() {
     console.log(pc.dim(`\nJSON results written to ${outPath}`));
   }
 
-  process.exit(jsFail > 0 || dtsFail > 0 ? 1 : 0);
+  process.exit(artifactHasNonPass(jsCounts) || artifactHasNonPass(dtsCounts) ? 1 : 0);
 }
 
 main().catch(err => {

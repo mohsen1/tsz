@@ -58,6 +58,12 @@ const REQUIRED_APPLICATION_ROWS = PROJECT_ROW_DEFINITIONS
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const CHECK_SCRIPT = path.join(ROOT, "scripts", "bench", "check-artifact-readiness.mjs");
+const REQUIRED_STUB_OWNER_ROWS = REQUIRED_PROJECT_ROWS.filter(
+  (name) => fixtureStubEvidenceFor(ROOT, name).stubInventoryOwners.length > 0,
+);
+const EXACT_REQUIRED_PROJECT_ROWS = REQUIRED_PROJECT_ROWS.filter(
+  (name) => !REQUIRED_STUB_OWNER_ROWS.includes(name),
+);
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-artifact-readiness-"));
@@ -77,7 +83,7 @@ function makeCompatibility(state, projectName) {
   const stubEvidence = fixtureStubEvidenceFor(ROOT, projectName);
   return {
     generated_at: "2026-05-19T01:02:03.000Z",
-    source_commit: "abcdef1234567890",
+    source_commit: "a".repeat(40),
     workflow_name: "Bench",
     workflow_run_id: "12345",
     workflow_run_url: "https://github.com/tsz-org/tsz/actions/runs/12345",
@@ -91,7 +97,20 @@ function makeCompatibility(state, projectName) {
     phase: "check",
     last_successful_phase: "check",
     diagnostic_status: state === "green" ? "none" : state === "yellow" ? "diagnostic mismatch" : "none",
-    evidence_schema: 2,
+    evidence_schema: 3,
+    evidence_status: "exact",
+    evidence_failures: [],
+    source_dirty: false,
+    source_stable: true,
+    source_tree_fingerprint: "1".repeat(64),
+    evidence_protocol_fingerprint: "7".repeat(64),
+    tsz_binary_sha256: "2".repeat(64),
+    build_manifest_sha256: "3".repeat(64),
+    build_inputs_sha256: "4".repeat(64),
+    build_manifest_binary_sha256: "2".repeat(64),
+    compile_input_fingerprint: "5".repeat(64),
+    compile_input_stable: true,
+    oracle_fingerprint: "6".repeat(64),
     semantic_completion: "complete",
     root_files: 1,
     source_files: 1,
@@ -109,6 +128,7 @@ function makeCompatibility(state, projectName) {
     stubbed_modules: stubEvidence.stubbedModules,
     stubbed_any_members: stubEvidence.stubbedAnyMembers,
     stub_inventory_fingerprint: stubEvidence.stubInventoryFingerprint,
+    stub_inventory_owners: stubEvidence.stubInventoryOwners,
     oracle_classification: "both-pass",
     diagnostic_deltas: [],
     diagnostic_subsystems: [],
@@ -134,16 +154,26 @@ function makeCompatibility(state, projectName) {
 }
 
 function makeRow(name, state = "green", opts = {}) {
+  const compatibility = makeCompatibility(state, name);
+  const stubOwnerNonclaim = state === "green"
+    && compatibility.stub_inventory_owners.length > 0
+    && opts.forceStubClaim !== true;
+  if (stubOwnerNonclaim) {
+    compatibility.state = "yellow";
+    compatibility.diagnostic_status = "diagnostic mismatch";
+    compatibility.first_failure_class = "fixture declaration helper";
+    compatibility.known_blockers = ["fixture declaration helper must be removed"];
+  }
   return {
     name,
     lines: 100,
     kb: 10,
-    tsz_ms: Object.hasOwn(opts, "tsz_ms") ? opts.tsz_ms : 50,
-    tsgo_ms: Object.hasOwn(opts, "tsgo_ms") ? opts.tsgo_ms : 40,
-    winner: Object.hasOwn(opts, "winner") ? opts.winner : "tsgo",
+    tsz_ms: Object.hasOwn(opts, "tsz_ms") ? opts.tsz_ms : stubOwnerNonclaim ? null : 50,
+    tsgo_ms: Object.hasOwn(opts, "tsgo_ms") ? opts.tsgo_ms : stubOwnerNonclaim ? null : 40,
+    winner: Object.hasOwn(opts, "winner") ? opts.winner : stubOwnerNonclaim ? "error" : "tsgo",
     ratio: 1.25,
     ...(opts.errorStatus ? { status: opts.errorStatus } : {}),
-    compatibility: makeCompatibility(state, name),
+    compatibility,
   };
 }
 
@@ -219,22 +249,27 @@ withTempDir((dir) => {
 console.log("✅ malformed artifact exits 2");
 
 // ---------------------------------------------------------------------------
-// Test: complete artifact with all required rows green → exit 0
+// Test: a complete artifact remains publishable while declaration-owning rows
+// stay honest nonclaims. Such rows cannot satisfy the stricter all-green gate.
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
   const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
   writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
-  const result = run(file, ["--json", "--require-green"]);
-  assert.equal(result.status, 0, `all-green artifact should exit 0, got:\n${result.stderr}`);
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `honest nonclaim artifact should exit 0, got:\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout.trim());
-  assert.equal(parsed.all_required_rows_green, true, "all-green JSON should mark release gate ready");
-  assert.equal(parsed.corpus_health.collapsed, false, "all-green corpus is not collapsed");
-  assert.equal(parsed.corpus_health.green, REQUIRED_PROJECT_ROWS.length, "corpus_health counts every green row");
-  assert.equal(parsed.corpus_health.errored, 0, "all-green corpus reports zero errored rows");
-  assert.equal(parsed.metadata_clean, true, "all-green artifact should be metadata-clean");
-  assert.equal(parsed.metadata_warnings_total, 0, "all-green artifact should not report metadata warnings");
-  assert.deepEqual(parsed.non_green_required_rows, [], "all-green JSON should not report non-green rows");
+  assert.equal(parsed.all_required_rows_green, false, "known fixture owners keep strict readiness false");
+  assert.equal(parsed.corpus_health.collapsed, false, "honest nonclaim corpus is not collapsed");
+  assert.equal(parsed.corpus_health.green, EXACT_REQUIRED_PROJECT_ROWS.length);
+  assert.equal(parsed.corpus_health.errored, 0, "honest nonclaim corpus reports zero errored rows");
+  assert.equal(parsed.metadata_clean, true, "honest nonclaim artifact should be metadata-clean");
+  assert.equal(parsed.metadata_warnings_total, 0, "honest nonclaim artifact should not report metadata warnings");
+  assert.deepEqual(
+    parsed.non_green_required_rows,
+    REQUIRED_STUB_OWNER_ROWS.map((name) => ({ name, state: "yellow" })),
+  );
+  assert.deepEqual(parsed.invalid_project_evidence_rows, []);
   const zeroStubRow = parsed.rows.find((row) => row.name === "utility-types-project");
   const zeroStubEvidence = fixtureStubEvidenceFor(ROOT, "utility-types-project");
   assert.equal(zeroStubRow.stub_inventory_schema, zeroStubEvidence.stubInventorySchema);
@@ -245,13 +280,25 @@ withTempDir((dir) => {
     zeroStubEvidence.stubInventoryFingerprint,
     "readiness must preserve the source-verified zero-stub fingerprint",
   );
-  assert.match(result.stderr, new RegExp(`green.*\\| ${REQUIRED_PROJECT_ROWS.length}`), "should show all green count");
+  assert.match(result.stderr, new RegExp(`green.*\\| ${EXACT_REQUIRED_PROJECT_ROWS.length}`));
   assert.match(result.stderr, /Measurement profile.*release-pgo/, "should show measurement profile mode");
   assert.match(result.stderr, /PGO profile.*abcdef123456/, "should show PGO profile fingerprint");
   assert.match(result.stderr, /PGO training.*123456abcdef/, "should show PGO training fingerprint");
   assert.match(result.stderr, /Binary target CPU.*x86-64-v3/, "should show the binary codegen target CPU");
 });
-console.log("✅ complete all-green artifact exits 0");
+console.log("✅ complete artifact preserves declaration-owner nonclaims");
+
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  const name = REQUIRED_STUB_OWNER_ROWS[0];
+  rows[REQUIRED_PROJECT_ROWS.indexOf(name)] = makeRow(name, "green", { forceStubClaim: true });
+  writeJson(file, makeArtifact(rows, { measurement_profile: SAMPLE_MEASUREMENT_PROFILE }));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 1, "typed zero-any declaration owners cannot claim green/timing");
+  assert.deepEqual(JSON.parse(result.stdout.trim()).invalid_project_evidence_rows, [name]);
+});
+console.log("✅ readiness rejects typed zero-any declaration-owner claims");
 
 // A legacy phase-only green label is not project evidence. Readiness
 // independently rechecks schema-v2 graph, diagnostic, and exit parity instead
@@ -267,10 +314,11 @@ withTempDir((dir) => {
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.gray, 1);
   assert.deepEqual(parsed.non_green_required_rows, [
+    ...REQUIRED_STUB_OWNER_ROWS.map((name) => ({ name, state: "yellow" })),
     { name: REQUIRED_PROJECT_ROWS[0], state: "gray" },
   ]);
 });
-console.log("✅ readiness rejects green rows without exact schema-v2 evidence");
+  console.log("✅ readiness rejects green rows without exact schema-v3 evidence");
 
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
@@ -303,7 +351,7 @@ withTempDir((dir) => {
   const zero = fixtureStubEvidenceFor(ROOT, "utility-types-project");
   const forgedNames = ["msw-project", "effect-project", "drizzle-orm-project"];
   for (const name of forgedNames) {
-    const forged = makeRow(name, "green");
+    const forged = makeRow(name, "green", { forceStubClaim: true });
     forged.compatibility.stubbed_modules = 0;
     forged.compatibility.stubbed_any_members = 0;
     forged.compatibility.stub_inventory_fingerprint = zero.stubInventoryFingerprint;
@@ -329,7 +377,7 @@ withTempDir((dir) => {
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(
     parsed.successful_project_timing_pairs,
-    REQUIRED_PROJECT_ROWS.length,
+    EXACT_REQUIRED_PROJECT_ROWS.length,
     "JSON should count successful project timing pairs",
   );
 });
@@ -639,7 +687,7 @@ withTempDir((dir) => {
   assert.equal(parsed.corpus_health.errored, 2, "corpus_health reports the two errored rows");
   assert.equal(
     parsed.corpus_health.green,
-    REQUIRED_PROJECT_ROWS.length - 2,
+    EXACT_REQUIRED_PROJECT_ROWS.length - 2,
     "corpus_health reports the green majority",
   );
 });
@@ -1006,7 +1054,10 @@ withTempDir((dir) => {
   assert.equal(parsed.all_required_rows_green, false, "JSON should mark release gate not ready");
   assert.deepEqual(
     parsed.non_green_required_rows,
-    [{ name: redName, state: "red" }],
+    [
+      { name: redName, state: "red" },
+      ...REQUIRED_STUB_OWNER_ROWS.map((name) => ({ name, state: "yellow" })),
+    ],
     "JSON should name the red required row",
   );
   assert.match(result.stderr, new RegExp(`${redName} \\(red\\)`));
@@ -1024,7 +1075,11 @@ withTempDir((dir) => {
   writeJson(file, makeArtifact(rows));
   const result = run(file);
   assert.equal(result.status, 0, `yellow row should exit 0, got:\n${result.stderr}`);
-  assert.match(result.stdout, /⚠️.*yellow.*\| 1/i, "should show 1 yellow row");
+  assert.match(
+    result.stdout,
+    new RegExp(`⚠️.*yellow.*\\| ${1 + REQUIRED_STUB_OWNER_ROWS.length}`, "i"),
+    "should show the explicit yellow row plus fixture-owner nonclaims",
+  );
   assert.match(result.stdout, /some failure/, "should name the first failure class for yellow rows");
 });
 console.log("✅ yellow row present exits 0");
@@ -1052,6 +1107,7 @@ withTempDir((dir) => {
     parsed.non_green_required_rows,
     [
       { name: yellowName, state: "yellow" },
+      ...REQUIRED_STUB_OWNER_ROWS.map((name) => ({ name, state: "yellow" })),
       { name: grayName, state: "gray" },
     ],
     "JSON should name yellow and gray required rows",
@@ -1075,7 +1131,7 @@ withTempDir((dir) => {
   const result = run(file, ["--json"]);
   assert.equal(result.status, 0, `partial green compatibility should not fail readiness:\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout.trim());
-  assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length - 1, "partial green row must not count as green");
+  assert.equal(parsed.green, EXACT_REQUIRED_PROJECT_ROWS.length - 1, "partial green row must not count as green");
   assert.equal(parsed.gray, 1, "partial green row should count as gray/incomplete");
   assert.equal(parsed.rows[0].state, "gray", "partial green row should render as gray");
 });
@@ -1095,7 +1151,7 @@ withTempDir((dir) => {
   const result = run(file, ["--json"]);
   assert.equal(result.status, 0, `partial yellow compatibility should not fail readiness:\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout.trim());
-  assert.equal(parsed.yellow, 0, "partial yellow row must not count as yellow");
+  assert.equal(parsed.yellow, REQUIRED_STUB_OWNER_ROWS.length, "partial yellow row must not count as yellow");
   assert.equal(parsed.gray, 1, "partial yellow row should count as gray/incomplete");
   assert.equal(parsed.rows[0].state, "gray", "partial yellow row should render as gray");
 });
@@ -1146,7 +1202,7 @@ withTempDir((dir) => {
   const result = run(file, ["--json"]);
   assert.equal(result.status, 1, `duplicate required row should fail readiness:\n${result.stderr}`);
   const parsed = JSON.parse(result.stdout.trim());
-  assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length - 1, "duplicate row must not count as green");
+  assert.equal(parsed.green, EXACT_REQUIRED_PROJECT_ROWS.length - 1, "duplicate row must not count as green");
   assert.equal(parsed.gray, 1, "duplicate row should count as gray/incomplete");
   assert.deepEqual(
     parsed.duplicate_rows,
@@ -1203,7 +1259,7 @@ withTempDir((dir) => {
     SAMPLE_MEASUREMENT_PROFILE.profile_guided_optimization.training_fingerprint,
     "JSON should report training fingerprint",
   );
-  assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length, "JSON output should show all green");
+  assert.equal(parsed.green, EXACT_REQUIRED_PROJECT_ROWS.length, "JSON output should show exact green rows");
   assert.ok(Array.isArray(parsed.rows), "JSON output should have rows array");
   assert.equal(parsed.rows.length, REQUIRED_PROJECT_ROWS.length, "rows array should have all required rows");
   assert.equal(parsed.rows[0].phase, "check", "JSON rows should report phase reached");

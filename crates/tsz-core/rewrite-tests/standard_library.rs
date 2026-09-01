@@ -1069,11 +1069,15 @@ fn target_selects_the_corresponding_default_full_library() {
 }
 
 #[test]
-fn removed_es5_target_is_a_fatal_option_diagnostic() {
-    let output = compile(
-        "const count: number = 'wrong';",
-        CompilerOptions {
+fn removed_es5_target_is_fatal_before_semantic_checking() {
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "case.ts",
+            Arc::<str>::from("const count: number = 'wrong';"),
+        )],
+        &CompilerOptions {
             target: "ES5".to_string(),
+            no_emit_on_error: false,
             ..CompilerOptions::default()
         },
     );
@@ -1082,15 +1086,20 @@ fn removed_es5_target_is_a_fatal_option_diagnostic() {
         output.diagnostics[0].message_text,
         "Option 'target=ES5' has been removed. Please remove it from your configuration."
     );
+    assert_eq!(
+        output.exit_status,
+        tsz::CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
+    assert_eq!(output.stats.types, 0);
     assert!(output.emitted_files.is_empty());
 }
 
 #[test]
-fn unknown_target_is_a_fatal_exact_option_diagnostic() {
+fn es3_remains_an_invalid_fatal_target_in_the_pinned_oracle() {
     let output = compile(
         "const count: number = 'wrong';",
         CompilerOptions {
-            target: "future".to_string(),
+            target: "ES3".to_string(),
             ..CompilerOptions::default()
         },
     );

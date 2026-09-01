@@ -5,11 +5,55 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { fixtureStubEvidenceFor } from "../bench/lib/fixture-stub-inventory.mjs";
+import {
+  fixtureStubEvidenceFingerprint,
+  fixtureStubEvidenceFor,
+} from "../bench/lib/fixture-stub-inventory.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "ci", "project-compatibility.mjs");
+const EMPTY_DIAGNOSTIC_FINGERPRINT = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const ZERO_STUB_EVIDENCE = fixtureStubEvidenceFor(ROOT, "utility-types-project");
+
+function exactEvidenceEnv() {
+  return {
+    COMPAT_EVIDENCE_SCHEMA: "3",
+    COMPAT_SEMANTIC_COMPLETION: "complete",
+    COMPAT_SOURCE_COMMIT: "a".repeat(40),
+    COMPAT_SOURCE_DIRTY: "false",
+    COMPAT_SOURCE_STABLE: "true",
+    COMPAT_SOURCE_TREE_FINGERPRINT: "1".repeat(64),
+    COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT: "9".repeat(64),
+    COMPAT_TSZ_BINARY_SHA256: "2".repeat(64),
+    COMPAT_BUILD_MANIFEST_SHA256: "7".repeat(64),
+    COMPAT_BUILD_INPUTS_SHA256: "8".repeat(64),
+    COMPAT_BUILD_MANIFEST_BINARY_SHA256: "2".repeat(64),
+    COMPAT_COMPILE_INPUT_FINGERPRINT: "3".repeat(64),
+    COMPAT_COMPILE_INPUT_STABLE: "true",
+    COMPAT_ORACLE_FINGERPRINT: "4".repeat(64),
+    COMPAT_ROOT_FILES: "1",
+    COMPAT_SOURCE_FILES: "1",
+    COMPAT_ROOT_FILE_FINGERPRINT: "5".repeat(64),
+    COMPAT_SOURCE_FILE_FINGERPRINT: "6".repeat(64),
+    COMPAT_ORACLE_ROOT_FILES: "1",
+    COMPAT_ORACLE_SOURCE_FILES: "1",
+    COMPAT_ORACLE_ROOT_FILE_FINGERPRINT: "5".repeat(64),
+    COMPAT_ORACLE_SOURCE_FILE_FINGERPRINT: "6".repeat(64),
+    COMPAT_DIAGNOSTIC_RECORDS: "0",
+    COMPAT_DIAGNOSTIC_FINGERPRINT: EMPTY_DIAGNOSTIC_FINGERPRINT,
+    COMPAT_ORACLE_DIAGNOSTIC_RECORDS: "0",
+    COMPAT_ORACLE_DIAGNOSTIC_FINGERPRINT: EMPTY_DIAGNOSTIC_FINGERPRINT,
+    COMPAT_TSZ_EXIT_CODES: "0",
+    COMPAT_TSC_EXIT_CODES: "0",
+    COMPAT_FILES_REACHED: "1",
+    COMPAT_STUB_INVENTORY_SCHEMA: String(ZERO_STUB_EVIDENCE.stubInventorySchema),
+    COMPAT_STUBBED_MODULES: "0",
+    COMPAT_STUBBED_ANY_MEMBERS: "0",
+    COMPAT_STUB_INVENTORY_FINGERPRINT: ZERO_STUB_EVIDENCE.stubInventoryFingerprint,
+    COMPAT_STUB_INVENTORY_OWNERS: "[]",
+  };
+}
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-project-compat-"));
@@ -66,6 +110,7 @@ withTempDir((dir) => {
     COMPAT_STUBBED_MODULES: String(stubEvidence.stubbedModules),
     COMPAT_STUBBED_ANY_MEMBERS: String(stubEvidence.stubbedAnyMembers),
     COMPAT_STUB_INVENTORY_FINGERPRINT: stubEvidence.stubInventoryFingerprint,
+    COMPAT_STUB_INVENTORY_OWNERS: JSON.stringify(stubEvidence.stubInventoryOwners),
     COMPAT_FIXTURE_SOURCES: [
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
@@ -92,13 +137,14 @@ withTempDir((dir) => {
   assert.equal(row.last_successful_phase, null);
   assert.equal(row.semantic_completion, "deferred");
   assert.deepEqual(row.diagnostic_codes, ["TS2344"]);
-  assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [2], tsgo: [1] });
+  assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [2, 2], tsgo: [1] });
   assert.equal(row.files_reached, 42);
   assert.equal(row.files_reached_reason, null);
-  assert.equal(row.stub_inventory_schema, 1);
+  assert.equal(row.stub_inventory_schema, 2);
   assert.equal(row.stubbed_modules, 0);
   assert.equal(row.stubbed_any_members, 0);
   assert.equal(row.stub_inventory_fingerprint, stubEvidence.stubInventoryFingerprint);
+  assert.deepEqual(row.stub_inventory_owners, stubEvidence.stubInventoryOwners);
   assert.equal(row.peak_memory_bytes, 1048576);
   assert.equal(row.peak_memory_bytes_reason, null);
   assert.equal(row.repro.tsconfig_path, "tsconfig.json");
@@ -128,6 +174,7 @@ withTempDir((dir) => {
 // drift between the `tsc:`/`tsz:` label prefix and the explicit envs.
 function makeOracleCase({ name, exitClass, phase = "check", diagnosticStatus, tscExit, tszExit, tscLines = [], tszLines = [], expected }) {
   const env = {
+    ...(expected.state === "green" ? exactEvidenceEnv() : {}),
     COMPAT_EXIT_CLASS: exitClass,
     COMPAT_PHASE: phase,
     COMPAT_DIAGNOSTIC_STATUS: diagnosticStatus,
@@ -285,6 +332,7 @@ withTempDir((dir) => {
   // tsc_and_tsz_oracle_delta. Both real compiler exits remain nonzero and equal.
   // This must score GREEN with oracle_classification both-fail-same.
   const parity = runProjectCompatibility(["record"], {
+    ...exactEvidenceEnv(),
     COMPAT_JSONL_FILE: jsonl,
     COMPAT_NAME: "ts-belt-project",
     COMPAT_EXIT_CLASS: "exit success",
@@ -477,7 +525,7 @@ withTempDir((dir) => {
         COMPAT_PEAK_MEMORY_BYTES: "0",
       },
       expected: {
-        state: "green",
+        state: "gray",
         filesReached: 0,
         filesReachedReason: null,
         peakMemoryBytes: 0,
@@ -801,6 +849,89 @@ withTempDir((dir) => {
   }
 });
 
+// Evidence schema 3 is an all-or-nothing contract. A semantically green row
+// remains runnable, but is recorded gray unless its source, manifest-bound
+// binary, compile graph, oracle, diagnostics, and zero-stub inventory are exact.
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const exact = {
+    ...exactEvidenceEnv(),
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "utility-types-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+  };
+  const variants = [
+    { name: "exact", env: exact, state: "green", schema: 3, failure: null },
+    { name: "missing-source", env: { ...exact, COMPAT_SOURCE_COMMIT: "" }, failure: "source_commit" },
+    { name: "unstable-source", env: { ...exact, COMPAT_SOURCE_STABLE: "false" }, failure: "source_stable" },
+    { name: "missing-tree", env: { ...exact, COMPAT_SOURCE_TREE_FINGERPRINT: "" }, failure: "source_tree_fingerprint" },
+    { name: "missing-protocol", env: { ...exact, COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT: "" }, failure: "evidence_protocol_fingerprint" },
+    { name: "missing-binary", env: { ...exact, COMPAT_TSZ_BINARY_SHA256: "" }, failure: "tsz_binary_sha256" },
+    { name: "missing-manifest", env: { ...exact, COMPAT_BUILD_MANIFEST_SHA256: "" }, failure: "build_manifest_sha256" },
+    { name: "missing-build-inputs", env: { ...exact, COMPAT_BUILD_INPUTS_SHA256: "" }, failure: "build_inputs_sha256" },
+    {
+      name: "manifest-binary-mismatch",
+      env: { ...exact, COMPAT_BUILD_MANIFEST_BINARY_SHA256: "9".repeat(64) },
+      failure: "build_manifest_binary",
+    },
+    { name: "missing-compile-input", env: { ...exact, COMPAT_COMPILE_INPUT_FINGERPRINT: "" }, failure: "compile_input_fingerprint" },
+    { name: "moving-compile-input", env: { ...exact, COMPAT_COMPILE_INPUT_STABLE: "false" }, failure: "compile_input_stable" },
+    { name: "missing-oracle", env: { ...exact, COMPAT_ORACLE_FINGERPRINT: "" }, failure: "oracle_fingerprint" },
+    { name: "legacy-schema", env: { ...exact, COMPAT_EVIDENCE_SCHEMA: "2" }, failure: "evidence_schema" },
+  ];
+
+  const tinyStub = fixtureStubEvidenceFor(ROOT, "tiny-invariant-project");
+  variants.push({
+    name: "stubbed-row",
+    env: {
+      ...exact,
+      COMPAT_NAME: "tiny-invariant-project",
+      COMPAT_STUB_INVENTORY_SCHEMA: String(tinyStub.stubInventorySchema),
+      COMPAT_STUBBED_MODULES: String(tinyStub.stubbedModules),
+      COMPAT_STUBBED_ANY_MEMBERS: String(tinyStub.stubbedAnyMembers),
+      COMPAT_STUB_INVENTORY_FINGERPRINT: tinyStub.stubInventoryFingerprint,
+      COMPAT_STUB_INVENTORY_OWNERS: JSON.stringify(tinyStub.stubInventoryOwners),
+    },
+    failure: "fixture_stub_inventory",
+  });
+  variants.push({
+    name: "typed-declaration-owner",
+    env: {
+      ...exact,
+      COMPAT_STUB_INVENTORY_OWNERS: JSON.stringify(["typed_declaration_writer"]),
+      COMPAT_STUB_INVENTORY_FINGERPRINT: fixtureStubEvidenceFingerprint(
+        0,
+        0,
+        ["typed_declaration_writer"],
+      ),
+    },
+    failure: "fixture_stub_inventory",
+  });
+  variants.push({
+    name: "duplicate-equal-exits",
+    env: {
+      ...exact,
+      COMPAT_TSZ_EXIT_CODES: "0 0",
+      COMPAT_TSC_EXIT_CODES: "0 0",
+    },
+    failure: "compiler_exits",
+  });
+
+  for (const variant of variants) {
+    const result = runProjectCompatibility(["record"], variant.env);
+    assert.equal(result.status, 0, `${variant.name}: ${result.stderr}`);
+  }
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  for (const [index, variant] of variants.entries()) {
+    const row = rows[index];
+    assert.equal(row.state, variant.state || "gray", `${variant.name}: state`);
+    assert.equal(row.evidence_schema, variant.schema || null, `${variant.name}: schema`);
+    if (variant.failure) assert.ok(row.evidence_failures.includes(variant.failure), variant.name);
+  }
+});
+
 withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
   const result = runProjectCompatibility(["record"], {
@@ -879,6 +1010,7 @@ withTempDir((dir) => {
 
   for (const testCase of cases) {
     const result = runProjectCompatibility(["record"], {
+      ...(testCase.expectedState === "green" ? exactEvidenceEnv() : {}),
       COMPAT_JSONL_FILE: jsonl,
       COMPAT_NAME: testCase.name,
       COMPAT_EXIT_CLASS: testCase.exitClass,
@@ -965,7 +1097,8 @@ withTempDir((dir) => {
   assert.equal(payload.failures, 1);
   assert.equal(payload.row_count, 2);
   assert.equal(payload.malformed_jsonl_lines, 1);
-  assert.equal(payload.by_state.green, 1);
+  assert.equal(payload.by_state.green, undefined);
+  assert.equal(payload.by_state.gray, 1);
   assert.equal(payload.by_state.red, 1);
 });
 

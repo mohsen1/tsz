@@ -1,24 +1,20 @@
 use crate::diagnostics::Diagnostic;
 use crate::source::{SourceText, Span};
-
 /// An ECMAScript string value represented as exact UTF-16 code units.
 ///
 /// Rust `String` cannot represent authored escapes for lone surrogate code
 /// units, which TypeScript retains as valid ordinary string literal values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Utf16String(Vec<u16>);
-
 impl Utf16String {
     #[must_use]
     pub fn units(&self) -> &[u16] {
         &self.0
     }
-
     pub(crate) fn as_string(&self) -> Option<String> {
         String::from_utf16(&self.0).ok()
     }
 }
-
 /// Syntax-owned spelling and value for an ordinary string containing at
 /// least one authored extended Unicode escape.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,13 +28,11 @@ pub struct ExtendedUnicodeStringLiteral {
     pub contains_invalid_escape: bool,
     pub contains_extended_unicode_escape: bool,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StringLiteral {
     Plain(String),
     Extended(ExtendedUnicodeStringLiteral),
 }
-
 /// Structural result of scanning one authored escape. String and template
 /// consumers retain their distinct recovery diagnostics and value domains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,13 +50,11 @@ pub(super) enum AuthoredEscape {
     },
     MissingCharacter,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StringDiagnosticEvent {
     byte_span: Span,
     diagnostic: Diagnostic,
 }
-
 impl StringDiagnosticEvent {
     fn new(source: &SourceText, span: Span, message: impl Into<String>, code: u32) -> Self {
         Self {
@@ -71,26 +63,22 @@ impl StringDiagnosticEvent {
         }
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ScannedStringLiteral {
     pub span: Span,
     literal: ExtendedUnicodeStringLiteral,
 }
-
 impl ScannedStringLiteral {
     pub(super) fn syntax_literal(&self) -> ExtendedUnicodeStringLiteral {
         self.literal.clone()
     }
 }
-
 pub(super) struct ScannedStringToken {
     pub end: usize,
     pub diagnostics: Vec<Diagnostic>,
     pub extended_literal: Option<ScannedStringLiteral>,
     pub cooked_literal: Option<ScannedCookedStringLiteral>,
 }
-
 /// Scanner-owned semantic value for a terminated string. The authored token
 /// remains in source text for emit; parser consumers use this cooked value for
 /// identity, including lone UTF-16 surrogate units.
@@ -99,7 +87,6 @@ pub(super) struct ScannedCookedStringLiteral {
     pub span: Span,
     pub cooked: Utf16String,
 }
-
 pub(super) fn scan_ordinary_string_literal(
     source: &SourceText,
     start: usize,
@@ -133,7 +120,6 @@ pub(super) fn scan_ordinary_string_literal(
             cooked_literal,
         };
     }
-
     let mut offset = start + 1;
     let mut segment_start = offset;
     let mut cooked = Vec::new();
@@ -141,7 +127,6 @@ pub(super) fn scan_ordinary_string_literal(
     let mut contains_invalid_escape = false;
     let mut contains_extended_unicode_escape = false;
     let mut terminated = false;
-
     while let Some(byte) = bytes.get(offset).copied() {
         if byte == quote {
             append_utf16(&source.text[segment_start..offset], &mut cooked);
@@ -181,11 +166,9 @@ pub(super) fn scan_ordinary_string_literal(
         };
         offset += character.len_utf8();
     }
-
     if !terminated && offset >= bytes.len() && segment_start <= offset {
         append_utf16(&source.text[segment_start..offset], &mut cooked);
     }
-
     if !terminated {
         push_event(
             source,
@@ -195,11 +178,9 @@ pub(super) fn scan_ordinary_string_literal(
             1002,
         );
     }
-
     ordinary_events.extend(events);
     ordinary_events.sort_by_key(|event| event.byte_span.start);
     let events = ordinary_events;
-
     let span = Span::new(source.id, start, offset);
     debug_assert_eq!(probe.end, offset);
     debug_assert_eq!(probe.terminated, terminated);
@@ -228,14 +209,12 @@ pub(super) fn scan_ordinary_string_literal(
         cooked_literal,
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StringProbe {
     end: usize,
     terminated: bool,
     has_extended_escape: bool,
 }
-
 fn probe_ordinary_string_literal(source: &SourceText, start: usize, quote: u8) -> StringProbe {
     let bytes = source.text.as_bytes();
     let mut offset = start + 1;
@@ -273,7 +252,6 @@ fn probe_ordinary_string_literal(source: &SourceText, start: usize, quote: u8) -
         has_extended_escape,
     }
 }
-
 fn scan_ordinary_escape_diagnostics(
     source: &SourceText,
     start: usize,
@@ -316,7 +294,6 @@ fn scan_ordinary_escape_diagnostics(
     }
     diagnostics
 }
-
 pub(super) fn decode_authored_escape(
     text: &str,
     offset: &mut usize,
@@ -407,7 +384,6 @@ pub(super) fn decode_authored_escape(
         }
     }
 }
-
 fn line_continuation_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
     match bytes.get(offset).copied() {
         Some(b'\r') if bytes.get(offset + 1) == Some(&b'\n') => Some(2),
@@ -416,14 +392,12 @@ fn line_continuation_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
         _ => None,
     }
 }
-
 fn is_unicode_line_separator_at(bytes: &[u8], offset: usize) -> bool {
     matches!(
         bytes.get(offset..offset + 3),
         Some([0xe2, 0x80, 0xa8 | 0xa9])
     )
 }
-
 fn push_decoded_escape(escape: AuthoredEscape, cooked: &mut Vec<u16>) -> Option<()> {
     let value = match escape {
         AuthoredEscape::Empty => return Some(()),
@@ -444,7 +418,6 @@ fn push_decoded_escape(escape: AuthoredEscape, cooked: &mut Vec<u16>) -> Option<
     push_code_point(value, cooked);
     Some(())
 }
-
 fn cook_terminated_ordinary_string(raw: &str) -> Option<Utf16String> {
     if raw.len() < 2 || raw.as_bytes().first() != raw.as_bytes().last() {
         return None;
@@ -471,7 +444,6 @@ fn cook_terminated_ordinary_string(raw: &str) -> Option<Utf16String> {
     append_utf16(&raw[segment_start..body_end], &mut cooked);
     Some(Utf16String(cooked))
 }
-
 #[allow(clippy::too_many_arguments)]
 fn scan_extended_escape(
     source: &SourceText,
@@ -490,7 +462,6 @@ fn scan_extended_escape(
         value = value.saturating_mul(16).saturating_add(u64::from(digit));
         *offset += 1;
     }
-
     let mut invalid = false;
     if *offset == digits_start {
         push_event(
@@ -511,7 +482,6 @@ fn scan_extended_escape(
         );
         invalid = true;
     }
-
     if *offset >= bytes.len() {
         push_event(
             source,
@@ -533,7 +503,6 @@ fn scan_extended_escape(
         );
         invalid = true;
     }
-
     if invalid {
         *contains_invalid_escape = true;
         append_utf16(&source.text[escape_start..*offset], cooked);
@@ -542,7 +511,6 @@ fn scan_extended_escape(
         push_code_point(value as u32, cooked);
     }
 }
-
 fn push_event(
     source: &SourceText,
     events: &mut Vec<StringDiagnosticEvent>,
@@ -558,11 +526,9 @@ fn push_event(
     }
     events.push(StringDiagnosticEvent::new(source, span, message, code));
 }
-
 fn append_utf16(text: &str, cooked: &mut Vec<u16>) {
     cooked.extend(text.encode_utf16());
 }
-
 fn push_code_point(value: u32, cooked: &mut Vec<u16>) {
     if value <= 0xffff {
         cooked.push(value as u16);
@@ -572,7 +538,6 @@ fn push_code_point(value: u32, cooked: &mut Vec<u16>) {
         cooked.push(0xdc00 + (adjusted & 0x3ff) as u16);
     }
 }
-
 pub(super) const fn hex_value(byte: u8) -> Option<u32> {
     match byte {
         b'0'..=b'9' => Some((byte - b'0') as u32),
@@ -581,7 +546,6 @@ pub(super) const fn hex_value(byte: u8) -> Option<u32> {
         _ => None,
     }
 }
-
 #[cfg(test)]
 #[path = "../../rewrite-tests/ordinary_string_escape_unit.rs"]
 mod tests;

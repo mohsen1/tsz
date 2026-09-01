@@ -1,10 +1,17 @@
 use std::sync::Arc;
-
-use tsz::bind::{DeclarationKind, Meaning, TypeMemberSymbol, bind_source};
-use tsz::service::LanguageService;
+use tsz::bind::{DeclarationKind, Meaning, TypeMemberSymbol, bind_source_with_kind};
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{StatementKind, TypeMemberKind, TypeMemberNameKind, TypeNodeKind, parse_source};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
+
+#[path = "type_member_parts/parameter_property_emit.rs"]
+mod parameter_property_emit;
 
 fn compile(source: &str, strict: bool) -> tsz::CompileOutput {
     Compiler::new().compile(
@@ -16,7 +23,9 @@ fn compile(source: &str, strict: bool) -> tsz::CompileOutput {
         },
     )
 }
-
+fn claimed<T>(query: ServiceQuery<T>) -> T {
+    query.expect_claimed("type-member service query")
+}
 fn codes(output: &tsz::CompileOutput) -> Vec<u32> {
     output
         .diagnostics
@@ -24,13 +33,11 @@ fn codes(output: &tsz::CompileOutput) -> Vec<u32> {
         .map(|diagnostic| diagnostic.code)
         .collect()
 }
-
 fn parse(source: &str) -> (SourceText, tsz::syntax::ParseOutput) {
     let source = SourceText::new(FileId(0), "case.ts".into(), Arc::<str>::from(source));
     let parsed = parse_source(&source);
     (source, parsed)
 }
-
 fn sole_interface(parsed: &tsz::syntax::ParseOutput) -> &tsz::syntax::InterfaceDeclaration {
     let [statement] = parsed.unit.statements.as_slice() else {
         panic!("expected one interface");
@@ -40,7 +47,6 @@ fn sole_interface(parsed: &tsz::syntax::ParseOutput) -> &tsz::syntax::InterfaceD
     };
     interface
 }
-
 #[test]
 fn parser_method_signature_1_through_12_keep_typed_names_and_generics() {
     // Inline copies of parserMethodSignature1-12 keep this rewrite test
@@ -87,13 +93,12 @@ fn parser_method_signature_1_through_12_keep_typed_names_and_generics() {
         );
         match index + 1 {
             1..=4 => assert!(matches!(name.kind, TypeMemberNameKind::Identifier(_))),
-            5..=8 => assert!(matches!(name.kind, TypeMemberNameKind::StringLiteral(_))),
+            5..=8 => assert!(matches!(name.kind, TypeMemberNameKind::StringLiteral(..))),
             9..=12 => assert!(matches!(name.kind, TypeMemberNameKind::NumericLiteral(_))),
             _ => unreachable!(),
         }
     }
 }
-
 #[test]
 fn one_ordered_member_list_preserves_all_bounded_variants() {
     let source = r#"interface Gateway<T> {
@@ -124,7 +129,6 @@ fn one_ordered_member_list_preserves_all_bounded_variants() {
             .all(|pair| pair[0].span.end <= pair[1].span.start)
     );
 }
-
 #[test]
 fn parser_index_signature_1_through_11_match_pinned_diagnostic_codes() {
     // Inline parserIndexSignature1-11 witnesses, pinned by
@@ -160,7 +164,6 @@ fn parser_index_signature_1_through_11_match_pinned_diagnostic_codes() {
         );
     }
 }
-
 #[test]
 fn index_modifier_diagnostics_retain_exact_token_provenance() {
     let source = "interface I { [public a] }";
@@ -184,7 +187,6 @@ fn index_modifier_diagnostics_retain_exact_token_provenance() {
         "a"
     );
 }
-
 #[test]
 fn call_signatures_without_annotations_are_any_in_non_strict_mode() {
     let source = "function foo(x){} let r=foo(1); interface I { (); f(); } let i:I; let r2=i(); let r3=i.f(); let a:{();f();}; let r4=a(); let r5=a.f();";
@@ -192,7 +194,6 @@ fn call_signatures_without_annotations_are_any_in_non_strict_mode() {
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
 }
-
 #[test]
 fn overload_optional_mismatches_report_each_deviating_member() {
     let source = "let c:{func4?(x:number):number;func4(s:string):string;}; let c2:{func4<T>(x:T):number;func4?<T>(s:T):string;};";
@@ -210,7 +211,6 @@ fn overload_optional_mismatches_report_each_deviating_member() {
         );
     }
 }
-
 #[test]
 fn duplicate_signature_parameters_are_reported_source_forward_once() {
     let source = "interface D { m(a:number,a:string,b:boolean,b:number):void; (c:number,c:string):void; new(d:number,d:string):object; } let value:D;";
@@ -224,7 +224,6 @@ fn duplicate_signature_parameters_are_reported_source_forward_once() {
     );
     assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
 }
-
 #[test]
 fn rest_array_likeness_uses_aliases_and_wrappers_without_false_success() {
     let source = r#"
@@ -267,7 +266,6 @@ fn rest_array_likeness_uses_aliases_and_wrappers_without_false_success() {
         SemanticCompletion::Deferred
     );
 }
-
 #[test]
 fn index_shapes_complete_only_at_the_bounded_string_key_boundary() {
     let source =
@@ -315,7 +313,6 @@ fn index_shapes_complete_only_at_the_bounded_string_key_boundary() {
     );
     assert_eq!(duplicate.semantic_completion, SemanticCompletion::Deferred);
 }
-
 #[test]
 fn member_scopes_own_typeof_parameters_and_do_not_capture_outer_names() {
     for (outer, parameter) in [("value", "value"), ("outside", "candidate")] {
@@ -349,7 +346,11 @@ fn member_scopes_own_typeof_parameters_and_do_not_capture_outer_names() {
         };
         assert_eq!(name, parameter);
 
-        let bound = bind_source(source_text.id, &parsed.unit);
+        let bound = bind_source_with_kind(
+            source_text.id,
+            tsz::source::SourceKind::TypeScript,
+            &parsed.unit,
+        );
         let member_scope = bound.scope_for_node[&member.id];
         let parameter_declaration = bound
             .declarations
@@ -395,7 +396,6 @@ fn member_scopes_own_typeof_parameters_and_do_not_capture_outer_names() {
         );
     }
 }
-
 #[test]
 fn signature_constraints_use_the_enclosing_value_scope() {
     let source = concat!(
@@ -457,7 +457,6 @@ fn signature_constraints_use_the_enclosing_value_scope() {
         }
     }
 }
-
 #[test]
 fn type_parameter_defaults_only_reference_prior_parameters() {
     let source = concat!(
@@ -520,7 +519,6 @@ fn type_parameter_defaults_only_reference_prior_parameters() {
         assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
     }
 }
-
 #[test]
 fn quick_info_fails_closed_for_unmerged_or_noncanonical_type_members() {
     for (source, name) in [
@@ -542,7 +540,10 @@ fn quick_info_fails_closed_for_unmerged_or_noncanonical_type_members() {
         service.open("case.ts", Arc::<str>::from(source));
         let offset = source.find(name).expect("declaration name") as u32;
         assert!(
-            service.quick_info("case.ts", offset + 1).is_none(),
+            matches!(
+                service.quick_info("case.ts", offset + 1),
+                ServiceQuery::Nonclaimed(_)
+            ),
             "unsupported member shape received confident quickinfo: {source}"
         );
     }
@@ -580,72 +581,66 @@ fn navigation_keeps_type_member_signature_locals_separate_from_outer_names() {
     for (source, type_name, value_name) in cases {
         let mut service = LanguageService::new(CompilerOptions::default());
         service.open("case.ts", Arc::<str>::from(source));
-
         let type_positions = source
             .match_indices(type_name)
             .map(|(position, _)| position as u32)
             .collect::<Vec<_>>();
         assert_eq!(type_positions.len(), 4, "{source}");
         for reference in &type_positions[2..] {
-            let definition = service
-                .definition_and_bound_span("case.ts", *reference + 1)
+            let definition = claimed(service.definition_and_bound_span("case.ts", *reference + 1))
                 .expect("inner type-parameter definition");
             assert_eq!(definition.definitions[0].text_span.start, type_positions[1]);
         }
         assert_eq!(
-            service.references("case.ts", type_positions[1] + 1)[0]
+            claimed(service.references("case.ts", type_positions[1] + 1))[0]
                 .references
                 .len(),
             3
         );
         assert_eq!(
-            service
-                .rename("case.ts", type_positions[1] + 1)
+            claimed(service.rename("case.ts", type_positions[1] + 1))
                 .locations
                 .len(),
             3
         );
         assert_eq!(
-            service.references("case.ts", type_positions[0] + 1)[0]
+            claimed(service.references("case.ts", type_positions[0] + 1))[0]
                 .references
                 .len(),
             1
         );
-
         let value_positions = source
             .match_indices(value_name)
             .map(|(position, _)| position as u32)
             .collect::<Vec<_>>();
         assert_eq!(value_positions.len(), 3, "{source}");
-        let definition = service
-            .definition_and_bound_span("case.ts", value_positions[2] + 1)
-            .expect("signature parameter definition");
+        let definition =
+            claimed(service.definition_and_bound_span("case.ts", value_positions[2] + 1))
+                .expect("signature parameter definition");
         assert_eq!(
             definition.definitions[0].text_span.start,
             value_positions[1]
         );
         assert_eq!(
-            service.references("case.ts", value_positions[1] + 1)[0]
+            claimed(service.references("case.ts", value_positions[1] + 1))[0]
                 .references
                 .len(),
             2
         );
         assert_eq!(
-            service
-                .rename("case.ts", value_positions[1] + 1)
+            claimed(service.rename("case.ts", value_positions[1] + 1))
                 .locations
                 .len(),
             2
         );
         assert_eq!(
-            service.references("case.ts", value_positions[0] + 1)[0]
+            claimed(service.references("case.ts", value_positions[0] + 1))[0]
                 .references
                 .len(),
             1
         );
     }
 }
-
 #[test]
 fn navigation_keeps_container_generics_and_retained_initializers_scoped() {
     for (source, name) in [
@@ -660,25 +655,23 @@ fn navigation_keeps_container_generics_and_retained_initializers_scoped() {
             .collect::<Vec<_>>();
         assert_eq!(positions.len(), 4, "{source}");
         for reference in &positions[2..] {
-            let definition = service
-                .definition_and_bound_span("case.ts", *reference + 1)
+            let definition = claimed(service.definition_and_bound_span("case.ts", *reference + 1))
                 .expect("container type-parameter definition");
             assert_eq!(definition.definitions[0].text_span.start, positions[1]);
         }
         assert_eq!(
-            service.references("case.ts", positions[1] + 1)[0]
+            claimed(service.references("case.ts", positions[1] + 1))[0]
                 .references
                 .len(),
             3
         );
         assert_eq!(
-            service.references("case.ts", positions[0] + 1)[0]
+            claimed(service.references("case.ts", positions[0] + 1))[0]
                 .references
                 .len(),
             1
         );
     }
-
     let source = "const seed=1;interface I{x?:number=seed;m(value=seed):void}type F=(arg=seed)=>void;declare function f(input=seed):void;";
     let mut service = LanguageService::new(CompilerOptions::default());
     service.open("case.ts", Arc::<str>::from(source));
@@ -688,23 +681,23 @@ fn navigation_keeps_container_generics_and_retained_initializers_scoped() {
         .collect::<Vec<_>>();
     assert_eq!(positions.len(), 5);
     for reference in &positions[1..] {
-        let definition = service
-            .definition_and_bound_span("case.ts", *reference + 1)
+        let definition = claimed(service.definition_and_bound_span("case.ts", *reference + 1))
             .expect("initializer definition");
         assert_eq!(definition.definitions[0].text_span.start, positions[0]);
     }
     assert_eq!(
-        service.references("case.ts", positions[0] + 1)[0]
+        claimed(service.references("case.ts", positions[0] + 1))[0]
             .references
             .len(),
         5
     );
     assert_eq!(
-        service.rename("case.ts", positions[0] + 1).locations.len(),
+        claimed(service.rename("case.ts", positions[0] + 1))
+            .locations
+            .len(),
         5
     );
 }
-
 #[test]
 fn callable_aliases_optional_and_noncanonical_names_are_explicit_nonclaims() {
     let cases = [
@@ -735,23 +728,33 @@ fn binder_groups_members_without_magic_string_collisions() {
     let (source_text, parsed) = parse(source);
     assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     let members = &sole_interface(&parsed).members;
-    let bound = bind_source(source_text.id, &parsed.unit);
+    let bound = bind_source_with_kind(
+        source_text.id,
+        tsz::source::SourceKind::TypeScript,
+        &parsed.unit,
+    );
     assert_eq!(
         bound.type_member_group(members[0].id).map(<[_]>::len),
         Some(2)
     );
     assert_eq!(
-        bound.canonical_type_member_declaration(members[0].id),
-        bound.canonical_type_member_declaration(members[1].id)
+        bound
+            .type_member_group(members[0].id)
+            .and_then(|group| group.first())
+            .copied(),
+        bound
+            .type_member_group(members[1].id)
+            .and_then(|group| group.first())
+            .copied()
     );
     assert!(matches!(
         bound.type_members[&members[2].id].symbol,
         Some(TypeMemberSymbol::Call)
     ));
-    assert!(matches!(
+    assert_eq!(
         bound.type_members[&members[5].id].symbol,
-        Some(TypeMemberSymbol::Named(ref name)) if name == "__call"
-    ));
+        Some(TypeMemberSymbol::Named("__call".encode_utf16().collect()))
+    );
 }
 
 #[test]
@@ -894,7 +897,7 @@ fn recursive_object_skeletons_complete_and_projection_recursion_is_explicit() {
 
     for source in [
         "interface Left{next:Left;tag:string}interface Right{next:Right;tag:number}declare let actual:Right;let rejected:Left=actual;",
-        "type Left={next:Left;tag:string};type Right={next:Right;tag:number};declare let actual:Right;let rejected:Left=actual;",
+        "type Right={next:Right;tag:number};type Left={next:Left;tag:string};declare let actual:Right;let rejected:Left=actual;",
     ] {
         let output = compile(source, true);
         assert_eq!(codes(&output), vec![2322]);
@@ -1383,101 +1386,6 @@ fn call_diagnostics_stop_at_arity_or_the_first_incompatible_argument() {
 }
 
 #[test]
-fn constructor_parameter_properties_emit_fields_assignments_and_declarations() {
-    let source = "export class C{constructor(public readonly x:number){}} export class D{constructor(public x:number=1){}}";
-    let output = Compiler::new().compile(
-        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
-        &CompilerOptions {
-            declaration: true,
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        },
-    );
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    let javascript = output
-        .emitted_files
-        .iter()
-        .find(|file| !file.declaration)
-        .expect("javascript");
-    assert_eq!(
-        javascript.text,
-        "export class C {\n    x;\n    constructor(x) {\n        this.x = x;\n    }\n}\nexport class D {\n    x;\n    constructor(x = 1) {\n        this.x = x;\n    }\n}\n"
-    );
-    let declaration = output
-        .emitted_files
-        .iter()
-        .find(|file| file.declaration)
-        .expect("declaration");
-    assert_eq!(
-        declaration.text,
-        "export declare class C {\n    readonly x: number;\n    constructor(x: number);\n}\nexport declare class D {\n    x: number;\n    constructor(x?: number);\n}\n"
-    );
-
-    let es2015 = Compiler::new().compile(
-        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
-        &CompilerOptions {
-            target: "es2015".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        },
-    );
-    let javascript = es2015
-        .emitted_files
-        .iter()
-        .find(|file| !file.declaration)
-        .expect("javascript");
-    assert!(!javascript.text.contains("    x;"));
-    assert_eq!(javascript.text.matches("this.x = x;").count(), 2);
-}
-
-#[test]
-fn optional_and_override_parameter_properties_keep_exact_emit_structure() {
-    let source = concat!(
-        "export declare class B{x:number} ",
-        "export class Optional{constructor(public value?:number){}} ",
-        "export class Derived extends B{constructor(override x:number){super()}}",
-    );
-    let output = Compiler::new().compile(
-        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
-        &CompilerOptions {
-            declaration: true,
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        },
-    );
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-    let javascript = &output
-        .emitted_files
-        .iter()
-        .find(|file| !file.declaration)
-        .expect("javascript")
-        .text;
-    assert!(javascript.contains(
-        "class Optional {\n    value;\n    constructor(value) {\n        this.value = value;\n    }\n}"
-    ));
-    assert!(javascript.contains(
-        "class Derived extends B {\n    x;\n    constructor(x) {\n        super();\n        this.x = x;\n    }\n}"
-    ));
-    let declaration = &output
-        .emitted_files
-        .iter()
-        .find(|file| file.declaration)
-        .expect("declaration")
-        .text;
-    assert!(declaration.contains(
-        "export declare class Optional {\n    value?: number | undefined;\n    constructor(value?: number | undefined);\n}"
-    ));
-    assert!(declaration.contains(
-        "export declare class Derived extends B {\n    x: number;\n    constructor(x: number);\n}"
-    ));
-    assert!(!declaration.contains("override x"));
-}
-
-#[test]
 fn declaration_emit_distinguishes_empty_implementations_from_bodyless_signatures() {
     let source = "export function implemented(){} export declare function ambient(); export function defaulted(x=1){}";
     let output = Compiler::new().compile(
@@ -1506,11 +1414,15 @@ fn navigation_and_duplicate_recovery_keep_first_signature_bindings() {
     service.open("case.ts", Arc::<str>::from(source));
     let seed = source.find("seed").expect("seed declaration") as u32;
     assert_eq!(
-        service.references("case.ts", seed + 1)[0].references.len(),
+        claimed(service.references("case.ts", seed + 1))[0]
+            .references
+            .len(),
         5
     );
-    assert_eq!(service.rename("case.ts", seed + 1).locations.len(), 5);
-
+    assert_eq!(
+        claimed(service.rename("case.ts", seed + 1)).locations.len(),
+        5
+    );
     let duplicate = "type R=(x:number,x:string)=>typeof x; declare let r:R; const value=r(1,\"s\"); const numberUse:number=value; const stringUse:string=value;";
     let output = compile(duplicate, true);
     assert_eq!(
@@ -1527,23 +1439,21 @@ fn navigation_and_duplicate_recovery_keep_first_signature_bindings() {
         .map(|(position, _)| position as u32)
         .collect::<Vec<_>>();
     assert_eq!(positions.len(), 3);
-    let definition = service
-        .definition_and_bound_span("case.ts", positions[2] + 1)
+    let definition = claimed(service.definition_and_bound_span("case.ts", positions[2] + 1))
         .expect("typeof duplicate parameter definition");
     assert_eq!(definition.definitions[0].text_span.start, positions[0]);
-    assert_eq!(
-        service.references("case.ts", positions[0] + 1)[0]
-            .references
-            .len(),
-        2
-    );
-    assert_eq!(
-        service.references("case.ts", positions[1] + 1)[0]
-            .references
-            .len(),
-        1
-    );
-
+    for (position, locations) in [(positions[0], 2), (positions[1], 1)] {
+        assert!(matches!(
+            service.references("case.ts", position + 1),
+            ServiceQuery::Nonclaimed(_)
+        ));
+        assert_eq!(
+            claimed(service.rename("case.ts", position + 1))
+                .locations
+                .len(),
+            locations
+        );
+    }
     let implemented = compile(
         "function direct(x:number,x:string){return x} const value=direct(1,\"s\"); const numberUse:number=value; const stringUse:string=value;",
         true,
@@ -1554,7 +1464,6 @@ fn navigation_and_duplicate_recovery_keep_first_signature_bindings() {
         SemanticCompletion::Complete
     );
 }
-
 #[test]
 fn unsupported_signature_display_and_index_writes_fail_closed() {
     for (source, name) in [
@@ -1566,11 +1475,13 @@ fn unsupported_signature_display_and_index_writes_fail_closed() {
         service.open("case.ts", Arc::<str>::from(source));
         let offset = source.find(name).expect("declaration") as u32;
         assert!(
-            service.quick_info("case.ts", offset + 1).is_none(),
+            matches!(
+                service.quick_info("case.ts", offset + 1),
+                ServiceQuery::Nonclaimed(_)
+            ),
             "{source}"
         );
     }
-
     let readonly = compile(
         "let dictionary:{readonly [key:string]:number}; dictionary.answer=1;",
         true,
@@ -1615,11 +1526,23 @@ fn contextual_modifier_names_and_keyword_computed_names_recover_structurally() {
     assert!(!output.emitted_files[0].declaration);
     assert_eq!(output.emitted_files[0].text, "export {};\n");
 
-    for (source, host_code) in [
-        ("interface I{[this]:number}", 1169),
-        ("type T={[this]:number}", 1170),
-        ("interface I{[super.x]:number}", 1169),
-        ("type T={[import.meta]:number}", 1170),
+    for (source, host_code, completion) in [
+        (
+            "interface I{[this]:number}",
+            1169,
+            SemanticCompletion::Complete,
+        ),
+        ("type T={[this]:number}", 1170, SemanticCompletion::Deferred),
+        (
+            "interface I{[super.x]:number}",
+            1169,
+            SemanticCompletion::Deferred,
+        ),
+        (
+            "type T={[import.meta]:number}",
+            1170,
+            SemanticCompletion::Deferred,
+        ),
     ] {
         let output = compile(source, false);
         assert_eq!(
@@ -1628,7 +1551,7 @@ fn contextual_modifier_names_and_keyword_computed_names_recover_structurally() {
             "{source}: {:?}",
             output.diagnostics
         );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.semantic_completion, completion, "{source}");
     }
 }
 
@@ -1901,57 +1824,4 @@ fn literal_defaults_feed_parameter_values_and_unknown_defaults_block_dts() {
         bodyless.exit_status,
         CompileExitStatus::DiagnosticsPresentOutputsSkipped
     );
-}
-
-#[test]
-fn derived_parameter_property_emit_preserves_directives_and_super_order() {
-    let source = concat!(
-        "class B{} ",
-        "export class Base{constructor(public x:number){\"use custom\";work();}} ",
-        "export class Derived extends B{constructor(public x:number){\"use custom\";super();work();}}",
-    );
-    let esnext = Compiler::new().compile(
-        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
-        &CompilerOptions {
-            target: "esnext".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        },
-    );
-    let text = &esnext
-        .emitted_files
-        .iter()
-        .find(|file| !file.declaration)
-        .expect("esnext javascript")
-        .text;
-    assert!(text.contains(
-        "constructor(x) {\n        \"use custom\";\n        this.x = x;\n        work();\n    }"
-    ));
-    assert!(text.contains(
-        "constructor(x) {\n        \"use custom\";\n        super();\n        this.x = x;\n        work();\n    }"
-    ));
-    assert_eq!(text.matches("    x;\n").count(), 2);
-
-    let es2015 = Compiler::new().compile(
-        vec![SourceInput::new("case.ts", Arc::<str>::from(source))],
-        &CompilerOptions {
-            target: "es2015".to_string(),
-            module: "esnext".to_string(),
-            ..CompilerOptions::default()
-        },
-    );
-    let text = &es2015
-        .emitted_files
-        .iter()
-        .find(|file| !file.declaration)
-        .expect("es2015 javascript")
-        .text;
-    assert!(!text.contains("    x;\n"));
-    assert!(text.find("super();").unwrap() < text.rfind("this.x = x;").unwrap());
-
-    let instance = compile(
-        "class C{constructor(public x:number){}} const value=new C(1).x;",
-        true,
-    );
-    assert_eq!(instance.semantic_completion, SemanticCompletion::Deferred);
 }

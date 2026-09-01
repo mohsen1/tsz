@@ -50,6 +50,23 @@ class FakeSessionClient {
     getFormattingEditsForRange() {
         return this.formatResult;
     }
+
+    createFileLocationRequestArgs(fileName, position) {
+        return { file: fileName, position };
+    }
+
+    processRequest(command, arguments_) {
+        return { command, arguments: arguments_ };
+    }
+
+    processResponse(request) {
+        this.lastRequest = request;
+        return { body: this.responseBody };
+    }
+
+    decodeSpan(span, fileName) {
+        return { decodedFor: fileName, start: span.start, end: span.end };
+    }
 }
 
 console.log("session-client-truth.test.cjs");
@@ -81,6 +98,140 @@ test("canonical patch preserves TSZ completion, detail, fix, and formatting payl
     assert.strictEqual(client.getCompletionEntryDetails(), client.detailResult);
     assert.strictEqual(client.getCodeFixesAtPosition(), client.codeFixResult);
     assert.strictEqual(client.getFormattingEditsForRange(), client.formatResult);
+});
+
+test("definition decoders preserve metadata and context returned by tsz-server", () => {
+    const client = new FakeSessionClient();
+    client.responseBody = [{
+        file: "/project/definition.ts",
+        start: { line: 2, offset: 7 },
+        end: { line: 2, offset: 11 },
+        contextStart: { line: 2, offset: 1 },
+        contextEnd: { line: 4, offset: 2 },
+        kind: "class",
+        name: "Tree",
+        containerKind: "module",
+        containerName: "Forest",
+        isLocal: true,
+        isAmbient: false,
+        unverified: false,
+        failedAliasResolution: false,
+    }];
+
+    assert.deepEqual(client.getTypeDefinitionAtPosition("/project/use.ts", 4), [{
+        fileName: "/project/definition.ts",
+        textSpan: {
+            decodedFor: "/project/definition.ts",
+            start: { line: 2, offset: 7 },
+            end: { line: 2, offset: 11 },
+        },
+        kind: "class",
+        name: "Tree",
+        containerKind: "module",
+        containerName: "Forest",
+        isLocal: true,
+        isAmbient: false,
+        unverified: false,
+        failedAliasResolution: false,
+        contextSpan: {
+            decodedFor: "/project/definition.ts",
+            start: { line: 2, offset: 1 },
+            end: { line: 4, offset: 2 },
+        },
+    }]);
+    assert.deepEqual(client.lastRequest, {
+        command: "typeDefinition",
+        arguments: { file: "/project/use.ts", position: 4 },
+    });
+});
+
+test("definition decoders supply TypeScript's unknown containerKind fallback", () => {
+    const client = new FakeSessionClient();
+    const entry = {
+        file: "/project/definition.ts",
+        start: { line: 1, offset: 2 },
+        end: { line: 1, offset: 6 },
+        kind: "const",
+        name: "leaf",
+    };
+    const expectedDefinition = {
+        fileName: "/project/definition.ts",
+        textSpan: {
+            decodedFor: "/project/definition.ts",
+            start: { line: 1, offset: 2 },
+            end: { line: 1, offset: 6 },
+        },
+        kind: "const",
+        name: "leaf",
+        containerKind: "",
+        containerName: "",
+        isLocal: false,
+        isAmbient: false,
+        unverified: false,
+        failedAliasResolution: false,
+    };
+
+    client.responseBody = [entry];
+    const decoded = client.getDefinitionAtPosition("/project/use.ts", 3);
+    assert.deepEqual(decoded, [expectedDefinition]);
+    assert.equal(decoded[0].containerKind, "");
+
+    client.responseBody = [entry];
+    assert.deepEqual(
+        client.getTypeDefinitionAtPosition("/project/use.ts", 3),
+        [expectedDefinition],
+    );
+
+    client.responseBody = {
+        definitions: [entry],
+        textSpan: {
+            start: { line: 3, offset: 4 },
+            end: { line: 3, offset: 8 },
+        },
+    };
+    assert.deepEqual(
+        client.getDefinitionAndBoundSpan("/project/use.ts", 3),
+        {
+            definitions: [expectedDefinition],
+            textSpan: {
+                decodedFor: "/project/use.ts",
+                start: { line: 3, offset: 4 },
+                end: { line: 3, offset: 8 },
+            },
+        },
+    );
+});
+
+test("empty bound-span products become undefined without hiding nonclaims", () => {
+    const client = new FakeSessionClient();
+    client._languageService = {
+        getDefinitionAtPosition: () => [{ name: "oracle-definition" }],
+        getTypeDefinitionAtPosition: () => [{ name: "oracle-type-definition" }],
+        getDefinitionAndBoundSpan: () => ({ definitions: [{ name: "oracle-bound" }] }),
+    };
+
+    client.responseBody = [];
+    assert.deepEqual(client.getDefinitionAtPosition("/project/use.ts", 2), []);
+
+    client.responseBody = [];
+    assert.deepEqual(client.getTypeDefinitionAtPosition("/project/use.ts", 2), []);
+
+    client.responseBody = {
+        definitions: [],
+        textSpan: {
+            start: { line: 1, offset: 1 },
+            end: { line: 1, offset: 2 },
+        },
+    };
+    assert.equal(client.getDefinitionAndBoundSpan("/project/use.ts", 2), undefined);
+
+    client.processResponse = () => {
+        throw new Error("TSZ definitionAndBoundSpan incomplete: deferred");
+    };
+    assert.throws(
+        () => client.getDefinitionAndBoundSpan("/project/use.ts", 2),
+        /TSZ definitionAndBoundSpan incomplete: deferred/,
+    );
 });
 
 test("empty TSZ completion is not backfilled by a nonempty in-process result", () => {

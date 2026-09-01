@@ -858,6 +858,33 @@ fn output_collisions_skip_only_unsafe_products_and_return_exit_one() {
     }
     assert!(duplicate.path().join("other.js").is_file());
     assert!(duplicate.path().join("other.d.ts").is_file());
+
+    for files in [
+        r#"["other.ts", "same.tsx", "same.ts"]"#,
+        r#"["same.ts", "same.tsx", "other.ts"]"#,
+    ] {
+        std::fs::write(
+            duplicate.path().join("tsconfig.json"),
+            format!(
+                r#"{{
+                    "compilerOptions": {{ "declaration": true, "jsx": "react" }},
+                    "files": {files}
+                }}"#
+            ),
+        )
+        .unwrap();
+        let repeated = run_tsz(duplicate.path(), ["--project", ".", "--pretty", "false"]);
+        assert_eq!(repeated.status.code(), Some(1));
+        assert_eq!(
+            String::from_utf8(repeated.stdout)
+                .unwrap()
+                .matches("error TS5056:")
+                .count(),
+            2
+        );
+        assert!(duplicate.path().join("other.js").is_file());
+        assert!(duplicate.path().join("other.d.ts").is_file());
+    }
 }
 
 #[test]

@@ -4,12 +4,12 @@ use crate::source::NodeId;
 
 use super::flow_containment::FunctionExpressionProducts;
 use super::{
-    ALL_TARGETS, CapabilityNonclaim, CapabilityScope, CapabilityTarget, ProgramFile, SemanticGap,
-    SyntaxGap, add_javascript, add_semantic, span_is_single_line, span_owns_comment,
+    ALL_TARGETS, CapabilityScope, CapabilityTarget, ProgramFile, ScopedNonclaims, SemanticGap,
+    SyntaxGap, span_is_single_line, span_owns_comment,
 };
 
 pub(super) fn add_nonclaims(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
+    nonclaims: &mut ScopedNonclaims<'_>,
     file: &ProgramFile,
     functions: Vec<FunctionExpressionProducts>,
     method_owners: BTreeSet<NodeId>,
@@ -26,6 +26,7 @@ pub(super) fn add_nonclaims(
     };
     for function in functions {
         let scope = CapabilityScope::node(id, function.owner);
+        let mut scoped = nonclaims.at(scope);
         for (target, gap) in [
             (
                 CapabilityTarget::Declaration,
@@ -36,13 +37,13 @@ pub(super) fn add_nonclaims(
                 SemanticGap::FunctionLikeService,
             ),
         ] {
-            add_semantic(nonclaims, &[target], scope, gap);
+            scoped.semantic(&[target], gap);
         }
         if file.syntax.parser_recovery_facts.iter().any(|recovery| {
             function.span.start <= recovery.authored_span.start
                 && recovery.authored_span.end <= function.span.end
         }) {
-            add_javascript(nonclaims, scope, SyntaxGap::FunctionExpressionRecovery);
+            scoped.javascript(SyntaxGap::FunctionExpressionRecovery);
         }
         if let Some(root) = file.syntax.statements.iter().find(|root| {
             root.span.start <= function.span.start && function.span.end <= root.span.end
@@ -50,35 +51,28 @@ pub(super) fn add_nonclaims(
             span_owns_comment(root.span, comment) && !span_owns_comment(function.span, comment)
         }) {
             let gap = SyntaxGap::FunctionExpressionOuterComments;
-            add_javascript(nonclaims, CapabilityScope::node(id, root.id), gap);
+            scoped.node(id, root.id).javascript(gap);
         }
         if needs_printer_fence(&function) {
-            add_javascript(nonclaims, scope, SyntaxGap::FunctionLikePrinter);
+            scoped.javascript(SyntaxGap::FunctionLikePrinter);
         }
     }
     if !method_owners.is_empty() {
-        add_semantic(
-            nonclaims,
-            &ALL_TARGETS[7..],
-            CapabilityScope::Program,
-            SemanticGap::FunctionLikeService,
-        );
+        nonclaims
+            .at(CapabilityScope::Program)
+            .semantic(&ALL_TARGETS[7..], SemanticGap::FunctionLikeService);
     }
     for owner in method_owners {
-        add_semantic(
-            nonclaims,
+        nonclaims.node(id, owner).semantic(
             &[CapabilityTarget::DeclarationModel],
-            CapabilityScope::node(id, owner),
             SemanticGap::FunctionLikeService,
         );
     }
     for method in methods {
         if needs_printer_fence(&method) {
-            add_javascript(
-                nonclaims,
-                CapabilityScope::node(id, method.owner),
-                SyntaxGap::FunctionLikePrinter,
-            );
+            nonclaims
+                .node(id, method.owner)
+                .javascript(SyntaxGap::FunctionLikePrinter);
         }
     }
 }

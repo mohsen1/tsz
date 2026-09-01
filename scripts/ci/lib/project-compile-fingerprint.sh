@@ -17,15 +17,6 @@
 #
 # Callers must set $_TSZ_BINARY_HASH before invoking compute_compile_fingerprint.
 
-# Source/config globs that participate in a project's compile-input identity.
-# JavaScript variants matter for allowJs projects; JSON covers tsconfig extends,
-# package exports/types metadata, and resolveJsonModule inputs.
-TSZ_COMPILE_FINGERPRINT_SOURCE_GLOBS=(
-  '*.ts' '*.tsx' '*.mts' '*.cts'
-  '*.js' '*.jsx' '*.mjs' '*.cjs'
-  '*.json'
-)
-
 _TSZ_COMPILE_FINGERPRINT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 _TSZ_COMPILE_FINGERPRINT_BATCH_HASHER="${_TSZ_COMPILE_FINGERPRINT_LIB_DIR}/project-source-tree-hash.mjs"
 
@@ -42,6 +33,20 @@ sha256_of_stdin() {
     || shasum -a 256 2>/dev/null | awk '{print $1}' || true
 }
 
+# Hash shell values without delimiter ambiguity. Each value is byte-length and
+# NUL framed under the C locale, so embedded newlines and separators cannot
+# manufacture the same protocol identity.
+tsz_hash_framed_values() {
+  local value LC_ALL=C
+  {
+    printf 'tsz-framed-values-v1\0'
+    for value in "$@"; do
+      LC_ALL=C printf '%s\0' "${#value}"
+      printf '%s\0' "$value"
+    done
+  } | sha256_of_stdin
+}
+
 # Echo the resolved physical path of $1 (handling a missing leaf) or fail.
 tsz_fingerprint_resolve_physical() {
   local p="$1"
@@ -56,8 +61,8 @@ tsz_fingerprint_resolve_physical() {
   printf '%s/%s\n' "$parent_phys" "$base"
 }
 
-# Content fingerprint of the compiled source tree under $1. Stable across
-# regenerations because it hashes file *content* and the relative path, never
+# Content fingerprint of the compiled project tree under $1. Stable across
+# regenerations because it hashes file *content* and the relative graph, never
 # mtime, so a regenerated-but-identical fixture keeps hitting the fast path.
 # Prunes only VCS metadata. Dependency and generated trees are compiler inputs
 # when a config/import names them explicitly, so globally excluding
@@ -70,41 +75,84 @@ hash_source_tree() {
     return 0
   }
 
-  local find_name=() glob first=1
-  for glob in "${TSZ_COMPILE_FINGERPRINT_SOURCE_GLOBS[@]}"; do
-    if [[ "$first" == "1" ]]; then
-      find_name+=(-name "$glob")
-      first=0
-    else
-      find_name+=(-o -name "$glob")
+  # One bounded graph walk follows dependency symlinks without expanding every
+  # alias into a global path list. It records raw link targets and deterministic
+  # back-references while hashing each physical file once. Source mode includes
+  # ordinary files with arbitrary suffixes because allowNonTsExtensions can make
+  # any explicit root a compiler input; unrelated assets cause only safe misses.
+  # These optional
+  # environment limits fail closed rather than publishing a partial digest:
+  # TSZ_PROJECT_SOURCE_HASH_MAX_{NODES,EDGES,DEPTH,DIRECTORY_ENTRIES,
+  # BYTES,PATH_BYTES,MILLISECONDS}.
+  local digest
+  digest="$(node "$_TSZ_COMPILE_FINGERPRINT_BATCH_HASHER" \
+    "$dir" --source-tree 2>/dev/null)" || return 1
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$digest"
+}
+
+# Exact identity of the builtin declaration library consumed by TypeScript 7.
+# This is deliberately narrower than hash_source_tree: every lib*.d.ts in the
+# resolved compiler lib directory participates, and no unrelated package file
+# can stand in for a missing builtin library set.
+hash_builtin_lib_tree() {
+  local dir="$1" digest
+  [[ -d "$dir" ]] || return 1
+  digest="$(node "$_TSZ_COMPILE_FINGERPRINT_BATCH_HASHER" \
+    "$dir" --builtin-libs 2>/dev/null)" || return 1
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s' "$digest"
+}
+
+# Bind the oracle protocol to the pinned mapping/package metadata, every
+# launcher word that resolves to executable content, the native compiler, and
+# all builtin declaration contents. Missing inputs make oracle evidence
+# unavailable instead of producing a partial cache key.
+tsz_oracle_identity_fingerprint() {
+  local protocol="$1" builtin_dir="$2" native_exe="$3"
+  local versions_file="$4" wrapper_package_json="$5"
+  shift 5
+  [[ -f "$versions_file" && -f "$wrapper_package_json" \
+    && -f "$native_exe" && -d "$builtin_dir" ]] || return 1
+
+  local native_package_json builtin_hash versions_hash wrapper_hash native_hash native_package_hash="absent"
+  native_package_json="$(dirname "$(dirname "$native_exe")")/package.json"
+  builtin_hash="$(hash_builtin_lib_tree "$builtin_dir")" || return 1
+  versions_hash="$(sha256_of_file "$versions_file")"
+  wrapper_hash="$(sha256_of_file "$wrapper_package_json")"
+  native_hash="$(sha256_of_file "$native_exe")"
+  [[ "$versions_hash" =~ ^[0-9a-f]{64}$ && "$wrapper_hash" =~ ^[0-9a-f]{64}$ \
+    && "$native_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+  if [[ -f "$native_package_json" ]]; then
+    native_package_hash="$(sha256_of_file "$native_package_json")"
+    [[ "$native_package_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+  fi
+
+  local fields=(
+    protocol "$protocol"
+    pinned-mapping "$versions_hash"
+    wrapper-package "$wrapper_hash"
+    native-package "$native_package_hash"
+    builtin-libs "$builtin_hash"
+    native-path "$native_exe"
+    native-content "$native_hash"
+  )
+  local word resolved word_hash
+  for word in "$@"; do
+    fields+=(command-word "$word")
+    resolved=""
+    if [[ -f "$word" ]]; then
+      resolved="$word"
+    elif command -v "$word" >/dev/null 2>&1; then
+      resolved="$(command -v "$word")"
+    fi
+    if [[ -n "$resolved" && -f "$resolved" ]]; then
+      word_hash="$(sha256_of_file "$resolved")"
+      [[ "$word_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+      fields+=(command-path "$resolved" command-content "$word_hash")
     fi
   done
-
-  local listing sorted_listing digest
-  listing="$(mktemp)" || return 1
-  sorted_listing="$(mktemp)" || {
-    rm -f "$listing"
-    return 1
-  }
-  # Follow dependency symlinks so package-manager layouts cannot hide an
-  # explicitly compiled declaration outside the lexical row tree. A cycle or
-  # unreadable target must disable caching instead of hashing a partial walk.
-  if ! find -L "$dir" \
-    \( -path '*/.git/*' \) -prune -o \
-    -type f \( "${find_name[@]}" \) -print > "$listing" 2>/dev/null; then
-    rm -f "$listing" "$sorted_listing"
-    return 1
-  fi
-  # Preserve the legacy path/content stream while hashing every file in one
-  # bounded process instead of spawning a checksum process per input file.
-  if ! LC_ALL=C sort "$listing" > "$sorted_listing" \
-    || ! digest="$(node "$_TSZ_COMPILE_FINGERPRINT_BATCH_HASHER" "$dir" "$sorted_listing" 2>/dev/null)"; then
-    rm -f "$listing" "$sorted_listing"
-    return 1
-  fi
-  rm -f "$listing" "$sorted_listing"
-  [[ -n "$digest" ]] || return 1
-  printf '%s' "$digest"
+  tsz_hash_framed_values "${fields[@]}"
 }
 
 # Resolve the per-row project boundary. Fixture rows live immediately under
@@ -155,7 +203,8 @@ tsz_compile_input_identity() {
 }
 
 # Fingerprint for a check_project invocation:
-#   <name>|<tsz binary hash>|<oracle hash>|<tsconfig hash>|<input identity>
+#   <name>|<tsz binary hash>|<oracle hash>|<source overlay>|<evidence protocol>
+#   |<tsconfig hash>|<input identity>
 # Returns empty on failure so callers treat caching as unavailable.
 #
 # Input identity covers the whole fixture-row project boundary, not only the
@@ -176,5 +225,5 @@ compute_compile_fingerprint() {
   source_id="$(tsz_compile_input_identity "$tsconfig" "$src_dir")"
   [[ -n "$source_id" ]] || return
 
-  printf '%s' "${name}|${_TSZ_BINARY_HASH}|${_TSZ_TSC_ORACLE_HASH:-unavailable}|${tsconfig_hash}|${source_id}"
+  printf '%s' "${name}|${_TSZ_BINARY_HASH}|${_TSZ_TSC_ORACLE_HASH:-unavailable}|${_TSZ_SOURCE_OVERLAY_HASH:-unavailable}|${_TSZ_EVIDENCE_PROTOCOL_HASH:-unavailable}|${tsconfig_hash}|${source_id}"
 }

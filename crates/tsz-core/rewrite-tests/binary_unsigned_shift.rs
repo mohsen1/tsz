@@ -2,13 +2,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tsz::diagnostics::DiagnosticCategory;
-use tsz::service::LanguageService;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{
     AssignmentOperator, BinaryOperator, Expression, ExpressionKind, StatementKind, VariableKind,
     parse_source,
 };
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
 
 fn parse_expression(source: &str) -> Expression {
     let parsed = parse_source(&SourceText::new(
@@ -713,10 +718,14 @@ fn inferred_variable_quick_info_defers_without_blocking_operand_navigation() {
     service.open("service.ts", Arc::<str>::from(source));
     let shifted = source.find("shifted").unwrap() as u32;
     let typed = source.find("typed").unwrap() as u32;
-    assert!(service.quick_info("service.ts", shifted + 1).is_none());
+    assert!(matches!(
+        service.quick_info("service.ts", shifted + 1),
+        ServiceQuery::Nonclaimed(_)
+    ));
     assert_eq!(
         service
             .quick_info("service.ts", typed + 1)
+            .expect_claimed("annotated variable quick info capability")
             .expect("annotated variable quick info")
             .display,
         "const typed: number"
@@ -724,17 +733,23 @@ fn inferred_variable_quick_info_defers_without_blocking_operand_navigation() {
     let nested = source.find("nestedShift").unwrap() as u32;
     let defaulted = source.find("defaulted").unwrap() as u32;
     let field = source.find("shiftedField").unwrap() as u32;
-    assert!(service.quick_info("service.ts", nested + 1).is_none());
-    assert!(service.quick_info("service.ts", defaulted + 1).is_none());
-    assert!(service.quick_info("service.ts", field + 1).is_none());
+    for offset in [nested, defaulted, field] {
+        assert!(matches!(
+            service.quick_info("service.ts", offset + 1),
+            ServiceQuery::Nonclaimed(_)
+        ));
+    }
 
     let operand = source.find("input>>>").unwrap() as u32;
     let definition = service
         .definition_and_bound_span("service.ts", operand + 1)
+        .expect_claimed("operand definition capability")
         .expect("operand definition remains claimed");
     assert_eq!(definition.definitions.len(), 1);
     assert_eq!(definition.definitions[0].name, "input");
-    let rename = service.rename("service.ts", operand + 1);
+    let rename = service
+        .rename("service.ts", operand + 1)
+        .expect_claimed("operand rename");
     assert!(rename.info.can_rename);
     assert_eq!(rename.locations.len(), 6);
 }

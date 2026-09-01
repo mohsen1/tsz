@@ -1,16 +1,7 @@
 use super::*;
 
-#[derive(Debug, Clone)]
-struct Diagnostic {
-    code: u32,
-    message_text: String,
-}
-
-impl Diagnostic {
-    fn error(_file: String, _start: u32, _length: u32, message_text: String, code: u32) -> Self {
-        Self { code, message_text }
-    }
-}
+#[path = "tsz_wrapper_parts/binary_provenance.rs"]
+mod binary_provenance;
 
 fn compile_test(
     content: &str,
@@ -129,35 +120,31 @@ fn compile_test(
     }));
 
     match result {
-        Ok(Ok(diagnostics)) => {
-            // Extract error codes from diagnostics
-            let error_codes = extract_error_codes(&diagnostics);
-            let ordinary_exit = if error_codes.is_empty() { 0 } else { 1 };
-            Ok(CompilationResult {
-                error_codes,
-                diagnostic_fingerprints: vec![],
-                crashed: false,
-                semantic_completion: SemanticCompletion::Complete,
-                ordinary_exit_statuses: vec![ordinary_exit],
-                options: options.clone(),
-            })
-        }
+        Ok(Ok(output)) => Ok(classify_compile_output(output, dir_path, options.clone())),
         Ok(Err(e)) => Err(e), // Fatal error
         Err(_) => Ok(CompilationResult {
             error_codes: vec![],
             diagnostic_fingerprints: vec![],
             crashed: true,
-            semantic_completion: SemanticCompletion::Complete,
+            semantic_completion: SemanticCompletion::Incomplete,
             ordinary_exit_statuses: Vec::new(),
             options: options.clone(),
         }),
     }
 }
 
+fn classify_compile_output(
+    output: std::process::Output,
+    project_root: &std::path::Path,
+    options: HashMap<String, String>,
+) -> CompilationResult {
+    parse_tsz_output(&output, project_root, options)
+}
+
 fn compile_tsz_with_binary(
     base_dir: &std::path::Path,
     tsz_path: &str,
-) -> anyhow::Result<Vec<Diagnostic>> {
+) -> anyhow::Result<std::process::Output> {
     use std::process::Command;
 
     // Run tsz with --pretty false for machine-readable output
@@ -177,55 +164,7 @@ fn compile_tsz_with_binary(
         command.env("RUST_BACKTRACE", rust_backtrace);
     }
 
-    let output = command.output()?;
-
-    // Parse diagnostics from stderr and stdout
-    // This is a simplified version - real implementation would need to parse
-    // the output to extract diagnostic codes
-    if output.status.success() {
-        Ok(Vec::new())
-    } else {
-        // Parse error codes from both stdout and stderr
-        // Format: "file.ts(1,1): error TS2304: Cannot find name 'foo'"
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{}\n{}", stdout, stderr);
-        let diagnostics = parse_diagnostics_from_text(&combined);
-        Ok(diagnostics)
-    }
-}
-
-fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-
-    for line in text.lines() {
-        // Look for error pattern: "TSXXXX:"
-        if let Some(start) = line.find("TS") {
-            if let Some(end) = line[start..].find(':') {
-                let code_str = &line[start + 2..start + end];
-                if let Ok(code) = code_str.parse::<u32>() {
-                    // Create a simple diagnostic placeholder
-                    // Real implementation would parse the full diagnostic
-                    diagnostics.push(Diagnostic::error(
-                        "test.ts".to_string(),
-                        0,
-                        0,
-                        line.to_string(),
-                        code,
-                    ));
-                }
-            }
-        }
-    }
-
-    diagnostics
-}
-
-fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
-    diagnostics
-        .iter()
-        .map(|diagnostic| diagnostic.code)
-        .collect()
+    Ok(command.output()?)
 }
 
 #[test]
@@ -666,36 +605,13 @@ fn test_prepare_test_dir_no_types_and_symbols_excludes_at_types_from_root_files(
     }
 }
 
-/// Locate a built `tsz` binary, or `None` when one is not available. Returning
-/// `None` lets the compile-driving tests self-skip instead of hard-panicking on
-/// machines/CI shards that did not build the dist-fast binary.
+/// Locate a proven `tsz` binary, or `None` when this test invocation owns no
+/// exact Cargo binary and no verified build manifest.
 fn find_tsz_binary() -> Option<String> {
-    // Honor an explicitly provided binary path first (e.g. CARGO_BIN_EXE_tsz).
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_tsz") {
-        let path = std::path::PathBuf::from(path);
-        if path.exists() {
-            return Some(path.to_string_lossy().to_string());
-        }
-    }
-    // Try common build locations relative to workspace root
-    let candidates = [
-        ".target/dist-fast/tsz",
-        ".target/debug/tsz",
-        ".target/release/tsz",
-        "target/release/tsz",
-        "target/debug/tsz",
-    ];
-    // Workspace root is two levels up from crates/conformance/
     let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())?;
-    for candidate in &candidates {
-        let path = workspace_root.join(candidate);
-        if path.exists() {
-            return Some(path.to_string_lossy().to_string());
-        }
-    }
-    None
+    binary_provenance::find_tsz_binary(workspace_root)
 }
 
 #[test]
@@ -707,7 +623,7 @@ const x: number = "string";
 "#;
     let Some(tsz) = find_tsz_binary() else {
         eprintln!(
-            "skipping test_compile_simple_error: tsz binary not found (build with `cargo build --profile dist-fast -p tsz-cli`)"
+            "skipping test_compile_simple_error: no Cargo-provided binary or verified TSZ_CONFORMANCE_BUILD_MANIFEST"
         );
         return;
     };
@@ -724,7 +640,7 @@ const x: number = 42;
 "#;
     let Some(tsz) = find_tsz_binary() else {
         eprintln!(
-            "skipping test_compile_no_errors: tsz binary not found (build with `cargo build --profile dist-fast -p tsz-cli`)"
+            "skipping test_compile_no_errors: no Cargo-provided binary or verified TSZ_CONFORMANCE_BUILD_MANIFEST"
         );
         return;
     };
@@ -1151,7 +1067,7 @@ export const x = 1;
 
     let Some(tsz) = find_tsz_binary() else {
         eprintln!(
-            "skipping test_compile_prepared_dir_mts_only_emits_ts18003: tsz binary not found (build with `cargo build --profile dist-fast -p tsz-cli`)"
+            "skipping test_compile_prepared_dir_mts_only_emits_ts18003: no Cargo-provided binary or verified TSZ_CONFORMANCE_BUILD_MANIFEST"
         );
         return;
     };
@@ -1423,34 +1339,6 @@ fn test_normalize_message_paths_preserves_virtual_absolute_root_dir_prefix() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "File 'packages/search/lib/index.d.ts' is not under 'rootDir' 'packages/search-prefix/src'. 'rootDir' is expected to contain all source files.";
     assert_eq!(normalize_message_paths(raw, root), raw);
-}
-
-#[test]
-fn test_parse_diagnostics_from_text_extracts_error_codes() {
-    let output = "test.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.\n\
-        tests/foo.ts(2,5): error TS2304: Cannot find name 'missing'.\n\
-        note: unrelated text should be ignored";
-
-    let diagnostics = parse_diagnostics_from_text(output);
-    assert_eq!(extract_error_codes(&diagnostics), vec![2322, 2304]);
-    assert_eq!(
-        diagnostics[0].message_text,
-        output.lines().next().unwrap().to_string()
-    );
-    assert_eq!(
-        diagnostics[1].message_text,
-        output.lines().nth(1).unwrap().to_string()
-    );
-}
-
-#[test]
-fn test_parse_diagnostics_from_text_ignores_non_error_lines() {
-    let output = "tsserver: ready\n\
-        no TS codes here\n\
-        foo(1,1): warning: not parsed as error";
-
-    let diagnostics = parse_diagnostics_from_text(output);
-    assert_eq!(diagnostics.len(), 0);
 }
 
 #[test]

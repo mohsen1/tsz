@@ -1,22 +1,18 @@
+use anyhow::{Context, Result};
+use serde::Serialize;
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-
-use anyhow::{Context, Result};
-use serde::Serialize;
+pub use tsz::config::CompilerOptionPatch;
 use tsz::config::{
-    CompilerOptionKey, CompilerOptionValue, CompilerOptionValueKind, ProjectRequest,
-    ProjectSelection, find_config_file, resolve_project,
+    CompilerOptionKey, ProjectRequest, ProjectSelection, TargetValueOutcome, classify_target_value,
+    find_config_file, resolve_project,
 };
 use tsz::host::SystemHost;
-use tsz::{CompileOutput, Compiler, SemanticCompletion};
-
-pub use tsz::config::CompilerOptionPatch;
-
+use tsz::{CompileOutput, Compiler, DeferredCompilerOption, SemanticCompletion};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BATCH_SENTINEL: &str = "---TSZ-BATCH-DONE---";
 const SEMANTIC_COMPLETION_MARKER_PREFIX: &str = "---TSZ-SEMANTIC-COMPLETION:";
-
 #[derive(Debug, Default, Clone)]
 pub struct Invocation {
     pub options: CompilerOptionPatch,
@@ -28,40 +24,29 @@ pub struct Invocation {
     pub extended_diagnostics: bool,
     pub diagnostics_json: Option<PathBuf>,
     pub perf_counters_json: Option<PathBuf>,
-    pub unknown_options: Vec<String>,
+    pub command_line_diagnostics: Vec<(u32, String)>,
+    help: bool,
+    version: bool,
 }
-
 pub fn main_entry(arguments: impl IntoIterator<Item = OsString>) -> Result<i32> {
     let arguments: Vec<OsString> = arguments.into_iter().collect();
-    if arguments
-        .iter()
-        .any(|argument| argument == "--version" || argument == "-v")
-    {
-        println!("Version {VERSION}");
-        return Ok(0);
-    }
-    if arguments
-        .iter()
-        .any(|argument| argument == "--help" || argument == "-h")
-    {
-        render_help(&mut std::io::stdout().lock())?;
-        return Ok(0);
-    }
     let invocation = parse_arguments(&arguments)?;
-    if invocation.batch {
+    if invocation.batch
+        && invocation.command_line_diagnostics.is_empty()
+        && !invocation.help
+        && !invocation.version
+    {
         run_batch(invocation)
     } else {
-        run_once(invocation)
+        Ok(run_once_with_writer(invocation, &mut std::io::stdout().lock())?.0)
     }
 }
-
 pub fn main_exit_code() -> i32 {
     main_entry(std::env::args_os().skip(1)).unwrap_or_else(|error| {
         println!("{error:#}");
         1
     })
 }
-
 pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
     let mut invocation = Invocation {
         pretty: true,
@@ -92,31 +77,46 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
                 .with_context(|| format!("Compiler option '{raw_name}' expects an argument."))
         };
         if let Some(key) = CompilerOptionKey::from_cli_name(&name) {
-            let value =
-                match key.value_kind() {
-                    CompilerOptionValueKind::Boolean => CompilerOptionValue::Boolean(
-                        optional_bool(arguments, &mut index, inline_value, true),
-                    ),
-                    CompilerOptionValueKind::StringArray => CompilerOptionValue::StringArray(
-                        take_value()?
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_string)
-                            .collect(),
-                    ),
-                    CompilerOptionValueKind::String => CompilerOptionValue::String(take_value()?),
-                    CompilerOptionValueKind::Path => {
-                        CompilerOptionValue::Path(PathBuf::from(take_value()?))
-                    }
-                };
-            let accepted = invocation.options.set(key, value);
-            debug_assert!(accepted, "schema value kind and setter must agree");
+            let mut value = if key.takes_value() {
+                take_value()?
+            } else {
+                optional_bool(arguments, &mut index, inline_value, true).to_string()
+            };
+            if key == CompilerOptionKey::Target {
+                value = value.trim().to_string();
+            }
+            if key == CompilerOptionKey::Target
+                && let TargetValueOutcome::Invalid { message, code } = classify_target_value(&value)
+            {
+                invocation
+                    .command_line_diagnostics
+                    .push((code, message.to_string()));
+                index += 1;
+                continue;
+            }
+            invocation.options.set_cli_value(key, &value);
+            index += 1;
+            continue;
+        }
+        if let Some(key) = DeferredCompilerOption::from_cli_name(&name) {
+            let value = if key.takes_value() {
+                take_value()?
+            } else {
+                optional_bool(arguments, &mut index, inline_value, true).to_string()
+            };
+            if let Some((code, message)) = deferred_option_diagnostic(key, &value) {
+                invocation.command_line_diagnostics.push((code, message));
+                index += 1;
+                continue;
+            }
+            invocation.options.set_deferred_cli_value(key, &value);
             index += 1;
             continue;
         }
         match name.as_str() {
             "p" | "project" => invocation.project = Some(PathBuf::from(take_value()?)),
+            "h" | "help" if inline_value.is_none() => invocation.help = true,
+            "v" | "version" if inline_value.is_none() => invocation.version = true,
             "batch" => invocation.batch = true,
             "ignoreconfig" => {
                 invocation.ignore_config = optional_bool(arguments, &mut index, inline_value, true);
@@ -129,43 +129,14 @@ pub fn parse_arguments(arguments: &[OsString]) -> Result<Invocation> {
             "perf-counters-json" => {
                 invocation.perf_counters_json = Some(PathBuf::from(take_value()?));
             }
-            // Accepted process-surface options. The R0 engine applies the ones
-            // represented in `CompilerOptions`; unsupported transforms remain
-            // visible as emit mismatches in the retained oracle harness.
-            "alwaysstrict"
-            | "downleveliteration"
-            | "noemithelpers"
-            | "importhelpers"
-            | "esmoduleinterop"
-            | "experimentaldecorators"
-            | "emitdecoratormetadata"
-            | "exactoptionalpropertytypes"
-            | "preserveconstenums"
-            | "verbatimmodulesyntax"
-            | "rewriterelativeimportextensions"
-            | "isolatedmodules"
-            | "preservevalueimports"
-            | "stripinternal" => {
-                consume_optional_bool(arguments, &mut index, inline_value);
-            }
-            "jsx"
-            | "jsxfactory"
-            | "jsxfragmentfactory"
-            | "jsximportsource"
-            | "moduleresolution"
-            | "moduledetection"
-            | "importsnotusedasvalues"
-            | "baseurl"
-            | "outfile" => {
-                let _ = take_value()?;
-            }
-            _ => invocation.unknown_options.push(raw_name.to_string()),
+            _ => invocation
+                .command_line_diagnostics
+                .push((5023, format!("Unknown compiler option '{argument}'."))),
         }
         index += 1;
     }
     Ok(invocation)
 }
-
 fn optional_bool(
     arguments: &[OsString],
     index: &mut usize,
@@ -183,19 +154,6 @@ fn optional_bool(
     }
     default
 }
-
-fn consume_optional_bool(arguments: &[OsString], index: &mut usize, inline: Option<&str>) {
-    if inline.is_none()
-        && arguments
-            .get(*index + 1)
-            .and_then(|value| value.to_str())
-            .and_then(parse_bool)
-            .is_some()
-    {
-        *index += 1;
-    }
-}
-
 fn parse_bool(value: &str) -> Option<bool> {
     match value.to_ascii_lowercase().as_str() {
         "true" => Some(true),
@@ -203,7 +161,32 @@ fn parse_bool(value: &str) -> Option<bool> {
         _ => None,
     }
 }
-
+fn deferred_option_diagnostic(
+    option: DeferredCompilerOption,
+    value: &str,
+) -> Option<(u32, String)> {
+    use DeferredCompilerOption::{AlwaysStrict, BaseUrl, DownlevelIteration, EsModuleInterop};
+    let (code, authored) = match option {
+        BaseUrl => (5102, "baseUrl".to_string()),
+        DownlevelIteration if value.eq_ignore_ascii_case("false") => {
+            (5102, "downlevelIteration".to_string())
+        }
+        AlwaysStrict if value.eq_ignore_ascii_case("false") => {
+            (5108, "alwaysStrict=false".to_string())
+        }
+        EsModuleInterop if value.eq_ignore_ascii_case("false") => {
+            (5108, "esModuleInterop=false".to_string())
+        }
+        DeferredCompilerOption::ModuleResolution if value.eq_ignore_ascii_case("node10") => {
+            (5108, "moduleResolution=node10".to_string())
+        }
+        _ => return None,
+    };
+    Some((
+        code,
+        format!("Option '{authored}' has been removed. Please remove it from your configuration."),
+    ))
+}
 fn run_batch(base: Invocation) -> Result<i32> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
@@ -218,50 +201,44 @@ fn run_batch(base: Invocation) -> Result<i32> {
         invocation.files.clear();
         invocation.options.no_emit = Some(true);
         invocation.pretty = false;
-        let outcome = run_once_with_writer(invocation, &mut stdout)?;
+        let (_, completion) = run_once_with_writer(invocation, &mut stdout)?;
         writeln!(
             stdout,
             "{SEMANTIC_COMPLETION_MARKER_PREFIX}{}---",
-            outcome.semantic_completion.as_str()
+            completion.as_str()
         )?;
         writeln!(stdout, "{BATCH_SENTINEL}")?;
         stdout.flush()?;
     }
     Ok(0)
 }
-
-fn run_once(invocation: Invocation) -> Result<i32> {
-    Ok(run_once_with_writer(invocation, &mut std::io::stdout().lock())?.exit_code)
-}
-
-struct ProcessOutcome {
-    exit_code: i32,
-    semantic_completion: SemanticCompletion,
-}
-
-impl ProcessOutcome {
-    const fn complete(exit_code: i32) -> Self {
-        Self {
-            exit_code,
-            semantic_completion: SemanticCompletion::Complete,
+fn run_once_with_writer(
+    invocation: Invocation,
+    writer: &mut impl Write,
+) -> Result<(i32, SemanticCompletion)> {
+    if !invocation.command_line_diagnostics.is_empty() {
+        for (code, message) in &invocation.command_line_diagnostics {
+            writeln!(writer, "error TS{code}: {message}")?;
         }
+        return Ok((1, SemanticCompletion::Complete));
     }
-}
-
-fn run_once_with_writer(invocation: Invocation, writer: &mut impl Write) -> Result<ProcessOutcome> {
-    if let Some(option) = invocation.unknown_options.first() {
-        writeln!(writer, "error TS5023: Unknown compiler option '{option}'.")?;
-        return Ok(ProcessOutcome::complete(1));
+    if invocation.version {
+        writeln!(writer, "Version {VERSION}")?;
+        return Ok((0, SemanticCompletion::Complete));
+    }
+    if invocation.help {
+        render_help(writer)?;
+        return Ok((0, SemanticCompletion::Complete));
     }
     let output = match prepare_invocation(&invocation)? {
         PreparedInvocation::Compile(output) => *output,
         PreparedInvocation::Diagnostic { code, message } => {
             writeln!(writer, "error TS{code}: {message}")?;
-            return Ok(ProcessOutcome::complete(1));
+            return Ok((1, SemanticCompletion::Complete));
         }
         PreparedInvocation::Help => {
             render_help(writer)?;
-            return Ok(ProcessOutcome::complete(1));
+            return Ok((1, SemanticCompletion::Complete));
         }
     };
     render_diagnostics(&output, writer)?;
@@ -282,18 +259,13 @@ fn run_once_with_writer(invocation: Invocation, writer: &mut impl Write) -> Resu
             }),
         )?;
     }
-    Ok(ProcessOutcome {
-        exit_code: output.exit_status.code(),
-        semantic_completion: output.semantic_completion,
-    })
+    Ok((output.exit_status.code(), output.semantic_completion))
 }
-
 enum PreparedInvocation {
     Compile(Box<CompileOutput>),
     Diagnostic { code: u32, message: &'static str },
     Help,
 }
-
 fn prepare_invocation(invocation: &Invocation) -> Result<PreparedInvocation> {
     if invocation.project.is_some() && !invocation.files.is_empty() {
         return Ok(PreparedInvocation::Diagnostic {
@@ -303,7 +275,6 @@ fn prepare_invocation(invocation: &Invocation) -> Result<PreparedInvocation> {
     }
     let current_directory = std::env::current_dir()?;
     let host = SystemHost::new(current_directory.clone());
-
     if !invocation.ignore_config
         && !invocation.files.is_empty()
         && find_config_file(&host, &current_directory).is_some()
@@ -316,7 +287,6 @@ fn prepare_invocation(invocation: &Invocation) -> Result<PreparedInvocation> {
             ),
         });
     }
-
     let selection = if !invocation.files.is_empty() || invocation.ignore_config {
         ProjectSelection::Files(invocation.files.clone())
     } else if let Some(project) = &invocation.project {
@@ -326,35 +296,26 @@ fn prepare_invocation(invocation: &Invocation) -> Result<PreparedInvocation> {
     };
     let request = ProjectRequest {
         selection,
-        allow_js: invocation.options.allow_js,
-        check_js: invocation.options.check_js,
-        out_dir: invocation.options.out_dir.clone(),
-        declaration_dir: invocation.options.declaration_dir.clone(),
+        overrides: invocation.options.clone(),
     };
     let mut resolved = resolve_project(&host, &request);
     if invocation.project.is_none()
         && invocation.files.is_empty()
-        && resolved.graph.entry.is_none()
+        && resolved.entry_config.is_none()
         && resolved.diagnostics.is_empty()
     {
         return Ok(PreparedInvocation::Help);
     }
     let mut options = resolved.apply_option_patch(&invocation.options);
-    if options
-        .root_dir
-        .as_ref()
-        .is_some_and(|path| path.is_relative())
+    if let Some(path) = &mut options.root_dir
+        && path.is_relative()
     {
-        options.root_dir = options
-            .root_dir
-            .as_ref()
-            .map(|path| current_directory.join(path));
+        *path = current_directory.join(&*path);
     }
     Ok(PreparedInvocation::Compile(Box::new(
         Compiler::new().compile_resolved(resolved, &options),
     )))
 }
-
 fn render_diagnostics(output: &CompileOutput, writer: &mut impl Write) -> Result<()> {
     for diagnostic in &output.diagnostics {
         let source = diagnostic
@@ -364,7 +325,6 @@ fn render_diagnostics(output: &CompileOutput, writer: &mut impl Write) -> Result
     }
     Ok(())
 }
-
 fn write_emitted_files(output: &CompileOutput) -> Result<()> {
     for emitted in &output.emitted_files {
         if let Some(parent) = emitted.path.parent() {
@@ -374,7 +334,6 @@ fn write_emitted_files(output: &CompileOutput) -> Result<()> {
     }
     Ok(())
 }
-
 fn render_extended_diagnostics(output: &CompileOutput, writer: &mut impl Write) -> Result<()> {
     let stats = &output.stats;
     macro_rules! write_stats {
@@ -398,7 +357,6 @@ fn render_extended_diagnostics(output: &CompileOutput, writer: &mut impl Write) 
     );
     Ok(())
 }
-
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -406,7 +364,6 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     std::fs::write(path, serde_json::to_vec_pretty(value)?)?;
     Ok(())
 }
-
 fn render_help(writer: &mut impl Write) -> Result<()> {
     writeln!(
         writer,
@@ -414,7 +371,6 @@ fn render_help(writer: &mut impl Write) -> Result<()> {
     )?;
     Ok(())
 }
-
 #[cfg(test)]
 #[path = "../rewrite-tests/driver_options_unit.rs"]
 mod tests;

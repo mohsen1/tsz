@@ -72,10 +72,17 @@ pub(crate) fn parse_source_check_directive(
     if let Some(after_third_slash) = body.strip_prefix('/') {
         body = after_third_slash;
     }
-    body = body.trim_start_matches(char::is_whitespace);
+    // TypeScript's pragma scanner uses its own single-line whitespace set;
+    // Rust's Unicode predicate omits U+200B (ZERO WIDTH SPACE), which is
+    // nevertheless consumed as trivia by the TS scanner.
+    body = body.trim_start_matches(is_single_line_whitespace);
     let directive = body.strip_prefix('@')?;
     let name_end = directive
-        .find(|character: char| character.is_whitespace() || character == ':')
+        .find(|character: char| {
+            is_single_line_whitespace(character)
+                || matches!(character, '\u{2028}' | '\u{2029}')
+                || character == ':'
+        })
         .unwrap_or(directive.len());
     let kind = match &directive[..name_end] {
         name if name.eq_ignore_ascii_case("ts-check") => SourceCheckDirectiveKind::Check,

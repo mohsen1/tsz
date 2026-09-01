@@ -8,12 +8,14 @@ use crate::source::{FileId, Span};
 use crate::syntax::{BinaryOperator, Expression, ExpressionKind};
 
 use super::{
-    Checker, capabilities::completion_state, relation_diagnostic::RelationDiagnosticStyle,
+    Checker,
+    capabilities::completion_state,
+    relation_diagnostic::{ContextualType, RelationDiagnosticStyle},
 };
 
 pub(super) struct BinaryEvaluation {
-    pub(super) value: Option<TypeId>,
-    pub(super) completion: SemanticCompletion,
+    pub(super) result: Completion<TypeId>,
+    pub(super) dependency_completion: SemanticCompletion,
     diagnostics: BinaryDiagnostics,
 }
 
@@ -57,14 +59,9 @@ binary_operator_schema! {
 }
 
 impl BinaryEvaluation {
-    fn into_completion(self) -> Completion<TypeId> {
-        match (self.value, self.completion) {
-            (Some(value), _) => Completion::Complete(value),
-            (None, SemanticCompletion::Deferred) => Completion::Deferred,
-            (None, SemanticCompletion::Cycle) => Completion::Cycle,
-            (None, SemanticCompletion::Limit) => Completion::Limit,
-            (None, SemanticCompletion::Complete) => unreachable!("complete binary lacks value"),
-        }
+    const fn completion(&self) -> SemanticCompletion {
+        self.dependency_completion
+            .combine(completion_state(&self.result))
     }
 }
 
@@ -79,6 +76,7 @@ impl Checker<'_> {
         file: FileId,
         scope: ScopeId,
         expression: &Expression,
+        expected: ContextualType,
     ) -> TypeId {
         let ExpressionKind::Binary {
             left,
@@ -89,6 +87,10 @@ impl Checker<'_> {
         else {
             unreachable!("binary inference requires a binary expression")
         };
+        if *operator == BinaryOperator::Comma {
+            self.infer_expression(file, scope, left, None);
+            return self.infer_expression_contextual(file, scope, right, expected);
+        }
         if *operator == BinaryOperator::InstanceOf {
             return self.infer_instanceof_expression(file, scope, left, right);
         }
@@ -231,7 +233,6 @@ impl Checker<'_> {
                 target,
                 left.span,
                 Some(right),
-                self.expression_order_origins.get(&(file, left.id)).cloned(),
                 RelationMode::Assignment,
                 RelationDiagnosticStyle::Type,
             );
@@ -249,14 +250,15 @@ impl Checker<'_> {
     ) -> TypeId {
         let evaluation = self.evaluate_binary(operator, left, right, 0);
         self.report_binary_diagnostics(file, operator, spans, &evaluation.diagnostics);
-        self.observe_completion(evaluation.completion);
-        evaluation.value.unwrap_or_else(|| {
-            self.store.intern(TypeKind::Deferred(DeferredType::Binary {
+        self.observe_completion(evaluation.completion());
+        match evaluation.result {
+            Completion::Complete(value) => value,
+            _ => self.store.intern(TypeKind::Deferred(DeferredType::Binary {
                 operator,
                 left,
                 right,
-            }))
-        })
+            })),
+        }
     }
 
     pub(super) fn evaluate_binary(
@@ -266,24 +268,23 @@ impl Checker<'_> {
         right: TypeId,
         depth: usize,
     ) -> BinaryEvaluation {
-        let [left_forced, right_forced] = self.force_operands([left, right], depth);
-        let (left, left_completion) = self.binary_operand(left, left_forced);
-        let (right, right_completion) = self.binary_operand(right, right_forced);
+        let (left, left_completion) = self.binary_operand(left, depth);
+        let (right, right_completion) = self.binary_operand(right, depth);
         let operand_completion = left_completion.combine(right_completion);
         if operator == DeferredBinaryOperator::Add
             && !operand_completion.is_complete()
             && (type_is_string(&self.store, left) || type_is_string(&self.store, right))
         {
             return BinaryEvaluation {
-                value: Some(self.store.builtins.string),
-                completion: operand_completion,
+                result: Completion::Complete(self.store.builtins.string),
+                dependency_completion: operand_completion,
                 diagnostics: BinaryDiagnostics::default(),
             };
         }
         let (Some(left), Some(right)) = (left, right) else {
             return BinaryEvaluation {
-                value: None,
-                completion: operand_completion,
+                result: incomplete_binary_result(operand_completion),
+                dependency_completion: operand_completion,
                 diagnostics: BinaryDiagnostics::default(),
             };
         };
@@ -293,17 +294,17 @@ impl Checker<'_> {
         if operator == DeferredBinaryOperator::UnsignedRightShift {
             let supported = has_flag(left_flags, NUMBER_LIKE)
                 && matches!(
-                    right_kind,
-                    TypeKind::LiteralNumber(value, _)
-                        if value.array_index().is_some_and(|value| value < 32)
+                        right_kind,
+                        TypeKind::LiteralNumber(value, _)
+                            if value.array_index().is_some_and(|value| value < 32)
                 );
             return BinaryEvaluation {
-                value: supported.then_some(self.store.builtins.number),
-                completion: if supported {
-                    operand_completion
+                result: if supported {
+                    Completion::Complete(self.store.builtins.number)
                 } else {
-                    operand_completion.combine(SemanticCompletion::Deferred)
+                    Completion::Deferred
                 },
+                dependency_completion: operand_completion,
                 diagnostics: BinaryDiagnostics::default(),
             };
         }
@@ -376,12 +377,8 @@ impl Checker<'_> {
             }
         }
         BinaryEvaluation {
-            value,
-            completion: if value.is_some() {
-                operand_completion
-            } else {
-                operand_completion.combine(SemanticCompletion::Deferred)
-            },
+            result: value.map_or(Completion::Deferred, Completion::Complete),
+            dependency_completion: operand_completion,
             diagnostics,
         }
     }
@@ -404,11 +401,19 @@ impl Checker<'_> {
             self.push_diagnostic(file, right_span, RIGHT_ARITHMETIC_MESSAGE.to_string(), 2363);
         }
         if let Some((left, right)) = diagnostics.incompatible {
+            let left_name = diagnostic_type_name(&self.store, operator, left);
+            let right_name = diagnostic_type_name(&self.store, operator, right);
+            let (Completion::Complete(left_name), Completion::Complete(right_name)) = (
+                self.require_file_completion(file, left_name),
+                self.require_file_completion(file, right_name),
+            ) else {
+                return;
+            };
             let message = format!(
                 "Operator '{}' cannot be applied to types '{}' and '{}'.",
                 operator_text(operator),
-                diagnostic_type_name(&self.store, operator, left),
-                diagnostic_type_name(&self.store, operator, right)
+                left_name,
+                right_name
             );
             self.push_diagnostic(file, expression_span, message, 2365);
         }
@@ -416,15 +421,15 @@ impl Checker<'_> {
 
     fn binary_operand(
         &mut self,
-        original: TypeId,
-        forced: Completion<TypeId>,
+        operand: TypeId,
+        depth: usize,
     ) -> (Option<TypeId>, SemanticCompletion) {
-        match forced {
+        let bigint = self.store.builtins.bigint;
+        if self.is_bigint_operand(operand, 0) {
+            return (Some(bigint), SemanticCompletion::Complete);
+        }
+        match self.force_operand(operand, depth) {
             Completion::Complete(value) => (Some(value), SemanticCompletion::Complete),
-            Completion::Deferred if self.is_bigint_operand(original, 0) => (
-                Some(self.store.builtins.bigint),
-                SemanticCompletion::Complete,
-            ),
             Completion::Deferred => (None, SemanticCompletion::Deferred),
             Completion::Cycle => (None, SemanticCompletion::Cycle),
             Completion::Limit => (None, SemanticCompletion::Limit),
@@ -460,8 +465,8 @@ impl Checker<'_> {
         depth: usize,
     ) -> Completion<TypeId> {
         let evaluation = self.evaluate_binary(operator, left, right, depth);
-        self.observe_completion(evaluation.completion);
-        evaluation.into_completion()
+        self.observe_completion(evaluation.completion());
+        evaluation.result
     }
 
     pub(super) fn evaluate_logical(
@@ -493,6 +498,14 @@ impl Checker<'_> {
                 }
             }
         }
+    }
+}
+
+const fn incomplete_binary_result(completion: SemanticCompletion) -> Completion<TypeId> {
+    match completion {
+        SemanticCompletion::Complete | SemanticCompletion::Deferred => Completion::Deferred,
+        SemanticCompletion::Cycle => Completion::Cycle,
+        SemanticCompletion::Limit => Completion::Limit,
     }
 }
 
@@ -550,12 +563,16 @@ fn diagnostic_type_name(
     store: &crate::semantics::types::TypeStore,
     operator: DeferredBinaryOperator,
     ty: TypeId,
-) -> String {
+) -> Completion<String> {
     match (operator, store.kind(ty)) {
-        (op, TypeKind::LiteralString(_, _)) if op != DeferredBinaryOperator::Add => "string".into(),
-        (op, TypeKind::LiteralNumber(_, _)) if op != DeferredBinaryOperator::Add => "number".into(),
+        (op, TypeKind::LiteralString(_, _)) if op != DeferredBinaryOperator::Add => {
+            Completion::Complete("string".into())
+        }
+        (op, TypeKind::LiteralNumber(_, _)) if op != DeferredBinaryOperator::Add => {
+            Completion::Complete("number".into())
+        }
         (op, TypeKind::LiteralBoolean(_, _)) if op != DeferredBinaryOperator::Add => {
-            "boolean".into()
+            Completion::Complete("boolean".into())
         }
         _ => store.display(ty),
     }

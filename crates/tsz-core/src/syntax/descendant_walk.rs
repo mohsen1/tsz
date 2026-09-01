@@ -3,13 +3,11 @@ use super::{
     FunctionDeclaration, FunctionLikeBody, FunctionLikeExpression, Parameter, Statement,
     StatementKind, SwitchClauseKind, TypeNode,
 };
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NestedStatement {
     Handled,
     Descend,
 }
-
 pub(crate) enum DescendantContainer<'ast> {
     Statement(&'ast Statement),
     Function(&'ast Statement, &'ast FunctionDeclaration),
@@ -17,30 +15,25 @@ pub(crate) enum DescendantContainer<'ast> {
     ClassMember(&'ast ClassMember),
     FunctionLike(&'ast Expression, &'ast FunctionLikeExpression),
 }
-
 pub(crate) enum ExpressionEdge<'ast> {
     AssignmentRight(&'ast Expression),
     PropertyInitializer(&'ast ClassMember),
 }
-
 /// Adapter over authored statement and expression edges. The syntax walker
 /// owns source order; consumers own context transitions and subtree handling.
 pub(crate) trait DescendantAdapter<'ast> {
     type Context: Clone;
-
     fn context(
         &mut self,
         context: &Self::Context,
         container: DescendantContainer<'ast>,
     ) -> Self::Context;
-
     fn nested_statement(
         &mut self,
         context: &Self::Context,
         statement: &'ast Statement,
         next_statement: Option<&'ast Statement>,
     ) -> NestedStatement;
-
     fn expression_edge(
         &mut self,
         context: &Self::Context,
@@ -48,9 +41,7 @@ pub(crate) trait DescendantAdapter<'ast> {
     ) -> Self::Context {
         context.clone()
     }
-
     fn type_node(&mut self, _context: &Self::Context, _node: &'ast TypeNode) {}
-
     fn class_member(
         &mut self,
         context: &Self::Context,
@@ -63,11 +54,9 @@ pub(crate) trait DescendantAdapter<'ast> {
             ClassMemberKind::Property { .. } => context.clone(),
         }
     }
-
     fn fold_context(&mut self, context: &Self::Context, _nested: &Self::Context) -> Self::Context {
         context.clone()
     }
-
     /// Structural adapters recurse through function-like children by default.
     fn function_like(
         &mut self,
@@ -77,12 +66,9 @@ pub(crate) trait DescendantAdapter<'ast> {
     ) {
         walk_function_like_descendants(self, context, expression, function);
     }
-
     fn expression(&mut self, _context: &Self::Context, _expression: &'ast Expression) {}
-
     fn identifier(&mut self, _context: &Self::Context, _expression: &'ast Expression) {}
 }
-
 pub(crate) fn walk_statement_descendants<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
@@ -167,7 +153,6 @@ where
         }
     }
 }
-
 pub(crate) fn walk_class_descendants<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
@@ -197,7 +182,6 @@ pub(crate) fn walk_class_descendants<'ast, A>(
         }
     }
 }
-
 pub(crate) fn walk_function_like_descendants<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
@@ -218,7 +202,6 @@ pub(crate) fn walk_function_like_descendants<'ast, A>(
         }
     }
 }
-
 pub(crate) fn walk_expression_descendants<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
@@ -293,6 +276,16 @@ pub(crate) fn walk_expression_descendants<'ast, A>(
             walk_expression_descendants(adapter, context, left);
             walk_expression_descendants(adapter, context, right);
         }
+        ExpressionKind::Conditional {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
+            walk_expression_descendants(adapter, context, condition);
+            walk_expression_descendants(adapter, context, when_true);
+            walk_expression_descendants(adapter, context, when_false);
+        }
         ExpressionKind::Assignment { left, right, .. } => {
             walk_expression_descendants(adapter, context, left);
             let context =
@@ -301,7 +294,6 @@ pub(crate) fn walk_expression_descendants<'ast, A>(
         }
     }
 }
-
 fn walk_parameter_initializers<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
@@ -315,7 +307,6 @@ fn walk_parameter_initializers<'ast, A>(
         }
     }
 }
-
 pub(crate) fn walk_statement_list<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
@@ -331,7 +322,6 @@ where
             walk_nested_statement(adapter, &context, statement, statements.get(index + 1))
         })
 }
-
 fn walk_nested_statement<'ast, A>(
     adapter: &mut A,
     context: &A::Context,
@@ -352,13 +342,11 @@ where
     };
     adapter.fold_context(parent, &nested)
 }
-
 struct ClosureAdapter<'visit, C, S, E> {
     container: &'visit mut C,
     statement: &'visit mut S,
     expression: &'visit mut E,
 }
-
 impl<'ast, C, S, E> DescendantAdapter<'ast> for ClosureAdapter<'_, C, S, E>
 where
     C: FnMut(DescendantContainer<'ast>) -> bool,
@@ -366,11 +354,9 @@ where
     E: FnMut(&'ast Expression),
 {
     type Context = bool;
-
     fn context(&mut self, context: &bool, container: DescendantContainer<'ast>) -> bool {
         *context && (self.container)(container)
     }
-
     fn nested_statement(
         &mut self,
         context: &bool,
@@ -383,7 +369,6 @@ where
         (self.statement)(statement);
         NestedStatement::Descend
     }
-
     fn function_like(
         &mut self,
         context: &bool,
@@ -394,19 +379,16 @@ where
             walk_function_like_descendants(self, context, expression, function);
         }
     }
-
     fn expression(&mut self, context: &bool, expression: &'ast Expression) {
         if *context {
             (self.expression)(expression);
         }
     }
 }
-
 impl Statement {
     pub(crate) fn for_each_statement<'ast>(&'ast self, visit: &mut impl FnMut(&'ast Statement)) {
         self.for_each_statement_where(&mut |_| true, visit);
     }
-
     pub(crate) fn for_each_statement_where<'ast>(
         &'ast self,
         descend: &mut impl FnMut(DescendantContainer<'ast>) -> bool,
@@ -422,7 +404,6 @@ impl Statement {
         walk_statement_descendants(&mut adapter, &true, self);
     }
 }
-
 pub(crate) fn for_each_statement_in<'ast>(
     statements: &'ast [Statement],
     visit: &mut impl FnMut(&'ast Statement),
@@ -431,20 +412,17 @@ pub(crate) fn for_each_statement_in<'ast>(
         .iter()
         .for_each(|statement| statement.for_each_statement(visit));
 }
-
 /// Whether an expression query enters declaration and function-like bodies.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExpressionTraversal {
     All,
     Executed,
 }
-
 pub(crate) enum ExpressionRoot<'ast> {
     Expression(&'ast Expression),
     Statement(&'ast Statement),
     Statements(&'ast [Statement]),
 }
-
 pub(crate) fn contains_matching_expression<'ast>(
     root: ExpressionRoot<'ast>,
     traversal: ExpressionTraversal,

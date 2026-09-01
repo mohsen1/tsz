@@ -7,11 +7,12 @@ use crate::semantics::types::{Completion, TypeId};
 use crate::source::FileId;
 use crate::syntax::{
     ClassMemberKind, DescendantAdapter, DescendantContainer, Expression, FunctionLikeExpression,
-    NestedStatement, Statement, TypeNode, TypeNodeKind, TypeParameterDeclaration,
-    walk_expression_descendants, walk_function_like_descendants, walk_statement_descendants,
+    NestedStatement, ParameterNameKind, Statement, TypeNode, TypeNodeKind,
+    TypeParameterDeclaration, walk_expression_descendants, walk_function_like_descendants,
+    walk_statement_descendants,
 };
 
-use super::super::Checker;
+use super::super::{Checker, declaration_value::ValueQueryState};
 use super::{ParameterGrammarHost, synthetic_identity};
 
 #[derive(Clone)]
@@ -61,17 +62,31 @@ impl Checker<'_> {
         function: &FunctionLikeExpression,
         type_parameters: &HashMap<String, TypeId>,
     ) {
+        let owner = expression.id;
+        for parameter in &function.parameters {
+            if parameter.name_kind == ParameterNameKind::Binding
+                && parameter.annotation.is_none()
+                && parameter.initializer.is_none()
+                && !(parameter.optional && self.options.effective_strict_null_checks())
+                && let Some(declaration) =
+                    self.find_declaration(file, owner, DeclarationKind::Parameter, &parameter.name)
+            {
+                self.value_queries
+                    .entry(declaration)
+                    .or_insert(ValueQueryState::Provisional);
+            }
+        }
         let claimed = self
             .capabilities
             .claim(
                 CapabilityTarget::RequiredType,
-                CapabilityScope::node(file, expression.id),
+                CapabilityScope::node(file, owner),
             )
             .is_claimed();
         if !claimed {
             let _ = self.require_completion(Completion::<()>::Deferred);
         } else {
-            let function_scope = self.node_scope(file, expression.id, scope);
+            let function_scope = self.node_scope(file, owner, scope);
             self.visit_required_parameters(
                 file,
                 function_scope,
@@ -101,7 +116,11 @@ impl Checker<'_> {
                 RequiredTraversal::Nonclaimed {
                     reenter_function_like: self
                         .capabilities
-                        .required_type_node_allows_function_like_reentry(file, expression.id),
+                        .claim(
+                            CapabilityTarget::RequiredType,
+                            CapabilityScope::required_function_like(file, owner),
+                        )
+                        .is_claimed(),
                 }
             },
         };
@@ -193,7 +212,11 @@ impl Checker<'_> {
             RequiredTraversal::Nonclaimed {
                 reenter_function_like: self
                     .capabilities
-                    .required_type_node_allows_function_like_reentry(file, statement.id),
+                    .claim(
+                        CapabilityTarget::RequiredType,
+                        CapabilityScope::required_function_like(file, statement.id),
+                    )
+                    .is_claimed(),
             }
         };
         let context = RequiredDescendantContext {

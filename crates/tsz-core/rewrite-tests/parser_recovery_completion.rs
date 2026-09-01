@@ -3,8 +3,11 @@ use std::sync::Arc;
 use tsz::diagnostics::{DiagnosticCategory, RelatedInformation};
 use tsz::service::LanguageService;
 use tsz::source::{FileId, SourceText};
-use tsz::syntax::parse_source;
-use tsz::{CompileExitStatus, CompilerOptions, SemanticCompletion};
+use tsz::syntax::{
+    ClassMemberKind, ExpressionKind, Parameter, ParameterModifier, StatementKind, TypeNodeKind,
+    parse_source,
+};
+use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 type DiagnosticFingerprint = (
     String,
@@ -70,6 +73,244 @@ fn parser_codes(source: &str) -> Vec<u32> {
         .iter()
         .map(|diagnostic| diagnostic.code)
         .collect()
+}
+
+fn compile_source(path: &str, source: &str, strict: bool) -> tsz::CompileOutput {
+    Compiler::new().compile(
+        vec![SourceInput::new(path, Arc::<str>::from(source))],
+        &CompilerOptions {
+            no_emit: true,
+            strict,
+            no_implicit_any: (!strict).then_some(false),
+            target: "es2015".to_string(),
+            ..CompilerOptions::default()
+        },
+    )
+}
+
+fn assert_property_parameter_is_recovery_free(parameter: &Parameter, modifier: ParameterModifier) {
+    assert_eq!(
+        parameter
+            .modifiers
+            .iter()
+            .map(|node| node.kind)
+            .collect::<Vec<_>>(),
+        [modifier],
+    );
+    assert!(parameter.overload_completion_supported);
+    assert!(parameter.function_implementation_completion_supported);
+}
+
+#[test]
+fn property_parameter_modifiers_keep_parser_completion_at_the_grammar_owner() {
+    let source = concat!(
+        "function Direct(public renamed) {}\n",
+        "function wrapper() { function Nested(protected changed) {} }\n",
+        "type Callable = (private typed) => void;\n",
+        "const arrow = (readonly arrowed) => {};\n",
+        "function Group(override overloadName): void;\n",
+        "function Group(override implementationName) {}\n",
+    );
+    let source_text = SourceText::new(FileId(0), "parameter-owners.ts".into(), Arc::from(source));
+    let parsed = parse_source(&source_text);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let StatementKind::Function(direct) = &parsed.unit.statements[0].kind else {
+        panic!("direct function declaration");
+    };
+    assert!(direct.overload_completion_supported);
+    assert_property_parameter_is_recovery_free(&direct.parameters[0], ParameterModifier::Public);
+
+    let StatementKind::Function(wrapper) = &parsed.unit.statements[1].kind else {
+        panic!("wrapper function declaration");
+    };
+    let StatementKind::Function(nested) = &wrapper.body[0].kind else {
+        panic!("nested function declaration");
+    };
+    assert!(nested.overload_completion_supported);
+    assert_property_parameter_is_recovery_free(&nested.parameters[0], ParameterModifier::Protected);
+
+    let StatementKind::TypeAlias(callable) = &parsed.unit.statements[2].kind else {
+        panic!("callable type alias");
+    };
+    let TypeNodeKind::Function {
+        parameters,
+        parameter_list_recovered,
+        ..
+    } = &callable.ty.kind
+    else {
+        panic!("function type");
+    };
+    assert!(!parameter_list_recovered);
+    assert_property_parameter_is_recovery_free(&parameters[0], ParameterModifier::Private);
+
+    let StatementKind::Variable(variable) = &parsed.unit.statements[3].kind else {
+        panic!("arrow variable");
+    };
+    let ExpressionKind::FunctionLike(arrow) = &variable.declarators[0]
+        .initializer
+        .as_ref()
+        .expect("arrow initializer")
+        .kind
+    else {
+        panic!("arrow function");
+    };
+    assert_property_parameter_is_recovery_free(&arrow.parameters[0], ParameterModifier::Readonly);
+
+    for statement in &parsed.unit.statements[4..=5] {
+        let StatementKind::Function(grouped) = &statement.kind else {
+            panic!("function overload group");
+        };
+        assert!(grouped.overload_completion_supported);
+        assert_property_parameter_is_recovery_free(
+            &grouped.parameters[0],
+            ParameterModifier::Override,
+        );
+    }
+}
+
+#[test]
+fn illegal_parameter_properties_report_complete_host_grammar_and_strict_implicit_any() {
+    let source = concat!(
+        "function Direct(public renamed) {}\n",
+        "function wrapper() { function Nested(protected changed) {} }\n",
+        "type Callable = (private typed) => void;\n",
+        "const arrow = (readonly arrowed) => {};\n",
+        "function Group(override overloadName): void;\n",
+        "function Group(override implementationName) {}\n",
+    );
+    let properties = [
+        ("public renamed", "renamed"),
+        ("protected changed", "changed"),
+        ("private typed", "typed"),
+        ("readonly arrowed", "arrowed"),
+        ("override overloadName", "overloadName"),
+        ("override implementationName", "implementationName"),
+    ];
+
+    let strict = compile_source("parameter-hosts.ts", source, true);
+    let expected = properties
+        .iter()
+        .flat_map(|(parameter, name)| {
+            let start = source.find(parameter).expect("parameter span") as u32;
+            let length = parameter.len() as u32;
+            [
+                (
+                    start,
+                    length,
+                    2369,
+                    "A parameter property is only allowed in a constructor implementation."
+                        .to_string(),
+                ),
+                (
+                    start,
+                    length,
+                    7006,
+                    format!("Parameter '{name}' implicitly has an 'any' type."),
+                ),
+            ]
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        strict
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.code,
+                diagnostic.message_text.clone(),
+            ))
+            .collect::<Vec<_>>(),
+        expected,
+        "{:#?}",
+        strict.diagnostics,
+    );
+    assert_eq!(strict.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(
+        strict.exit_status,
+        CompileExitStatus::DiagnosticsPresentOutputsSkipped
+    );
+
+    let loose = compile_source("parameter-hosts.ts", source, false);
+    assert_eq!(
+        loose
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.start, diagnostic.length, diagnostic.code))
+            .collect::<Vec<_>>(),
+        properties
+            .iter()
+            .map(|(parameter, _)| {
+                (
+                    source.find(parameter).expect("parameter span") as u32,
+                    parameter.len() as u32,
+                    2369,
+                )
+            })
+            .collect::<Vec<_>>(),
+        "{:#?}",
+        loose.diagnostics,
+    );
+    assert_eq!(loose.semantic_completion, SemanticCompletion::Complete);
+}
+
+#[test]
+fn legal_constructor_parameter_properties_defer_at_the_synthesized_owner() {
+    let source = concat!(
+        "class Legal { constructor(public kept: number) {} }\n",
+        "class LegalRenamed { constructor(private renamed: string) {} }\n",
+    );
+    let source_text = SourceText::new(FileId(0), "legal-properties.ts".into(), Arc::from(source));
+    let parsed = parse_source(&source_text);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+    for (statement, modifier) in parsed
+        .unit
+        .statements
+        .iter()
+        .zip([ParameterModifier::Public, ParameterModifier::Private])
+    {
+        let StatementKind::Class(class) = &statement.kind else {
+            panic!("class declaration");
+        };
+        let ClassMemberKind::Constructor { parameters, .. } = &class.members[0].kind else {
+            panic!("constructor member");
+        };
+        assert_property_parameter_is_recovery_free(&parameters[0], modifier);
+    }
+
+    let output = compile_source("legal-properties.ts", source, true);
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+}
+
+#[test]
+fn invalid_character_parameter_sibling_remains_a_syntax_product() {
+    let source = "function recovered(a,¬) {}";
+    for strict in [false, true] {
+        let output = compile_source("invalid-parameter.ts", source, strict);
+        assert_eq!(
+            output
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (
+                    diagnostic.start,
+                    diagnostic.length,
+                    diagnostic.code,
+                    diagnostic.message_text.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            [(
+                source.find('¬').expect("invalid character") as u32,
+                1,
+                1127,
+                "Invalid character.",
+            )],
+            "strict={strict}: {:#?}",
+            output.diagnostics,
+        );
+    }
 }
 
 #[test]

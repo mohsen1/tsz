@@ -11,6 +11,7 @@ import {
   aggregateRowsForSummary,
   parseDiagnosticLine,
 } from "./diagnostic-aggregator.mjs";
+import { fixtureStubEvidenceFingerprint } from "../bench/lib/fixture-stub-inventory.mjs";
 
 const TYPE_CHALLENGES_PROJECT_ROWS = new Set([
   "type-challenges-solutions-project",
@@ -72,6 +73,31 @@ function toSha256(value) {
   return /^[0-9a-f]{64}$/.test(fingerprint) ? fingerprint : null;
 }
 
+function toGitCommit(value) {
+  const commit = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(commit) ? commit : null;
+}
+
+function toBoolean(value) {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  return null;
+}
+
+function toStringArray(value) {
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return [...value].sort();
+  }
+  try {
+    const parsed = JSON.parse(String(value || ""));
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string")
+      ? [...parsed].sort()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function residencyReason(value, rawReason, vocabulary, fallback, fieldName) {
   if (value !== null) return null;
   const reason = String(rawReason || "").trim();
@@ -86,15 +112,7 @@ function residencyReason(value, rawReason, vocabulary, fallback, fieldName) {
 
 function toExitCodes(value) {
   const matches = String(value || "").match(/\b\d+\b/g) || [];
-  const seen = new Set();
-  const codes = [];
-  for (const match of matches) {
-    const parsed = Number(match);
-    if (!Number.isInteger(parsed) || seen.has(parsed)) continue;
-    seen.add(parsed);
-    codes.push(parsed);
-  }
-  return codes;
+  return matches.map(Number).filter(Number.isInteger);
 }
 
 function splitDeltaLines(value) {
@@ -165,15 +183,13 @@ function oracleClassificationFrom({ tscExitCodes, tszExitCodes, tscDiagnosticCod
 
   const tscSet = new Set(tscDiagnosticCodes);
   const tszSet = new Set(tszDiagnosticCodes);
-  const tscExitSet = new Set(tscExitCodes);
-  const tszExitSet = new Set(tszExitCodes);
   // Empty=empty counts as "same" so two failures with only exit-code signals
   // classify together only when their ordinary exit status also agrees.
   if (
     tscSet.size === tszSet.size &&
     [...tscSet].every((code) => tszSet.has(code)) &&
-    tscExitSet.size === tszExitSet.size &&
-    [...tscExitSet].every((code) => tszExitSet.has(code))
+    tscExitCodes.length === tszExitCodes.length &&
+    tscExitCodes.every((code, index) => code === tszExitCodes[index])
   ) {
     return "both-fail-same";
   }
@@ -350,6 +366,96 @@ function rowStateFrom({ exitClass, diagnosticStatus }) {
     return "red";
   }
   return "yellow";
+}
+
+function exactOrdinaryExit(codes) {
+  if (!Array.isArray(codes) || codes.length !== 1) return null;
+  const value = Number(codes[0]);
+  return Number.isInteger(value) && value >= 0 && value <= 4 ? value : null;
+}
+
+function evidenceV3Failures(row) {
+  const failures = [];
+  const requireSha = (field) => {
+    if (!toSha256(row[field])) failures.push(field);
+  };
+  if (!toGitCommit(row.source_commit)) failures.push("source_commit");
+  if (typeof row.source_dirty !== "boolean") failures.push("source_dirty");
+  if (row.source_stable !== true) failures.push("source_stable");
+  if (row.compile_input_stable !== true) failures.push("compile_input_stable");
+  for (const field of [
+    "source_tree_fingerprint",
+    "evidence_protocol_fingerprint",
+    "tsz_binary_sha256",
+    "build_manifest_sha256",
+    "build_inputs_sha256",
+    "build_manifest_binary_sha256",
+    "compile_input_fingerprint",
+    "oracle_fingerprint",
+    "root_file_fingerprint",
+    "source_file_fingerprint",
+    "oracle_root_file_fingerprint",
+    "oracle_source_file_fingerprint",
+    "diagnostic_fingerprint",
+    "oracle_diagnostic_fingerprint",
+    "stub_inventory_fingerprint",
+  ]) requireSha(field);
+  if (row.build_manifest_binary_sha256 !== row.tsz_binary_sha256) {
+    failures.push("build_manifest_binary");
+  }
+  if (row.semantic_completion !== "complete") failures.push("semantic_completion");
+  if (!Number.isInteger(row.root_files) || row.root_files <= 0
+    || !Number.isInteger(row.source_files) || row.source_files <= 0
+    || row.root_files !== row.oracle_root_files
+    || row.source_files !== row.oracle_source_files
+    || row.files_reached !== row.source_files
+    || row.root_file_fingerprint !== row.oracle_root_file_fingerprint
+    || row.source_file_fingerprint !== row.oracle_source_file_fingerprint) {
+    failures.push("project_graph");
+  }
+  const tszExit = exactOrdinaryExit(row.exit_codes?.tsz);
+  const tscExit = exactOrdinaryExit(row.exit_codes?.tsc);
+  if (tszExit === null || tscExit === null || tszExit !== tscExit) failures.push("compiler_exits");
+  if (row.oracle_classification !== "both-pass" && row.oracle_classification !== "both-fail-same") {
+    failures.push("oracle_classification");
+  }
+  if (!Number.isInteger(row.diagnostic_records) || row.diagnostic_records < 0
+    || row.diagnostic_records !== row.oracle_diagnostic_records
+    || row.diagnostic_fingerprint !== row.oracle_diagnostic_fingerprint) {
+    failures.push("diagnostic_records");
+  }
+  const owners = toStringArray(row.stub_inventory_owners);
+  if (row.stub_inventory_schema !== 2
+    || !Number.isInteger(row.stubbed_modules) || row.stubbed_modules !== 0
+    || !Number.isInteger(row.stubbed_any_members) || row.stubbed_any_members !== 0
+    || !owners
+    || owners.length !== 0
+    || row.stub_inventory_fingerprint !== fixtureStubEvidenceFingerprint(0, 0, owners || [])) {
+    failures.push("fixture_stub_inventory");
+  }
+  if (row.exit_class !== "exit success" || row.diagnostic_status !== "none") {
+    failures.push("semantic_verdict");
+  }
+  return [...new Set(failures)];
+}
+
+function applyEvidenceState(row, requestedSchema) {
+  const failures = evidenceV3Failures(row);
+  const exact = requestedSchema === 3 && failures.length === 0;
+  row.evidence_schema = exact ? 3 : null;
+  row.evidence_status = exact ? "exact" : "incomplete";
+  row.evidence_failures = exact
+    ? []
+    : requestedSchema === 3 ? failures : ["evidence_schema"];
+  if (row.state === "green" && !exact) {
+    row.state = "gray";
+    row.first_failure_class = "compatibility evidence incomplete";
+    row.owner_track = "Track 1 project-corpus harness/config";
+    row.known_blockers = [
+      `compatibility evidence incomplete: ${row.evidence_failures.join(", ")}`,
+      ...(Array.isArray(row.known_blockers) ? row.known_blockers : []),
+    ].slice(0, 8);
+  }
 }
 
 function ownerTrackFrom({ exitClass, diagnosticSubsystems }) {
@@ -585,7 +691,20 @@ function record() {
     phase: process.env.COMPAT_PHASE || "unknown",
     last_successful_phase: lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }),
     diagnostic_status: diagnosticStatus,
-    evidence_schema: evidenceSchema === 2 ? 2 : null,
+    evidence_schema: null,
+    evidence_status: null,
+    evidence_failures: [],
+    source_dirty: toBoolean(process.env.COMPAT_SOURCE_DIRTY),
+    source_stable: toBoolean(process.env.COMPAT_SOURCE_STABLE),
+    source_tree_fingerprint: toSha256(process.env.COMPAT_SOURCE_TREE_FINGERPRINT),
+    evidence_protocol_fingerprint: toSha256(process.env.COMPAT_EVIDENCE_PROTOCOL_FINGERPRINT),
+    tsz_binary_sha256: toSha256(process.env.COMPAT_TSZ_BINARY_SHA256),
+    build_manifest_sha256: toSha256(process.env.COMPAT_BUILD_MANIFEST_SHA256),
+    build_inputs_sha256: toSha256(process.env.COMPAT_BUILD_INPUTS_SHA256),
+    build_manifest_binary_sha256: toSha256(process.env.COMPAT_BUILD_MANIFEST_BINARY_SHA256),
+    compile_input_fingerprint: toSha256(process.env.COMPAT_COMPILE_INPUT_FINGERPRINT),
+    compile_input_stable: toBoolean(process.env.COMPAT_COMPILE_INPUT_STABLE),
+    oracle_fingerprint: toSha256(process.env.COMPAT_ORACLE_FINGERPRINT),
     semantic_completion: String(process.env.COMPAT_SEMANTIC_COMPLETION || "").trim() || null,
     root_files: toNonnegativeInteger(process.env.COMPAT_ROOT_FILES),
     source_files: toNonnegativeInteger(process.env.COMPAT_SOURCE_FILES),
@@ -599,10 +718,11 @@ function record() {
     diagnostic_fingerprint: toSha256(process.env.COMPAT_DIAGNOSTIC_FINGERPRINT),
     oracle_diagnostic_records: toNonnegativeInteger(process.env.COMPAT_ORACLE_DIAGNOSTIC_RECORDS),
     oracle_diagnostic_fingerprint: toSha256(process.env.COMPAT_ORACLE_DIAGNOSTIC_FINGERPRINT),
-    stub_inventory_schema: stubInventorySchema === 1 ? 1 : null,
+    stub_inventory_schema: stubInventorySchema === 2 ? 2 : null,
     stubbed_modules: toNonnegativeInteger(process.env.COMPAT_STUBBED_MODULES),
     stubbed_any_members: toNonnegativeInteger(process.env.COMPAT_STUBBED_ANY_MEMBERS),
     stub_inventory_fingerprint: toSha256(process.env.COMPAT_STUB_INVENTORY_FINGERPRINT),
+    stub_inventory_owners: toStringArray(process.env.COMPAT_STUB_INVENTORY_OWNERS),
     oracle_classification: oracleClassification,
     diagnostic_deltas: diagnosticDeltas,
     diagnostic_subsystems: diagnosticSubsystems,
@@ -632,6 +752,7 @@ function record() {
     peak_memory_bytes_reason: peakMemoryBytesReason,
     fixture_sources: fixtureSources,
   };
+  applyEvidenceState(row, evidenceSchema);
   fs.appendFileSync(outputFile, `${JSON.stringify(row)}\n`, "utf8");
 }
 
@@ -662,6 +783,7 @@ function summarize() {
         diagnosticStatus: row?.diagnostic_status,
       });
     }
+    if (row?.state === "green") applyEvidenceState(row, row.evidence_schema);
   }
 
   // Single-pass row aggregation: by_state, by_oracle_classification, top

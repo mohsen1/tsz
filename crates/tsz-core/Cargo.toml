@@ -23,7 +23,7 @@ rayon.workspace = true
 rustc-hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tracing.workspace = true
+unicode-ident.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
@@ -126,6 +126,10 @@ name = "rewrite_binary_unsigned_shift"
 path = "rewrite-tests/binary_unsigned_shift.rs"
 
 [[test]]
+name = "rewrite_conditional_expressions"
+path = "rewrite-tests/conditional_expressions.rs"
+
+[[test]]
 name = "rewrite_instanceof_expression"
 path = "rewrite-tests/instanceof_expression.rs"
 
@@ -184,6 +188,30 @@ path = "rewrite-tests/javascript_assignment_declarations.rs"
 [[test]]
 name = "rewrite_emit_comments"
 path = "rewrite-tests/emit_comments.rs"
+
+[[test]]
+name = "rewrite_type_member_identity"
+path = "rewrite-tests/type_member_identity.rs"
+
+[[test]]
+name = "rewrite_restricted_production_line_terminators"
+path = "rewrite-tests/restricted_production_line_terminators.rs"
+
+[[test]]
+name = "rewrite_diagnostic_identity"
+path = "rewrite-tests/diagnostic_identity.rs"
+
+[[test]]
+name = "rewrite_using_declaration_modifiers"
+path = "rewrite-tests/using_declaration_modifiers.rs"
+
+[[test]]
+name = "rewrite_deferred_compiler_options"
+path = "rewrite-tests/deferred_compiler_options.rs"
+
+[[test]]
+name = "rewrite_config_option_classification"
+path = "rewrite-tests/config_option_classification.rs"
 
 [lints]
 workspace = true

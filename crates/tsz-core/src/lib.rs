@@ -7,11 +7,10 @@
 pub mod bind;
 pub mod config;
 pub mod diagnostics;
-pub mod emit;
+mod emit;
 mod emit_paths;
 pub mod host;
 pub mod program;
-pub mod project_graph;
 mod semantics;
 pub mod service;
 pub mod source;
@@ -20,6 +19,6 @@ pub mod syntax;
 mod text;
 
 pub use program::{
-    CompileExitStatus, CompileOutput, Compiler, CompilerOptions, EmittedFile, SemanticCompletion,
-    SourceInput,
+    CompileExitStatus, CompileOutput, Compiler, CompilerOptions, DeferredCompilerOption,
+    DeferredCompilerOptionValue, EmittedFile, SemanticCompletion, SourceInput,
 };

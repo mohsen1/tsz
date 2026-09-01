@@ -20,15 +20,13 @@ readme = "README.md"
 [workspace.dependencies]
 tsz = { path = "crates/tsz-core", version = "0.1.75", package = "tsz-core" }
 anyhow = "1.0"
-clap = { version = "4.5", features = ["derive"] }
 criterion = "0.5"
 rayon = "1.10"
 rustc-hash = "2.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
 tempfile = "3"
-tracing = { version = "0.1", features = ["release_max_level_warn"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+unicode-ident = "1"
 walkdir = "2.5"
 
 [workspace.lints.rust]

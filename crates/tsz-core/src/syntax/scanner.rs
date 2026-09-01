@@ -1,6 +1,3 @@
-use crate::diagnostics::Diagnostic;
-use crate::source::{SourceText, Span};
-
 use super::numeric_literal::{
     ScannedNumericLiteral, ScannedSeparatedNumberLiteral, scan_numeric_literal,
 };
@@ -13,7 +10,10 @@ use super::{
     CommentClass, CommentKind, CommentPlacement, CommentSourcePosition, CommentTrivia, Token,
     TokenKind, is_single_line_whitespace,
 };
-
+use crate::diagnostics::Diagnostic;
+use crate::source::{SourceText, Span};
+#[path = "unicode_identifier.rs"]
+mod unicode_identifier;
 #[derive(Debug, Default)]
 pub struct ScanOutput {
     pub tokens: Vec<Token>,
@@ -30,7 +30,6 @@ pub struct ScanOutput {
     pub(super) comments: Vec<CommentTrivia>,
     pub(super) has_unicode_line_comment_terminator: bool,
 }
-
 /// Scanner-owned semantic spelling for one authored identifier escape.
 ///
 /// `span` continues to identify the exact source spelling. The cooked value is
@@ -42,18 +41,15 @@ pub(super) struct ScannedIdentifierValue {
     pub(super) cooked: String,
     pub(super) escape: IdentifierEscapeProvenance,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum IdentifierEscapeProvenance {
     Unicode,
     ExtendedUnicode,
     UnicodeAndExtendedUnicode,
 }
-
 pub fn scan_source(source: &SourceText) -> ScanOutput {
     Scanner::new(source).scan()
 }
-
 struct Scanner<'a> {
     source: &'a SourceText,
     bytes: &'a [u8],
@@ -62,7 +58,6 @@ struct Scanner<'a> {
     template_expression_depths: Vec<usize>,
     output: ScanOutput,
 }
-
 impl<'a> Scanner<'a> {
     fn new(source: &'a SourceText) -> Self {
         Self {
@@ -74,7 +69,6 @@ impl<'a> Scanner<'a> {
             output: ScanOutput::default(),
         }
     }
-
     fn scan(mut self) -> ScanOutput {
         while self.offset < self.bytes.len() {
             self.skip_trivia();
@@ -87,7 +81,9 @@ impl<'a> Scanner<'a> {
                 && self.template_expression_depths.last() == Some(&self.brace_depth)
             {
                 self.scan_template_continuation(start)
-            } else if is_identifier_start(byte) || self.is_identifier_escape_start_at(self.offset) {
+            } else if self.character_at_matches(self.offset, is_identifier_start_character)
+                || self.is_identifier_escape_start_at(self.offset)
+            {
                 self.scan_identifier(start, false)
             } else if byte.is_ascii_digit()
                 || (byte == b'.'
@@ -97,6 +93,8 @@ impl<'a> Scanner<'a> {
                         .is_some_and(u8::is_ascii_digit))
             {
                 self.scan_number(start)
+            } else if !byte.is_ascii() {
+                self.scan_invalid_unicode_character(start)
             } else {
                 self.scan_punctuation_or_literal(start)
             };
@@ -121,7 +119,6 @@ impl<'a> Scanner<'a> {
         self.mark_detached_pinned_runs();
         self.output
     }
-
     fn mark_detached_pinned_runs(&mut self) {
         let leading = self.output.comments.partition_point(|comment| {
             comment.source_position == CommentSourcePosition::SourceLeading
@@ -145,7 +142,6 @@ impl<'a> Scanner<'a> {
             }
         }
     }
-
     fn skip_trivia(&mut self) {
         loop {
             if self.offset == 0 && self.bytes.get(..3) == Some(&[0xef, 0xbb, 0xbf]) {
@@ -224,7 +220,6 @@ impl<'a> Scanner<'a> {
             break;
         }
     }
-
     fn skip_line_body(&mut self) {
         self.offset += 2;
         while self
@@ -238,7 +233,6 @@ impl<'a> Scanner<'a> {
         self.output.has_unicode_line_comment_terminator |=
             self.is_unicode_line_separator_at(self.offset);
     }
-
     fn comment_placement(&self, comment_start: usize) -> CommentPlacement {
         let Some(previous) = self.output.tokens.last() else {
             return CommentPlacement::Leading;
@@ -249,7 +243,6 @@ impl<'a> Scanner<'a> {
             CommentPlacement::Trailing
         }
     }
-
     const fn comment_source_position(&self) -> CommentSourcePosition {
         if self.output.tokens.is_empty() {
             CommentSourcePosition::SourceLeading
@@ -257,7 +250,6 @@ impl<'a> Scanner<'a> {
             CommentSourcePosition::AfterToken
         }
     }
-
     fn is_plain_line_comment(&self, start: usize, end: usize) -> bool {
         let body = &self.source.text[start + 2..end];
         let first = body
@@ -265,14 +257,12 @@ impl<'a> Scanner<'a> {
             .find(|character| !is_single_line_whitespace(*character));
         body.starts_with(' ') && !matches!(first, Some('/' | '@' | '!' | '#'))
     }
-
     fn has_line_break_at_offset(&self) -> bool {
         self.bytes
             .get(self.offset)
             .is_some_and(|byte| matches!(byte, b'\r' | b'\n'))
             || self.is_unicode_line_separator_at(self.offset)
     }
-
     fn contains_line_break(&self, start: usize, end: usize) -> bool {
         let mut offset = start;
         while offset < end {
@@ -285,14 +275,12 @@ impl<'a> Scanner<'a> {
         }
         false
     }
-
     fn is_unicode_line_separator_at(&self, offset: usize) -> bool {
         matches!(
             self.bytes.get(offset..offset + 3),
             Some([0xe2, 0x80, 0xa8 | 0xa9])
         )
     }
-
     fn skip_one_whitespace(&mut self) -> bool {
         let Some(byte) = self.bytes.get(self.offset).copied() else {
             return false;
@@ -307,23 +295,38 @@ impl<'a> Scanner<'a> {
         let Some(character) = self.source.text[self.offset..].chars().next() else {
             return false;
         };
-        if character.is_whitespace() || character == '\u{feff}' {
+        if is_single_line_whitespace(character) || matches!(character, '\u{2028}' | '\u{2029}') {
             self.offset += character.len_utf8();
             true
         } else {
             false
         }
     }
-
     fn scan_identifier(&mut self, start: usize, private: bool) -> TokenKind {
         self.consume_identifier_character();
-        while self
-            .bytes
-            .get(self.offset)
-            .is_some_and(|byte| is_identifier_continue(*byte))
+        while self.character_at_matches(self.offset, is_identifier_part_character)
             || self.is_identifier_escape_part_at(self.offset)
         {
             self.consume_identifier_character();
+        }
+        if self.output.tokens.last().is_some_and(|previous| {
+            matches!(
+                previous.kind,
+                TokenKind::NumericLiteral | TokenKind::BigIntLiteral
+            ) && previous.span.end as usize == start
+                && self.source.slice(previous.span).contains('_')
+                && self
+                    .output
+                    .numeric_literals
+                    .last()
+                    .is_some_and(|literal| literal.span == previous.span)
+        }) {
+            self.output.diagnostics.push(Diagnostic::at(
+                self.source,
+                Span::new(self.source.id, start, self.offset),
+                "An identifier or keyword cannot immediately follow a numeric literal.".to_string(),
+                1351,
+            ));
         }
         let text = &self.source.text[start..self.offset];
         if text.as_bytes().contains(&b'\\') {
@@ -344,7 +347,6 @@ impl<'a> Scanner<'a> {
             TokenKind::from_keyword(text)
         }
     }
-
     fn consume_identifier_character(&mut self) {
         if let Some(length) = self.identifier_escape_len_at(self.offset) {
             self.offset += length;
@@ -355,21 +357,38 @@ impl<'a> Scanner<'a> {
         };
         self.offset += character.len_utf8();
     }
-
+    fn character_at_matches(&self, offset: usize, predicate: impl FnOnce(char) -> bool) -> bool {
+        self.source
+            .text
+            .get(offset..)
+            .and_then(|text| text.chars().next())
+            .is_some_and(predicate)
+    }
+    fn scan_invalid_unicode_character(&mut self, start: usize) -> TokenKind {
+        let character = self.source.text[start..]
+            .chars()
+            .next()
+            .expect("scanner offset starts on a UTF-8 scalar boundary");
+        self.offset += character.len_utf8();
+        self.output.diagnostics.push(Diagnostic::at(
+            self.source,
+            Span::new(self.source.id, start, self.offset),
+            "Invalid character.".to_string(),
+            1127,
+        ));
+        TokenKind::InvalidCharacter
+    }
     fn is_identifier_escape_start_at(&self, offset: usize) -> bool {
         identifier_escape_at(&self.source.text, offset)
             .is_some_and(|escape| is_identifier_start_character(escape.character))
     }
-
     fn is_identifier_escape_part_at(&self, offset: usize) -> bool {
         identifier_escape_at(&self.source.text, offset)
             .is_some_and(|escape| is_identifier_part_character(escape.character))
     }
-
     fn identifier_escape_len_at(&self, offset: usize) -> Option<usize> {
         identifier_escape_at(&self.source.text, offset).map(|escape| escape.length)
     }
-
     fn scan_number(&mut self, start: usize) -> TokenKind {
         let scanned = scan_numeric_literal(self.source, start, self.output.tokens.last().copied());
         self.offset = scanned.end;
@@ -383,7 +402,6 @@ impl<'a> Scanner<'a> {
         self.output.has_unmodeled_numeric_separator |= scanned.has_unmodeled_separator;
         scanned.kind
     }
-
     fn scan_punctuation_or_literal(&mut self, start: usize) -> TokenKind {
         let byte = self.bytes[self.offset];
         self.offset += 1;
@@ -456,10 +474,7 @@ impl<'a> Scanner<'a> {
             b'=' => TokenKind::Equals,
             b'~' => TokenKind::Tilde,
             b'@' => TokenKind::At,
-            b'#' if self
-                .bytes
-                .get(self.offset)
-                .is_some_and(|byte| is_identifier_start(*byte))
+            b'#' if self.character_at_matches(self.offset, is_identifier_start_character)
                 || self.is_identifier_escape_start_at(self.offset) =>
             {
                 self.scan_identifier(start, true)
@@ -481,7 +496,6 @@ impl<'a> Scanner<'a> {
             }
         }
     }
-
     fn consume_suffix(&mut self, suffix: &[u8]) -> bool {
         let end = self.offset + suffix.len();
         if self.bytes.get(self.offset..end) == Some(suffix) {
@@ -491,7 +505,6 @@ impl<'a> Scanner<'a> {
             false
         }
     }
-
     fn can_start_regular_expression(&self) -> bool {
         !self
             .output
@@ -499,7 +512,6 @@ impl<'a> Scanner<'a> {
             .last()
             .is_some_and(|token| token_can_end_expression(token.kind))
     }
-
     fn scan_slash_or_regular_expression(&mut self, start: usize) -> TokenKind {
         if self.can_start_regular_expression()
             && let Some(literal) = self.scan_regular_expression(start)
@@ -513,7 +525,6 @@ impl<'a> Scanner<'a> {
             TokenKind::Slash
         }
     }
-
     fn scan_regular_expression(&mut self, start: usize) -> Option<ScannedRegularExpressionLiteral> {
         let mut cursor = self.offset;
         let mut in_character_class = false;
@@ -587,7 +598,6 @@ impl<'a> Scanner<'a> {
         }
         self.finish_unterminated_regular_expression(start, cursor, false)
     }
-
     fn finish_unterminated_regular_expression(
         &mut self,
         start: usize,
@@ -622,13 +632,11 @@ impl<'a> Scanner<'a> {
             at_line_break,
         ))
     }
-
     fn scan_template_continuation(&mut self, start: usize) -> TokenKind {
         debug_assert_eq!(self.bytes.get(self.offset), Some(&b'}'));
         self.offset += 1;
         self.scan_template_chunk(start, false)
     }
-
     fn scan_template_chunk(&mut self, start: usize, is_start: bool) -> TokenKind {
         while let Some(byte) = self.bytes.get(self.offset).copied() {
             match byte {
@@ -667,7 +675,6 @@ impl<'a> Scanner<'a> {
             TokenKind::TemplateTail
         }
     }
-
     fn skip_escape_sequence(&mut self) {
         debug_assert_eq!(self.bytes.get(self.offset), Some(&b'\\'));
         self.offset += 1;
@@ -677,13 +684,11 @@ impl<'a> Scanner<'a> {
             self.advance_character();
         }
     }
-
     fn advance_character(&mut self) {
         if let Some(character) = self.source.text[self.offset..].chars().next() {
             self.offset += character.len_utf8();
         }
     }
-
     fn scan_string(&mut self, start: usize, quote: u8) -> TokenKind {
         let scanned = scan_ordinary_string_literal(self.source, start, quote);
         self.offset = scanned.end;
@@ -697,12 +702,10 @@ impl<'a> Scanner<'a> {
         TokenKind::StringLiteral
     }
 }
-
 struct CookedIdentifier {
     cooked: String,
     escape: IdentifierEscapeProvenance,
 }
-
 fn cook_identifier(text: &str) -> CookedIdentifier {
     let bytes = text.as_bytes();
     let mut cooked = String::with_capacity(text.len());
@@ -732,14 +735,12 @@ fn cook_identifier(text: &str) -> CookedIdentifier {
     };
     CookedIdentifier { cooked, escape }
 }
-
 #[derive(Debug, Clone, Copy)]
 struct IdentifierEscape {
     character: char,
     length: usize,
     escape: IdentifierEscapeProvenance,
 }
-
 fn identifier_escape_at(text: &str, offset: usize) -> Option<IdentifierEscape> {
     let bytes = text.as_bytes();
     if bytes.get(offset..offset + 2) != Some(b"\\u") {
@@ -769,26 +770,20 @@ fn identifier_escape_at(text: &str, offset: usize) -> Option<IdentifierEscape> {
         escape,
     })
 }
-
-const fn is_identifier_start_character(character: char) -> bool {
+fn is_identifier_start_character(character: char) -> bool {
     if character.is_ascii() {
         is_identifier_start(character as u8)
     } else {
-        // Keep escaped scalar acceptance aligned with the rewrite scanner's
-        // current authored non-ASCII domain. Invalid UTF-16 units were already
-        // rejected by `char::from_u32` above.
-        true
+        unicode_identifier::is_identifier_start(character)
     }
 }
-
-const fn is_identifier_part_character(character: char) -> bool {
+fn is_identifier_part_character(character: char) -> bool {
     if character.is_ascii() {
         is_identifier_continue(character as u8)
     } else {
-        true
+        unicode_identifier::is_identifier_part(character)
     }
 }
-
 fn is_recognized_triple_slash(text: &str) -> bool {
     let Some(body) = text.strip_prefix("///") else {
         return false;
@@ -812,15 +807,12 @@ fn is_recognized_triple_slash(text: &str) -> bool {
                 }
         })
 }
-
 const fn is_identifier_start(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$' || byte >= 0x80
+    byte.is_ascii_alphabetic() || byte == b'_' || byte == b'$'
 }
-
 const fn is_identifier_continue(byte: u8) -> bool {
     is_identifier_start(byte) || byte.is_ascii_digit()
 }
-
 const fn token_can_end_expression(kind: TokenKind) -> bool {
     (kind.is_identifier() && !matches!(kind, TokenKind::Await | TokenKind::Yield))
         || matches!(
@@ -844,7 +836,9 @@ const fn token_can_end_expression(kind: TokenKind) -> bool {
                 | TokenKind::Null
         )
 }
-
 #[cfg(test)]
 #[path = "../../rewrite-tests/scanner_lexical_unit.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "../../rewrite-tests/unicode_identifier_oracle.rs"]
+mod unicode_identifier_oracle;

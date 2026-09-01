@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tsz::config::{ProjectRequest, ProjectSelection, resolve_project};
 use tsz::host::SystemHost;
+use tsz::service::LanguageService;
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{ClassMemberKind, PropertyNameKind, StatementKind, parse_source};
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
@@ -28,7 +29,7 @@ fn codes(output: &tsz::CompileOutput) -> Vec<u32> {
 }
 
 fn ts2564_names(output: &tsz::CompileOutput) -> Vec<&str> {
-    let source = output.program.files[0].source.text.as_ref();
+    let source = output.program.files[0].source.text();
     output
         .diagnostics
         .iter()
@@ -349,14 +350,27 @@ fn any_constructor_member_keeps_assignment_flow_outside_this_atom() {
 
 #[test]
 fn parser_recovered_class_members_do_not_assert_initialization_facts() {
-    let output = compile(
-        concat!(
-            "class Stable { owned: string; }\n",
-            "class Recovered { speculative: string; class Nested {} }\n",
-        ),
-        CompilerOptions::default(),
+    let source = concat!(
+        "class Stable { owned: string; }\n",
+        "class Recovered { speculative: string; class Nested {} }\n",
     );
-    assert_eq!(ts2564_names(&output), vec!["owned"], "{output:?}");
+    let mut service = LanguageService::new(CompilerOptions::default());
+    service.open("property-initialization.ts", Arc::<str>::from(source));
+    let semantic = service.semantic_diagnostics("property-initialization.ts");
+    assert_eq!(
+        semantic
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == 2564)
+            .map(|diagnostic| {
+                let start = diagnostic.start as usize;
+                &source[start..start + diagnostic.length as usize]
+            })
+            .collect::<Vec<_>>(),
+        vec!["owned"],
+        "{semantic:?}"
+    );
+    let output = service.compile();
     assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
 }
 

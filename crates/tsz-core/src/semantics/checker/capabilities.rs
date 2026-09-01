@@ -3,7 +3,7 @@ use crate::program::SemanticCompletion;
 use crate::semantics::types::Completion;
 use crate::source::{DeclId, FileId};
 
-use super::{Checker, DiagnosticIdentity};
+use super::Checker;
 
 pub(super) struct CompletionTracker {
     program: SemanticCompletion,
@@ -20,6 +20,7 @@ pub(super) const fn completion_state<T>(completion: &Completion<T>) -> SemanticC
         Completion::Limit => SemanticCompletion::Limit,
     }
 }
+
 impl CompletionTracker {
     pub(super) fn new(file_count: usize) -> Self {
         Self {
@@ -89,15 +90,8 @@ impl CompletionTracker {
 }
 
 impl Checker<'_> {
-    pub(super) fn record_semantic_diagnostic(
-        &mut self,
-        file: FileId,
-        start: u32,
-        code: u32,
-        identity: DiagnosticIdentity,
-    ) -> bool {
+    pub(super) fn semantic_diagnostic_is_enabled(&self, file: FileId) -> bool {
         self.capabilities.semantic_check_file_is_enabled(file)
-            && self.reported.insert((file, start, code, identity))
     }
 
     pub(super) fn resolve_name(

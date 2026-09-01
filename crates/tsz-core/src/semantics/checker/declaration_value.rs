@@ -11,11 +11,27 @@ use super::{Checker, DeclarationModel, relation_diagnostic::RelationDiagnosticSt
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ValueQueryState {
+    Provisional, // Context-sensitive parameter; never a `Ready` cache entry.
     Computing,
     Ready(TypeId),
 }
 
 impl Checker<'_> {
+    pub(super) fn publish_ready_value_query(
+        &mut self,
+        id: DeclId,
+        value: Option<TypeId>,
+        completion: SemanticCompletion,
+    ) {
+        if let Some(value) =
+            value.filter(|value| completion.is_complete() && self.is_cacheable_type(*value))
+        {
+            self.value_queries.insert(id, ValueQueryState::Ready(value));
+        } else {
+            self.value_queries.remove(&id);
+        }
+    }
+
     pub(super) fn check_variable(
         &mut self,
         file: FileId,
@@ -52,7 +68,7 @@ impl Checker<'_> {
             let message = "'const' declarations must be initialized.".into();
             self.push_diagnostic(file, declaration.name_span, message, 1155);
         }
-        if ambient
+        if (ambient || kind == VariableKind::Const)
             && declaration.annotation.is_none()
             && declaration.initializer.is_none()
             && self.options.effective_no_implicit_any()
@@ -85,15 +101,11 @@ impl Checker<'_> {
         if let (Some(source), Some(target), Some(initializer)) =
             (initializer, annotation, declaration.initializer.as_ref())
         {
-            let target_order = declaration.annotation.as_ref().and_then(|annotation| {
-                self.property_order_for_type_node_root(file, scope, annotation)
-            });
             self.report_relation(
                 source,
                 target,
                 declaration.name_span,
                 Some(initializer),
-                target_order,
                 RelationMode::Assignment,
                 RelationDiagnosticStyle::Type,
             );
@@ -121,13 +133,10 @@ impl Checker<'_> {
                 .unwrap_or(self.store.builtins.any);
             if annotation_is_complete
                 && (annotation.is_some() || initializer_completion.is_complete())
-                && self.is_cacheable_type(value)
                 && self.semantic_declaration_is_claimed(id)
                 && self.program.javascript_assignments.root(id).is_none()
             {
-                self.value_queries.insert(id, ValueQueryState::Ready(value));
-            } else {
-                self.value_queries.remove(&id);
+                self.publish_ready_value_query(id, Some(value), SemanticCompletion::Complete);
             }
         }
     }
@@ -167,10 +176,17 @@ impl Checker<'_> {
         {
             return Completion::Deferred;
         }
-        if let Some(ty) = self.parameter_type_overrides.get(&id) {
-            return Completion::Complete(*ty);
+        if let Some(ty) = self.parameter_type_overrides.get(&id).copied() {
+            return self
+                .is_cacheable_type(ty)
+                .then_some(ty)
+                .map_or(Completion::Deferred, Completion::Complete);
         }
+        // TypeScript returns this provisional `any` without caching it.
         match self.value_queries.get(&id).copied() {
+            Some(ValueQueryState::Provisional) => {
+                return Completion::Complete(self.store.builtins.any);
+            }
             Some(ValueQueryState::Ready(value)) => return Completion::Complete(value),
             Some(ValueQueryState::Computing) => return Completion::Cycle,
             None => {}
@@ -242,16 +258,11 @@ impl Checker<'_> {
                 (SemanticCompletion::Cycle, _) => Completion::Cycle,
             };
         }
-        match result {
-            Completion::Complete(value)
-                if captured == SemanticCompletion::Complete && self.is_cacheable_type(value) =>
-            {
-                self.value_queries.insert(id, ValueQueryState::Ready(value));
-            }
-            _ => {
-                self.value_queries.remove(&id);
-            }
-        }
+        let value = match result {
+            Completion::Complete(value) => Some(value),
+            Completion::Deferred | Completion::Cycle | Completion::Limit => None,
+        };
+        self.publish_ready_value_query(id, value, captured);
         result
     }
 

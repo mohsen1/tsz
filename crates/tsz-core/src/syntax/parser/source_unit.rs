@@ -66,14 +66,9 @@ impl Parser<'_> {
             .iter()
             .take_while(|comment| comment.span.start < end)
             .last()?;
-        (comment.jsdoc
-            && self.source.line_and_column(end).0
-                <= self
-                    .source
-                    .line_and_column(comment.span.end)
-                    .0
-                    .saturating_add(1))
-        .then_some(comment)
+        let end_line = self.source.position(end)?.0;
+        let comment_end_line = self.source.position(comment.span.end)?.0;
+        (comment.jsdoc && end_line <= comment_end_line.saturating_add(1)).then_some(comment)
     }
 
     pub(super) fn tokens_are_on_same_line(&self, left: usize, right: usize) -> bool {
@@ -125,6 +120,12 @@ impl Parser<'_> {
             unit: SourceUnit {
                 statements,
                 span: Span::new(self.source.id, 0, end),
+                identifier_token_spans: self
+                    .tokens
+                    .iter()
+                    .filter(|token| token.kind.is_identifier())
+                    .map(|token| token.span)
+                    .collect(),
                 authored_literal_facts,
                 parser_recovery_facts,
                 unmodeled_declaration_hosts: self.unmodeled_declaration_hosts,

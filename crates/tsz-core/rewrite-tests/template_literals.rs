@@ -1,12 +1,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tsz::service::LanguageService;
+use tsz::service::{LanguageService, ServiceQuery};
 use tsz::source::{FileId, SourceText};
 use tsz::syntax::{
     Expression, ExpressionKind, Literal, NoSubstitutionTemplateLiteral, StatementKind, parse_source,
 };
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
+
+#[macro_use]
+#[path = "fixtures/service_query_expect.rs"]
+mod service_query_expect;
+expect_claimed_extension!();
 
 fn compile(path: &str, source: &str, options: CompilerOptions) -> tsz::CompileOutput {
     Compiler::new().compile(
@@ -106,8 +111,11 @@ fn unterminated_template_tokens_are_not_recooked_as_escaped_closing_backticks() 
                     ..options(target)
                 },
             );
-            assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
-            assert_eq!(output.exit_status, CompileExitStatus::SemanticIncomplete);
+            assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+            assert_eq!(
+                output.exit_status,
+                CompileExitStatus::DiagnosticsPresentOutputsSkipped
+            );
             assert_eq!(codes(&output), [1160], "{target} {source:?}");
         }
 
@@ -306,16 +314,21 @@ fn template_inference_withholds_only_its_quick_info_scope() {
     });
     service.open("service.ts", Arc::<str>::from(source));
 
-    assert!(service.quick_info("service.ts", declaration + 1).is_none());
+    assert!(matches!(
+        service.quick_info("service.ts", declaration + 1),
+        ServiceQuery::Nonclaimed(_)
+    ));
     assert_eq!(
         service
             .quick_info("service.ts", sibling + 1)
+            .expect_claimed("sibling quick info capability")
             .expect("unrelated declarations keep QuickInfo")
             .display,
         "const sibling: 1"
     );
     let definition = service
         .definition_and_bound_span("service.ts", reference + 1)
+        .expect_claimed("template definition capability")
         .expect("template references keep binder-owned navigation");
     assert_eq!(definition.definitions.len(), 1);
     assert_eq!(definition.definitions[0].name, "exact");
@@ -480,7 +493,7 @@ fn tagged_adjacent_interpolated_and_type_forms_remain_deferred() {
 }
 
 #[test]
-fn ordinary_non_null_assertions_are_modeled_while_tagged_adjacency_stays_deferred() {
+fn ordinary_non_null_assertions_and_unrequested_tagged_products_complete() {
     for source in [
         "const value: number = null!;",
         concat!(
@@ -525,6 +538,10 @@ fn ordinary_non_null_assertions_are_modeled_while_tagged_adjacency_stays_deferre
         invalid_generic_operand.semantic_completion,
         SemanticCompletion::Deferred
     );
+    assert_eq!(
+        invalid_generic_operand.exit_status,
+        CompileExitStatus::SemanticIncomplete
+    );
 
     let tagged = compile(
         "tagged-non-null.ts",
@@ -535,7 +552,8 @@ fn ordinary_non_null_assertions_are_modeled_while_tagged_adjacency_stays_deferre
             ..options("es2015")
         },
     );
-    assert_eq!(tagged.semantic_completion, SemanticCompletion::Deferred);
+    assert_eq!(tagged.semantic_completion, SemanticCompletion::Complete);
+    assert_eq!(tagged.exit_status, CompileExitStatus::Success);
     assert!(tagged.diagnostics.is_empty(), "{:?}", tagged.diagnostics);
 }
 
@@ -636,7 +654,11 @@ fn ascii_ordinary_invalid_escape_diagnostics_match_ts7_under_no_check() {
             (code, start, length, message),
             "{source:?}"
         );
-        assert_eq!(output.semantic_completion, SemanticCompletion::Deferred);
+        assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+        assert_eq!(
+            output.exit_status,
+            CompileExitStatus::DiagnosticsPresentOutputsSkipped
+        );
     }
 }
 
@@ -783,7 +805,7 @@ fn unsupported_export_default_declaration_hosts_defer_without_template_syntax() 
         for no_check in [false, true] {
             let output = compile(
                 "owned-default-host.ts",
-                source.text.as_ref(),
+                source.text(),
                 CompilerOptions {
                     no_check,
                     no_emit: true,

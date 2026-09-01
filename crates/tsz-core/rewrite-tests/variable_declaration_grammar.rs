@@ -4,6 +4,7 @@ use tsz::diagnostics::DiagnosticCategory;
 use tsz::{CompileExitStatus, Compiler, CompilerOptions, SemanticCompletion, SourceInput};
 
 const MESSAGE: &str = "'const' declarations must be initialized.";
+const IMPLICIT_ANY_MESSAGE: &str = "Variable 'missing' implicitly has an 'any' type.";
 
 fn compile(path: &str, source: &str) -> tsz::CompileOutput {
     Compiler::new().compile(
@@ -48,6 +49,63 @@ fn nonambient_uninitialized_consts_report_exact_order_spans_and_message() {
         output.exit_status,
         CompileExitStatus::DiagnosticsPresentOutputsSkipped
     );
+}
+
+#[test]
+fn unannotated_const_reports_grammar_then_implicit_any_at_the_bound_name() {
+    let source = "const missing;\nconst renamed;\nconst annotated: unknown;\n";
+    let output = compile("direct-const.ts", source);
+
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.start,
+                diagnostic.length,
+                diagnostic.code,
+                diagnostic.message_text.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (6, 7, 1155, MESSAGE),
+            (6, 7, 7005, IMPLICIT_ANY_MESSAGE),
+            (21, 7, 1155, MESSAGE),
+            (
+                21,
+                7,
+                7005,
+                "Variable 'renamed' implicitly has an 'any' type.",
+            ),
+            (36, 9, 1155, MESSAGE),
+        ],
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
+}
+
+#[test]
+fn explicit_no_implicit_any_opt_out_keeps_only_const_grammar_diagnostic() {
+    let output = Compiler::new().compile(
+        vec![SourceInput::new(
+            "fallback.ts",
+            Arc::<str>::from("const missing;\nlet mutable;\n"),
+        )],
+        &CompilerOptions {
+            no_emit: true,
+            no_implicit_any: Some(false),
+            ..CompilerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code, diagnostic.message_text.as_str()))
+            .collect::<Vec<_>>(),
+        [(1155, MESSAGE)],
+    );
+    assert_eq!(output.semantic_completion, SemanticCompletion::Complete);
 }
 
 #[test]

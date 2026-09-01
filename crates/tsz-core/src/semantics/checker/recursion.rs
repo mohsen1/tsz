@@ -1,5 +1,5 @@
-use std::collections::HashSet;
-
+use super::object_shape::{plain_required_property, plain_type_parameters};
+use super::{Checker, DeclarationModel, QueryState};
 use crate::bind::Meaning;
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind, TypeStore};
@@ -8,23 +8,19 @@ use crate::syntax::{
     AuthoredTypeEdge, AuthoredTypeItem, TypeAliasDeclaration, TypeMember, TypeMemberKind, TypeNode,
     TypeNodeKind, TypeParameterDeclaration,
 };
-
-use super::object_shape::{plain_required_property, plain_type_parameters};
-use super::{Checker, DeclarationModel};
+use std::collections::HashSet;
 
 /// The semantic owner whose query is following symbolic references.
 ///
 /// Demand is part of the key so an assumption made while assembling a shape
-/// cannot become an answer for a required-type, display, or relation query.
+/// cannot become an answer for a required-type or relation query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ReferenceDemand {
     ShapeSupport,
     RequiredType,
-    AuthoredDisplay,
     RelationSource,
     RelationTarget,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReferenceExpansionKey {
     demand: ReferenceDemand,
@@ -32,7 +28,6 @@ struct ReferenceExpansionKey {
     declaration: DeclId,
     arguments: Vec<TypeId>,
 }
-
 impl ReferenceExpansionKey {
     fn new(
         demand: ReferenceDemand,
@@ -47,7 +42,6 @@ impl ReferenceExpansionKey {
             arguments: arguments.to_vec(),
         }
     }
-
     fn recursion_from<F>(&self, ancestor: &Self, kind: &F) -> ReferenceRecursion
     where
         F: Fn(TypeId) -> TypeKind,
@@ -65,7 +59,6 @@ impl ReferenceExpansionKey {
         }
     }
 }
-
 /// Query-local classification of a repeated declaration reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReferenceRecursion {
@@ -74,7 +67,6 @@ pub(crate) enum ReferenceRecursion {
     Generative,
     UnsupportedGenerative,
 }
-
 /// Active reference frames for one semantic demand.
 ///
 /// The stack has no session residency and is never a definitive cache. A
@@ -86,7 +78,6 @@ pub(crate) struct ReferenceExpansionStack {
     demand: ReferenceDemand,
     frames: Vec<ReferenceExpansionKey>,
 }
-
 /// A raw generative revisit plus its conservative positional wrapper shape.
 ///
 /// `transform == None` means growth was structural but outside the relation
@@ -96,19 +87,16 @@ pub(crate) struct GenerativeExpansion {
     ancestor_index: usize,
     transform: Option<Vec<ExpansionTransform>>,
 }
-
 impl GenerativeExpansion {
     pub(crate) fn same_supported_transform(&self, other: &Self) -> bool {
         self.transform.is_some() && self.transform == other.transform
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ExpansionTransform {
     Argument(usize),
     Array(Box<Self>),
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AliasRecursionProductivity {
     Acyclic,
@@ -116,14 +104,12 @@ pub(super) enum AliasRecursionProductivity {
     Unproductive,
     Unsupported,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AliasPathKind {
     Neutral,
     Productive,
     Unsupported,
 }
-
 impl AliasPathKind {
     const fn through_productive_boundary(self) -> Self {
         match self {
@@ -131,21 +117,17 @@ impl AliasPathKind {
             Self::Neutral | Self::Productive => Self::Productive,
         }
     }
-
     const fn through_unsupported_boundary(self) -> Self {
         Self::Unsupported
     }
 }
-
 #[derive(Debug, Clone, Copy)]
 struct AliasEdge {
     source: DeclId,
     target: DeclId,
     path: AliasPathKind,
 }
-
 const MAX_ALIAS_RECURSION_GRAPH: usize = 512;
-
 impl ReferenceExpansionStack {
     pub(crate) const fn new(demand: ReferenceDemand) -> Self {
         Self {
@@ -153,7 +135,6 @@ impl ReferenceExpansionStack {
             frames: Vec::new(),
         }
     }
-
     pub(crate) fn classify<F>(
         &self,
         reference: TypeId,
@@ -182,7 +163,6 @@ impl ReferenceExpansionStack {
             ReferenceRecursion::Distinct
         }
     }
-
     pub(crate) fn generative_expansion<F>(
         &self,
         reference: TypeId,
@@ -213,11 +193,9 @@ impl ReferenceExpansionStack {
                 })
             })
     }
-
     pub(crate) const fn checkpoint(&self) -> usize {
         self.frames.len()
     }
-
     pub(crate) fn expansion_segment_supports<F>(
         &self,
         expansion: &GenerativeExpansion,
@@ -230,7 +208,6 @@ impl ReferenceExpansionStack {
             .iter()
             .all(|frame| supported(frame.declaration, &frame.arguments))
     }
-
     pub(crate) fn push(&mut self, reference: TypeId, declaration: DeclId, arguments: &[TypeId]) {
         self.frames.push(ReferenceExpansionKey::new(
             self.demand,
@@ -239,14 +216,25 @@ impl ReferenceExpansionStack {
             arguments,
         ));
     }
-
     pub(crate) fn restore(&mut self, checkpoint: usize) {
         debug_assert!(checkpoint <= self.frames.len());
         self.frames.truncate(checkpoint);
     }
 }
-
 impl Checker<'_> {
+    /// Return a type that semantic evaluation has already completed without
+    /// starting another force query for diagnostic display.
+    pub(super) fn ready_type_for_display(&self, ty: TypeId) -> Completion<TypeId> {
+        match self.store.kind(ty) {
+            TypeKind::Deferred(_) => match self.force_queries.get(&ty).copied() {
+                Some(QueryState::Ready(result)) => Completion::Complete(result),
+                Some(QueryState::Computing) => Completion::Cycle,
+                None => Completion::Deferred,
+            },
+            _ => Completion::Complete(ty),
+        }
+    }
+
     pub(super) fn complete_type(&mut self, ty: TypeId) -> Option<TypeId> {
         let completion = self.force_type(ty, 0);
         match self.require_completion(completion) {
@@ -254,22 +242,31 @@ impl Checker<'_> {
             Completion::Deferred | Completion::Cycle | Completion::Limit => None,
         }
     }
-
     pub(super) fn force_operand(&mut self, operand: TypeId, depth: usize) -> Completion<TypeId> {
         self.force_type(operand, depth)
     }
-
     pub(super) fn force_operands<const N: usize>(
         &mut self,
         operands: [TypeId; N],
         depth: usize,
     ) -> [Completion<TypeId>; N] {
-        operands.map(|operand| self.force_operand(operand, depth))
+        let mut incomplete: Option<Completion<TypeId>> = None;
+        operands.map(|operand| {
+            if let Some(incomplete) = &incomplete {
+                return incomplete.clone();
+            }
+            let result = self.force_operand(operand, depth);
+            if !matches!(result, Completion::Complete(_)) {
+                incomplete = Some(result.clone());
+            }
+            result
+        })
     }
-
     pub(super) fn report_complexity(&mut self, deferred: &DeferredType) {
         let span = match deferred {
-            DeferredType::Reference { declaration, .. } | DeferredType::Value(declaration) => {
+            DeferredType::Reference { declaration, .. }
+            | DeferredType::Value(declaration)
+            | DeferredType::ImportedTypeQuery(declaration) => {
                 self.models.get(declaration).map(|model| match model {
                     DeclarationModel::TypeAlias { declaration, .. } => declaration.name_span,
                     DeclarationModel::Interface { declaration, .. } => declaration.name_span,
@@ -312,7 +309,6 @@ impl Checker<'_> {
             );
         }
     }
-
     pub(super) fn evaluate_type_alias_reference(
         &mut self,
         declaration: DeclId,
@@ -339,13 +335,11 @@ impl Checker<'_> {
             &parameters,
         ))
     }
-
     pub(super) fn alias_recursion_productivity(&self, root: DeclId) -> AliasRecursionProductivity {
         let mut pending = vec![root];
         let mut seen = HashSet::new();
         let mut declarations = Vec::new();
         let mut edges = Vec::new();
-
         while let Some(declaration) = pending.pop() {
             if !seen.insert(declaration) {
                 continue;
@@ -377,7 +371,6 @@ impl Checker<'_> {
                 }
             }
         }
-
         let component = declarations
             .iter()
             .copied()
@@ -400,7 +393,6 @@ impl Checker<'_> {
             AliasRecursionProductivity::Acyclic
         }
     }
-
     /// A transparent alias reached after an authored productive boundary may
     /// return the productive root while that root is still active. Re-forcing
     /// it here would turn a legal cycle into TS2456 before the shape owner can
@@ -450,7 +442,6 @@ impl Checker<'_> {
                 ReferenceRecursion::Exact
             )
     }
-
     fn collect_alias_edges<'a>(
         &self,
         source: DeclId,
@@ -583,7 +574,6 @@ impl Checker<'_> {
         }
         true
     }
-
     /// Whether a generative assumption is admissible for this declaration.
     ///
     /// This capability is intentionally stricter than structural containment:
@@ -625,7 +615,6 @@ impl Checker<'_> {
                 )
         })
     }
-
     pub(super) fn reference_expansion_frame_supported(
         &self,
         declaration: DeclId,
@@ -634,7 +623,6 @@ impl Checker<'_> {
         self.generative_reference_supported(declaration, arguments)
             || self.plain_property_interface_heritage_reference_supported(declaration, arguments)
     }
-
     /// Relation cutoffs need a stronger proof than shape admission. A finite
     /// sibling can become incompatible only after another generic expansion,
     /// so this checkpoint admits only the single recursive-property shape
@@ -685,7 +673,6 @@ impl Checker<'_> {
                     )
             )
     }
-
     /// Classify the reference currently being admitted into an object shape.
     ///
     /// Only active `Computing` force frames participate. `Ready` entries are
@@ -719,12 +706,10 @@ impl Checker<'_> {
             .classify(reference, declaration, arguments, &kind)
     }
 }
-
 enum AliasPending<'a> {
     Type(&'a TypeNode, AliasPathKind, Vec<&'a str>),
     Member(&'a TypeMember, AliasPathKind, Vec<&'a str>),
 }
-
 fn with_alias_type_parameters<'a>(
     outer: &[&'a str],
     parameters: &'a [TypeParameterDeclaration],
@@ -735,7 +720,6 @@ fn with_alias_type_parameters<'a>(
         .chain(parameters.iter().map(|parameter| parameter.name.as_str()))
         .collect()
 }
-
 fn push_alias_children<'a>(
     children: Vec<AuthoredTypeItem<'a>>,
     path: AliasPathKind,
@@ -767,7 +751,6 @@ fn push_alias_children<'a>(
         }
     }
 }
-
 fn graph_root_has_cycle(
     root: DeclId,
     edges: &[AliasEdge],
@@ -775,11 +758,9 @@ fn graph_root_has_cycle(
 ) -> bool {
     graph_edge_path_exists(root, root, edges, include)
 }
-
 fn graph_path_exists(start: DeclId, target: DeclId, edges: &[AliasEdge]) -> bool {
     start == target || graph_edge_path_exists(start, target, edges, |_| true)
 }
-
 fn graph_edge_path_exists(
     start: DeclId,
     target: DeclId,
@@ -807,7 +788,6 @@ fn graph_edge_path_exists(
     }
     false
 }
-
 fn positional_array_transform<F>(
     ancestor: &[TypeId],
     current: &[TypeId],
@@ -825,7 +805,6 @@ where
         .map(|(index, current)| expansion_transform(*current, ancestor, index, kind))
         .collect()
 }
-
 fn expansion_transform<F>(
     current: TypeId,
     ancestor: &[TypeId],
@@ -844,7 +823,6 @@ where
         _ => None,
     }
 }
-
 /// Whether every prior argument survives inside the new argument graph and at
 /// least one survives below a newly introduced structural wrapper.
 ///
@@ -876,7 +854,6 @@ where
     }
     introduced_wrapper
 }
-
 fn type_contains_nested<F>(root: TypeId, needle: TypeId, kind: &F) -> bool
 where
     F: Fn(TypeId) -> TypeKind,
@@ -894,7 +871,6 @@ where
     }
     false
 }
-
 #[cfg(test)]
 #[path = "../../../rewrite-tests/checker_recursion_unit.rs"]
 mod tests;

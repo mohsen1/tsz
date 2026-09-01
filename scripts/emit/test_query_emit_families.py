@@ -290,7 +290,7 @@ after
             "snapshot-fingerprint-mismatch",
         )
 
-    def test_detail_row_summary_counts_dts_timeout_as_failure(self):
+    def test_detail_row_summary_counts_dts_timeout_as_typed_terminal(self):
         data = {
             "summary": {
                 "jsPass": 1,
@@ -315,10 +315,15 @@ after
             ],
         }
 
-        self.assertEqual(self.mod.emit_detail_row_summary(data), data["summary"])
+        summary = self.mod.emit_detail_row_summary(data)
+        self.assertEqual(summary["dtsFail"], 1)
+        self.assertEqual(summary["dtsTimeout"], 1)
+        self.assertEqual(summary["dtsProductMismatch"], 0)
+        self.assertEqual(summary["dtsProductUnmeasured"], 1)
+        self.assertEqual(summary["dtsTotal"], 1)
         self.assertTrue(self.mod.emit_detail_rows_match_summary(data))
 
-    def test_terminal_artifact_states_are_failures_not_skips(self):
+    def test_terminal_artifact_states_keep_distinct_counts_and_candidate_domain(self):
         results = []
         for index, status in enumerate(("unsupported", "timeout", "crash", "incomplete")):
             results.append(
@@ -338,12 +343,94 @@ after
         summary = self.mod.emit_detail_row_summary(data)
         self.assertEqual(summary["jsFail"], 4)
         self.assertEqual(summary["jsSkip"], 0)
+        self.assertEqual(summary["jsUnsupported"], 1)
+        self.assertEqual(summary["jsTimeout"], 1)
+        self.assertEqual(summary["jsCrash"], 1)
+        self.assertEqual(summary["jsIncomplete"], 1)
+        self.assertEqual(summary["jsProductMismatch"], 0)
+        self.assertEqual(summary["jsProductUnmeasured"], 4)
+        self.assertEqual(summary["jsTotal"], 4)
         self.assertEqual(summary["dtsFail"], 4)
         self.assertEqual(summary["dtsSkip"], 0)
+        self.assertEqual(summary["dtsUnsupported"], 1)
+        self.assertEqual(summary["dtsTimeout"], 1)
+        self.assertEqual(summary["dtsCrash"], 1)
+        self.assertEqual(summary["dtsIncomplete"], 1)
+        self.assertEqual(summary["dtsProductMismatch"], 0)
+        self.assertEqual(summary["dtsProductUnmeasured"], 4)
+        self.assertEqual(summary["dtsTotal"], 4)
+        data["summary"] = summary
+        self.assertTrue(self.mod.emit_detail_rows_match_summary(data))
         self.assertEqual(
             sum(len(rows) for rows in self.mod.collect_failures_by_family(data, "js").values()),
             4,
         )
+
+    def test_schema_v2_terminal_product_mismatches_are_orthogonal_and_dts_is_unselected(self):
+        results = []
+        for kind, product_error in (
+            ("missing", "Missing emit product: out.js"),
+            ("extra", "Unexpected emit product: out.js"),
+            ("content", "Content mismatch at out.js: +1/-1 lines"),
+        ):
+            results.append({
+                "name": f"terminal-{kind}-mismatch",
+                "baselineFile": f"terminal-{kind}-mismatch.js",
+                "testPath": f"tests/cases/compiler/terminal-{kind}-mismatch.ts",
+                "artifactState": "incomplete",
+                "outcomeMatch": False,
+                "outcomeError": "TSZ_NONZERO_OUTCOME: exit=3, diagnostics=<none>",
+                "jsSelected": True,
+                "dtsSelected": False,
+                "jsMatch": False,
+                "dtsMatch": None,
+                "jsProductMatch": False,
+                "dtsProductMatch": None,
+                "jsStatus": "incomplete",
+                "dtsStatus": "skip",
+                "jsError": "TSZ_NONZERO_OUTCOME: exit=3, diagnostics=<none>",
+                "jsProductError": product_error,
+            })
+        data = {"detailSchemaVersion": 2, "results": results}
+        summary = self.mod.emit_detail_row_summary(data)
+        data["summary"] = summary
+
+        self.assertEqual(summary["jsTotal"], 3)
+        self.assertEqual(summary["jsFail"], 3)
+        self.assertEqual(summary["jsIncomplete"], 3)
+        self.assertEqual(summary["jsProductMismatch"], 3)
+        self.assertEqual(summary["dtsTotal"], 0)
+        self.assertEqual(summary["dtsSkip"], 3)
+        self.assertEqual(summary["dtsProductMismatch"], 0)
+        self.assertTrue(self.mod.emit_detail_rows_match_summary(data))
+
+    def test_schema_v2_fingerprint_pins_raw_product_parity(self):
+        row = {
+            "name": "case",
+            "baselineFile": "case.js",
+            "testPath": "tests/cases/compiler/case.ts",
+            "artifactState": "incomplete",
+            "outcomeMatch": False,
+            "jsSelected": True,
+            "dtsSelected": False,
+            "jsMatch": False,
+            "dtsMatch": None,
+            "jsProductMatch": False,
+            "dtsProductMatch": None,
+            "jsStatus": "incomplete",
+            "dtsStatus": "skip",
+        }
+        mismatch = self.mod.emit_detail_row_fingerprint(
+            {"detailSchemaVersion": 2, "results": [row]}
+        )
+        match = self.mod.emit_detail_row_fingerprint(
+            {
+                "detailSchemaVersion": 2,
+                "results": [{**row, "jsProductMatch": True}],
+            }
+        )
+
+        self.assertNotEqual(mismatch, match)
 
     def test_artifact_state_is_part_of_detail_fingerprint(self):
         row = {
@@ -818,8 +905,8 @@ after
         text = out.getvalue()
         self.assertIn("Source: README/public aggregate", text)
         self.assertIn("JavaScript: 13459/13530 (99.5%)", text)
-        self.assertIn("Checked-detail JS failures: 1", text)
-        self.assertIn("Checked-detail DTS failures: 1", text)
+        self.assertIn("Checked-detail JS product mismatches: 1", text)
+        self.assertIn("Checked-detail DTS product mismatches: 1", text)
         self.assertIn("Checked-detail JS pass + DTS fail", text)
 
 

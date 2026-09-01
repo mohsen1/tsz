@@ -1,7 +1,12 @@
 use super::Parser;
+use crate::syntax::TokenKind::{LeftBrace, RightBrace};
+use crate::syntax::UnmodeledDeclarationHostKind::{
+    Enum, ExternalModule, Global, Module, Namespace, Using,
+};
 use crate::syntax::{
-    AuthoredLiteralKind, LiteralSyntaxBoundary, SourceSyntaxFact, TokenKind,
-    UnmodeledDeclarationHostFact, UnmodeledDeclarationHostKind,
+    AuthoredLiteralKind, DeclarationHostBodyRepresentation, LiteralSyntaxBoundary,
+    SourceSyntaxFact, StatementKind, TokenKind, UnmodeledDeclarationHostFact,
+    UnmodeledDeclarationHostKind,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -132,16 +137,18 @@ impl Parser<'_> {
             }};
         }
         loop {
-            if matches!(
+            let identifier_like = matches!(
                 self.kind(),
                 TokenKind::Declare | TokenKind::Async | TokenKind::Abstract
-            ) && matches!(
-                self.peek_kind(1),
-                TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
-            ) {
-                // These contextual keywords remain identifier-like when they
-                // are the tag expression. Do not reinterpret the template as
-                // a recovered declaration tail.
+            );
+            if identifier_like
+                && (!self.tokens_are_on_same_line(self.index, self.index + 1)
+                    || matches!(
+                        self.peek_kind(1),
+                        TokenKind::NoSubstitutionTemplateLiteral | TokenKind::TemplateHead
+                    ))
+            {
+                // ASI and tagged templates keep these contextual keywords identifier-like.
                 break;
             }
             match self.kind() {
@@ -169,16 +176,43 @@ impl Parser<'_> {
                 _ => break,
             }
         }
-        self.retain_unmodeled_declaration_host(statement_start, modifiers.exported);
+        self.retain_unmodeled_declaration_host(statement_start, modifiers);
         modifiers
     }
 
-    fn retain_unmodeled_declaration_host(&mut self, owner_start: usize, exported: bool) {
-        let Some((name_offset, Some(kind))) = self.unmodeled_declaration_host_at(0) else {
+    pub(super) fn error_modified_declaration(&mut self, statement_start: usize) {
+        let modifier = self.tokens[..self.index].iter().copied().find(|token| {
+            token.span.start >= statement_start as u32
+                && matches!(token.kind, TokenKind::Export | TokenKind::Declare)
+        });
+        let (Some(modifier), Some((_, Using))) = (modifier, self.unmodeled_declaration_host_at(0))
+        else {
+            self.error_current("Declaration expected.", 1146);
             return;
         };
-        let name_index = (name_offset > 0).then_some(self.index + name_offset);
-        let name_token = name_index.and_then(|index| self.tokens.get(index).copied());
+        let modifier_name = match modifier.kind {
+            TokenKind::Export => "export",
+            TokenKind::Declare => "declare",
+            _ => unreachable!(),
+        };
+        let (code, declaration) = if self.at(TokenKind::Await) {
+            (1495, "an 'await using'")
+        } else {
+            (1491, "a 'using'")
+        };
+        self.diagnostics.push(crate::diagnostics::Diagnostic::at(
+            self.source,
+            modifier.span,
+            format!("'{modifier_name}' modifier cannot appear on {declaration} declaration."),
+            code,
+        ));
+    }
+
+    fn retain_unmodeled_declaration_host(&mut self, owner_start: usize, modifiers: Modifiers) {
+        let Some((name_offset, kind)) = self.unmodeled_declaration_host_at(0) else {
+            return;
+        };
+        let name_token = (name_offset > 0).then(|| self.tokens[self.index + name_offset]);
         let recovery_extent = self.unmodeled_declaration_recovery_extent(kind);
         self.unmodeled_declaration_hosts
             .push(UnmodeledDeclarationHostFact {
@@ -187,8 +221,79 @@ impl Parser<'_> {
                 name: name_token.map(|token| self.text(token.span).to_string()),
                 name_span: name_token.map(|token| token.span),
                 kind,
-                exported,
+                body: DeclarationHostBodyRepresentation::Omitted,
+                declared: modifiers.declared,
+                exported: modifiers.exported,
             });
+    }
+
+    pub(super) fn parse_opaque_host(
+        &mut self,
+        owner_start: usize,
+        modifiers: Modifiers,
+    ) -> Option<StatementKind> {
+        let (name_offset, kind) = self.unmodeled_declaration_host_at(0)?;
+        let statement = match kind {
+            Module | Namespace | ExternalModule => Some(self.parse_opaque_module(kind)),
+            Enum => {
+                let body = self.index + name_offset + 1;
+                self.balanced_recovery_brace_extent(body)?;
+                self.eat(TokenKind::Const);
+                self.bump();
+                self.parse_name();
+                self.consume_balanced_tokens(LeftBrace, RightBrace, "'}' expected.");
+                self.eat(TokenKind::Semicolon);
+                Some(StatementKind::Unknown)
+            }
+            Global if modifiers.declared && self.peek_kind(1) == LeftBrace => {
+                self.bump();
+                let body = StatementKind::Block(self.parse_block().0);
+                self.eat(TokenKind::Semicolon);
+                Some(body)
+            }
+            Global | Using => None,
+        };
+        if matches!(statement, Some(StatementKind::Block(_)))
+            && let Some(host) = self
+                .unmodeled_declaration_hosts
+                .iter_mut()
+                .rev()
+                .find(|host| host.owner_start == owner_start as u32 && host.kind == kind)
+        {
+            host.body = DeclarationHostBodyRepresentation::ParsedStatements;
+        }
+        statement
+    }
+
+    fn parse_opaque_module(&mut self, kind: UnmodeledDeclarationHostKind) -> StatementKind {
+        debug_assert!(matches!(kind, Module | Namespace | ExternalModule));
+        self.bump();
+
+        let mut malformed_name = kind == Namespace && self.at(TokenKind::StringLiteral);
+        if kind == ExternalModule {
+            debug_assert!(self.at(TokenKind::StringLiteral));
+            self.bump();
+        } else {
+            self.parse_name();
+            while self.eat(TokenKind::Dot) {
+                if !self.kind().is_identifier_name() {
+                    self.error_current("Identifier expected.", 1003);
+                    malformed_name = true;
+                    break;
+                }
+                self.parse_identifier_name();
+            }
+        }
+
+        if self.at(LeftBrace) {
+            return StatementKind::Block(self.parse_block().0);
+        }
+
+        if kind != ExternalModule && !malformed_name {
+            self.error_current("'{' expected.", 1005);
+        }
+        self.eat(TokenKind::Semicolon);
+        StatementKind::Unknown
     }
 
     fn unmodeled_declaration_recovery_extent(
@@ -196,76 +301,48 @@ impl Parser<'_> {
         kind: UnmodeledDeclarationHostKind,
     ) -> crate::source::Span {
         let start = self.current().span;
-        let mut braces = 0usize;
-        let mut using_depth = 0_u32;
-        let mut previous = self.index;
-        let using = kind == UnmodeledDeclarationHostKind::Using;
-        for (index, token) in self.tokens.iter().enumerate().skip(self.index) {
-            if using
-                && using_depth == 0
-                && index > self.index
-                && self.later_line_starts_declaration(previous, index)
-            {
-                return start.merge(self.tokens[previous].span);
+        if kind != UnmodeledDeclarationHostKind::Using {
+            let balanced_body = self
+                .tokens
+                .iter()
+                .enumerate()
+                .skip(self.index)
+                .take_while(|(_, token)| {
+                    !matches!(token.kind, TokenKind::Semicolon | TokenKind::EndOfFile)
+                })
+                .find(|(_, token)| token.kind == LeftBrace)
+                .and_then(|(index, _)| self.balanced_recovery_brace_extent(index));
+            if let Some(extent) = balanced_body {
+                return start.merge(extent);
             }
-            match token.kind {
-                TokenKind::LeftBrace if !using => braces += 1,
-                TokenKind::RightBrace if braces > 0 => {
-                    braces = braces.saturating_sub(1);
-                    if braces == 0 {
-                        return start.merge(token.span);
-                    }
-                }
-                TokenKind::LeftParen | TokenKind::LeftBracket | TokenKind::LeftBrace if using => {
-                    using_depth += 1;
-                }
-                TokenKind::RightParen | TokenKind::RightBracket | TokenKind::RightBrace
-                    if using && using_depth > 0 =>
-                {
-                    using_depth -= 1;
-                }
-                TokenKind::RightBrace if using => {
-                    return start.merge(self.tokens[previous].span);
-                }
-                TokenKind::Semicolon if braces == 0 && (!using || using_depth == 0) => {
-                    return start.merge(token.span);
-                }
-                TokenKind::EndOfFile => return start.merge(token.span),
-                _ => {}
-            }
-            previous = index;
         }
-        start
+        self.recovery_extent_from_current(start)
     }
 
     fn unmodeled_declaration_host_at(
         &self,
         offset: usize,
-    ) -> Option<(usize, Option<UnmodeledDeclarationHostKind>)> {
+    ) -> Option<(usize, UnmodeledDeclarationHostKind)> {
         let kind = self.peek_kind(offset);
         let next = self.peek_kind(offset + 1);
         let same_line = self.tokens_are_on_same_line(self.index + offset, self.index + offset + 1);
         match kind {
-            TokenKind::Enum if next.is_identifier() => {
-                Some((offset + 1, Some(UnmodeledDeclarationHostKind::Enum)))
-            }
+            TokenKind::Enum if next.is_identifier() => Some((offset + 1, Enum)),
             TokenKind::Const
                 if next == TokenKind::Enum && self.peek_kind(offset + 2).is_identifier() =>
             {
-                Some((offset + 2, Some(UnmodeledDeclarationHostKind::Enum)))
+                Some((offset + 2, Enum))
             }
-            TokenKind::Module if same_line && next.is_identifier() => {
-                Some((offset + 1, Some(UnmodeledDeclarationHostKind::Module)))
-            }
-            TokenKind::Module if same_line && next == TokenKind::StringLiteral => Some((
-                offset + 1,
-                Some(UnmodeledDeclarationHostKind::ExternalModule),
-            )),
-            TokenKind::Namespace if same_line && next.is_identifier() => {
-                Some((offset + 1, Some(UnmodeledDeclarationHostKind::Namespace)))
-            }
-            TokenKind::Namespace if same_line && next == TokenKind::StringLiteral => {
-                Some((offset + 1, None))
+            TokenKind::Module | TokenKind::Namespace
+                if same_line && (next.is_identifier() || next == TokenKind::StringLiteral) =>
+            {
+                let host = match kind {
+                    TokenKind::Module if next == TokenKind::StringLiteral => ExternalModule,
+                    TokenKind::Module => Module,
+                    TokenKind::Namespace => Namespace,
+                    _ => unreachable!(),
+                };
+                Some((offset + 1, host))
             }
             TokenKind::Global
                 if matches!(
@@ -273,11 +350,9 @@ impl Parser<'_> {
                     TokenKind::LeftBrace | TokenKind::Identifier | TokenKind::Export
                 ) || same_line && next.is_identifier() =>
             {
-                Some((0, Some(UnmodeledDeclarationHostKind::Global)))
+                Some((0, Global))
             }
-            TokenKind::Using if same_line && next.is_identifier() => {
-                Some((offset + 1, Some(UnmodeledDeclarationHostKind::Using)))
-            }
+            TokenKind::Using if same_line && next.is_identifier() => Some((offset + 1, Using)),
             TokenKind::Await
                 if next == TokenKind::Using
                     && same_line
@@ -287,7 +362,7 @@ impl Parser<'_> {
                     )
                     && self.peek_kind(offset + 2).is_identifier() =>
             {
-                Some((offset + 2, Some(UnmodeledDeclarationHostKind::Using)))
+                Some((offset + 2, Using))
             }
             _ => None,
         }

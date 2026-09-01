@@ -1,15 +1,12 @@
-use std::collections::{HashMap, HashSet};
-
+use super::{Checker, DeclarationModel};
 use crate::bind::{Meaning, ScopeId};
 use crate::semantics::relation::RelationContext;
 use crate::semantics::types::{Completion, DeferredType, TypeId, TypeKind};
-use crate::source::{DeclId, FileId, NodeId};
+use crate::source::{DeclId, FileId, NodeId, Span};
 use crate::syntax::{
     ExpressionKind, KeywordType, Parameter, TypeMember, TypeMemberKind, TypeNode, TypeNodeKind,
 };
-
-use super::{Checker, DeclarationModel};
-
+use std::collections::{HashMap, HashSet};
 macro_rules! d {
     ($checker:expr, $file:expr, $span:expr, $code:expr) => {
         $checker.push_diagnostic($file, $span, grammar_message($code).into(), $code)
@@ -18,7 +15,6 @@ macro_rules! d {
         $checker.push_diagnostic($file, $span, ($message).into(), $code)
     };
 }
-
 /// Ordered by the diagnostic precedence used for authored unions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum IndexKeySyntax {
@@ -27,7 +23,6 @@ enum IndexKeySyntax {
     Invalid,
     LiteralOrGeneric,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RestTypeSyntax {
     Any,
@@ -37,14 +32,19 @@ enum RestTypeSyntax {
     NonArray,
     Unknown,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ParameterGrammarHost {
     Signature,
     Implementation { constructor: bool },
 }
-
 impl Checker<'_> {
+    pub(super) fn implicit_any_parameter_span(parameter: &Parameter) -> Span {
+        match (parameter.is_property(), parameter.rest_span) {
+            (true, _) => parameter.span,
+            (false, Some(rest)) => rest.merge(parameter.name_span),
+            (false, None) => parameter.name_span,
+        }
+    }
     /// Validate one authored `TypeElement` list. The required-type traversal is
     /// the sole recursive host; these rules never rediscover syntax children.
     pub(super) fn validate_type_member_list(
@@ -134,7 +134,6 @@ impl Checker<'_> {
             }
         }
     }
-
     pub(super) fn validate_mapped_type_members(&mut self, file: FileId, members: &[TypeMember]) {
         let Some(first) = members.iter().find(|member| !member.recovered) else {
             return;
@@ -149,7 +148,6 @@ impl Checker<'_> {
         };
         d!(self, file, span, 7061);
     }
-
     /// TypeScript reports the declaration-level implicit-`any` facts for
     /// authored type members independently from semantic shape completion.
     /// The latter remains deferred under `noImplicitAny`, so an error recovery
@@ -200,7 +198,6 @@ impl Checker<'_> {
             | TypeMemberKind::Index { .. } => {}
         }
     }
-
     pub(super) fn validate_implicit_any_parameters(
         &mut self,
         file: FileId,
@@ -219,17 +216,10 @@ impl Checker<'_> {
                 (7006, "Parameter", "any")
             };
             let message = format!("{kind} '{}' implicitly has an '{ty}' type.", parameter.name);
-            let span = if parameter.rest {
-                parameter
-                    .rest_span
-                    .map_or(parameter.name_span, |rest| rest.merge(parameter.name_span))
-            } else {
-                parameter.name_span
-            };
+            let span = Self::implicit_any_parameter_span(parameter);
             d!(self, file, span, message, code);
         }
     }
-
     pub(super) fn validate_authored_parameters(
         &mut self,
         file: FileId,
@@ -251,12 +241,10 @@ impl Checker<'_> {
             let message = format!("Duplicate identifier '{}'.", parameter.name);
             d!(self, file, parameter.name_span, message, 2300);
         }
-
         for parameter in parameters.iter().filter(|parameter| parameter.rest) {
             self.validate_rest_parameter_type(file, scope, parameter, type_parameters, true);
         }
     }
-
     pub(super) fn validate_parameter_host_grammar(
         &mut self,
         file: FileId,
@@ -309,7 +297,6 @@ impl Checker<'_> {
             }
         }
     }
-
     fn validate_rest_parameter_type(
         &mut self,
         file: FileId,
@@ -337,7 +324,6 @@ impl Checker<'_> {
             d!(self, file, optional_span, 1047);
         }
     }
-
     fn begin_alias_walk(
         &mut self,
         declaration: DeclId,
@@ -356,7 +342,6 @@ impl Checker<'_> {
         }
         Some(is_alias)
     }
-
     fn rest_type_id(&mut self, ty: TypeId, active_aliases: &mut HashSet<DeclId>) -> RestTypeSyntax {
         match self.store.kind(ty).clone() {
             TypeKind::Any => RestTypeSyntax::Any,
@@ -446,7 +431,6 @@ impl Checker<'_> {
             | TypeKind::ShapeFunction(_) => RestTypeSyntax::NonArray,
         }
     }
-
     fn validate_method_optional_overloads(&mut self, file: FileId, members: &[TypeMember]) {
         let bound = &self.program.files[file.0 as usize].bindings;
         let by_node = members
@@ -485,7 +469,6 @@ impl Checker<'_> {
             }
         }
     }
-
     fn index_key_syntax(
         &mut self,
         file: FileId,
@@ -577,7 +560,6 @@ impl Checker<'_> {
         }
     }
 }
-
 fn combine_rest_types(
     members: Vec<TypeId>,
     decisive: RestTypeSyntax,
@@ -598,7 +580,6 @@ fn combine_rest_types(
     }
     result
 }
-
 const fn grammar_message(code: u32) -> &'static str {
     match code {
         1015 => "Parameter cannot have question mark and initializer.",

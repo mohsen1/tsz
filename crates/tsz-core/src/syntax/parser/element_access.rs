@@ -63,7 +63,7 @@ impl Parser<'_> {
         let left = self.bump().span;
         let mut elements = Vec::new();
         while !self.at_any(&[TokenKind::RightBracket, TokenKind::EndOfFile]) {
-            elements.push(self.parse_expression());
+            elements.push(self.parse_assignment_expression());
             if !self.eat(TokenKind::Comma) {
                 break;
             }

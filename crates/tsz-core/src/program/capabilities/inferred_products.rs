@@ -1,5 +1,5 @@
 use crate::syntax::{
-    BinaryOperator, ClassMember, ClassMemberKind, Expression, ExpressionKind, ExpressionRoot,
+    BinaryOperator as Op, ClassMember, ClassMemberKind, Expression, ExpressionKind, ExpressionRoot,
     ExpressionTraversal::All, Literal, NumberLiteral, Parameter, SourceSyntaxFact, Statement,
     StatementKind, StringLiteral, contains_matching_expression,
 };
@@ -7,27 +7,20 @@ use crate::syntax::{
 use super::emit_targets::{
     class_member_declaration_type_is_erased, class_parameter_property_type_is_published,
 };
-use super::{
-    CapabilityNonclaim, CapabilityScope, CapabilityTarget, DeletionCondition, NonclaimReason,
-    ProgramFile, SemanticGap, SyntaxGap, add_both_emit, add_nonclaims as record_nonclaims,
-    add_semantic,
-};
+use super::{CapabilityTarget, ProgramFile, ScopedNonclaims, SemanticGap, SyntaxGap};
 
-pub(super) fn add_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &ProgramFile) {
+pub(super) fn add_nonclaims(nonclaims: &mut ScopedNonclaims<'_>, file: &ProgramFile) {
     add_unsigned_shift_nonclaims(nonclaims, file);
     add_declaration_expression_nonclaims(nonclaims, file);
 }
 
-fn add_unsigned_shift_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &ProgramFile) {
+fn add_unsigned_shift_nonclaims(nonclaims: &mut ScopedNonclaims<'_>, file: &ProgramFile) {
     let id = file.source.id;
     let inference = InferredExpression::Shift;
-    let record = |nonclaims: &mut Vec<CapabilityNonclaim>, target, owner| {
-        add_semantic(
-            nonclaims,
-            &[target],
-            CapabilityScope::node(id, owner),
-            SemanticGap::UnsignedRightShift,
-        );
+    let record = |nonclaims: &mut ScopedNonclaims<'_>, target, owner| {
+        nonclaims
+            .node(id, owner)
+            .semantic(&[target], SemanticGap::UnsignedRightShift);
     };
     for root in &file.syntax.statements {
         if inferred_statement(root, inference)
@@ -44,13 +37,12 @@ fn add_unsigned_shift_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &
             if inferred_statement(statement, InferredExpression::Template)
                 || matches!(&statement.kind, StatementKind::Class(value) if value.members.iter().any(|member| inferred_member(member, InferredExpression::Template)))
             {
-                record_nonclaims(
-                    nonclaims,
+                nonclaims.node(id, statement.id).syntax_owned_by(
                     &[CapabilityTarget::QuickInfo],
-                    CapabilityScope::node(id, statement.id),
-                    NonclaimReason::Syntax(SyntaxGap::Template),
-                    DeletionCondition::DeepestSemanticOwner(SyntaxGap::Template),
+                    SyntaxGap::Template,
+                    true,
                 );
+                nonclaims.syntax(&[CapabilityTarget::References], SyntaxGap::Template);
             }
         });
         if let StatementKind::Class(class) = &root.kind {
@@ -61,54 +53,57 @@ fn add_unsigned_shift_nonclaims(nonclaims: &mut Vec<CapabilityNonclaim>, file: &
             }
         }
     }
-    let scope = CapabilityScope::File(id);
     if file
         .syntax
         .has_source_syntax_fact(SourceSyntaxFact::UnsignedRightShiftAssignmentRecovery)
     {
-        add_both_emit(
-            nonclaims,
-            scope,
-            SyntaxGap::UnsignedRightShiftAssignmentRecovery,
-        );
+        nonclaims.emit(SyntaxGap::UnsignedRightShiftAssignmentRecovery);
     }
     if file
         .syntax
         .has_source_syntax_fact(SourceSyntaxFact::UnsignedRightShiftOperandRecovery)
         || contains_recovered_shift(&file.syntax.statements)
     {
-        add_both_emit(
-            nonclaims,
-            scope,
-            SyntaxGap::UnsignedRightShiftOperandRecovery,
-        );
+        nonclaims.emit(SyntaxGap::UnsignedRightShiftOperandRecovery);
     }
 }
 
-fn add_declaration_expression_nonclaims(
-    nonclaims: &mut Vec<CapabilityNonclaim>,
-    file: &ProgramFile,
-) {
-    let mut record = |owner| {
-        add_semantic(
-            nonclaims,
-            &[CapabilityTarget::Declaration],
-            CapabilityScope::node(file.source.id, owner),
-            SemanticGap::DeclarationExpressionSummary,
-        );
+fn add_declaration_expression_nonclaims(nonclaims: &mut ScopedNonclaims<'_>, file: &ProgramFile) {
+    let mut record = |owner, targets: &[CapabilityTarget]| {
+        nonclaims
+            .node(file.source.id, owner)
+            .semantic(targets, SemanticGap::DeclarationExpressionSummary);
     };
-    for inference in [InferredExpression::Call, InferredExpression::LiteralSummary] {
-        for root in &file.syntax.statements {
-            if inferred_statement(root, inference)
-                || matches!(&root.kind, StatementKind::Export(value) if inference.occurs_in(value.assignment.as_ref()))
-            {
-                record(root.id);
+    let inference = InferredExpression::DeclarationSummary;
+    let products = &[CapabilityTarget::Declaration, CapabilityTarget::References];
+    for root in &file.syntax.statements {
+        if let StatementKind::Export(value) = &root.kind
+            && inference.occurs_in(value.assignment.as_ref())
+        {
+            record(
+                root.id,
+                if value.default_export {
+                    &[CapabilityTarget::References]
+                } else {
+                    products
+                },
+            );
+        }
+        root.for_each_statement(&mut |statement| {
+            if inferred_statement(statement, inference) {
+                record(statement.id, products);
             }
-            if let StatementKind::Class(class) = &root.kind {
-                for member in &class.members {
-                    if inferred_member(member, inference) {
-                        record(member.id);
-                    }
+            if inferred_statement(statement, InferredExpression::DeclarationValue) {
+                record(statement.id, &[CapabilityTarget::DeclarationValue]);
+            }
+            if inferred_statement(statement, InferredExpression::Array) {
+                record(statement.id, &[CapabilityTarget::QuickInfo]);
+            }
+        });
+        if let StatementKind::Class(class) = &root.kind {
+            for member in &class.members {
+                if inferred_member(member, inference) {
+                    record(member.id, products);
                 }
             }
         }
@@ -118,8 +113,9 @@ fn add_declaration_expression_nonclaims(
 #[derive(Clone, Copy)]
 enum InferredExpression {
     Shift,
-    Call,
-    LiteralSummary,
+    Array,
+    DeclarationValue,
+    DeclarationSummary,
     Template,
 }
 
@@ -137,35 +133,44 @@ impl InferredExpression {
             Self::Shift => matches!(
                 expression.kind,
                 ExpressionKind::Binary {
-                    operator: BinaryOperator::UnsignedRightShift,
+                    operator: Op::UnsignedRightShift,
                     ..
                 }
             ),
-            Self::Call => matches!(expression.kind, ExpressionKind::Call { .. }),
-            Self::LiteralSummary => matches!(
-                expression.kind,
-                ExpressionKind::NonNull(_)
-                    | ExpressionKind::RegularExpression(_)
-                    | ExpressionKind::Literal(
-                        Literal::NoSubstitutionTemplate(_)
-                            | Literal::String(StringLiteral::Extended(_))
-                            | Literal::Number(NumberLiteral::Recovery(_))
-                    )
+            Self::Array => matches!(expression.kind, ExpressionKind::Array(_)),
+            Self::DeclarationValue => matches!(
+                &expression.kind,
+                ExpressionKind::Conditional { when_true, when_false, .. }
+                    if !matches!(when_true.kind, ExpressionKind::Missing)
+                        && !matches!(when_false.kind, ExpressionKind::Missing)
             ),
+            Self::DeclarationSummary => match expression.kind {
+                ExpressionKind::Binary { operator, .. } => {
+                    !matches!(operator, Op::UnsignedRightShift)
+                }
+                ExpressionKind::Call { .. }
+                | ExpressionKind::Conditional { .. }
+                | ExpressionKind::NonNull(_)
+                | ExpressionKind::RegularExpression(_)
+                | ExpressionKind::Literal(
+                    Literal::NoSubstitutionTemplate(_)
+                    | Literal::String(StringLiteral::Extended(_))
+                    | Literal::Number(NumberLiteral::Recovery(_)),
+                ) => true,
+                _ => false,
+            },
             Self::Template => matches!(expression.kind, ExpressionKind::Template(_)),
         }
     }
 }
 
 fn inferred_statement(statement: &Statement, inference: InferredExpression) -> bool {
+    let inferred_parameter = |parameter: &Parameter| inferred_parameter(parameter, inference);
     match &statement.kind {
         StatementKind::Variable(value) => value.declarators.iter().any(|declarator| {
             declarator.annotation.is_none() && inference.occurs_in(declarator.initializer.as_ref())
         }),
-        StatementKind::Function(value) => value
-            .parameters
-            .iter()
-            .any(|parameter| inferred_parameter(parameter, inference)),
+        StatementKind::Function(value) => value.parameters.iter().any(inferred_parameter),
         _ => false,
     }
 }
@@ -185,7 +190,11 @@ fn inferred_member(member: &ClassMember, inference: InferredExpression) -> bool 
             annotation,
             initializer,
             ..
-        } => annotation.is_none() && inference.occurs_in(initializer.as_ref()),
+        } => {
+            annotation.is_none()
+                && (matches!(inference, InferredExpression::DeclarationSummary)
+                    || inference.occurs_in(initializer.as_ref()))
+        }
         ClassMemberKind::Constructor { parameters, .. }
         | ClassMemberKind::Method { parameters, .. } => parameters
             .iter()
@@ -210,7 +219,7 @@ fn contains_recovered_shift(statements: &[Statement]) -> bool {
         match &expression.kind {
             ExpressionKind::Binary {
                 left,
-                operator: BinaryOperator::UnsignedRightShift,
+                operator: Op::UnsignedRightShift,
                 right,
                 ..
             } => expression_contains(left, is_missing) || expression_contains(right, is_missing),
