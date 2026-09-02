@@ -43,7 +43,7 @@ jobs:
         with:
           fetch-depth: 1
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2
         with:
           tool: cargo-nextest
       - name: Run campaign gauge
